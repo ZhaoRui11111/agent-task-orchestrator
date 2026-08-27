@@ -6,7 +6,7 @@ This is an independent community project. It is not made, sponsored, or endorsed
 
 ## Current status
 
-The repository currently contains only its governance and documentation baseline. There is no executable orchestrator, CLI, MCP server, plugin, database schema, scheduler, or supported adapter yet.
+The repository contains a governance and architecture-contract baseline. There is still no executable orchestrator, CLI, MCP server, plugin, database schema, scheduler, supported adapter, or validated platform integration.
 
 Planned capabilities are not current capabilities. Design proposals and roadmaps must remain clearly labeled until their implementations and validation evidence exist.
 
@@ -36,12 +36,16 @@ Read these documents in order when working in this repository:
 4. [Repository governance](docs/reference/repository-governance.md)
 5. [Validation policy](docs/reference/validation-policy.md)
 
+The [contract ownership inventory](docs/reference/contract-ownership.md) points to each live normative contract. [Architecture decisions](docs/adr/README.md) record why those contracts were selected; they do not replace the contract owners or prove implementation.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the public contribution workflow and [SECURITY.md](SECURITY.md) for security reporting and data-handling boundaries.
 
 ## Data boundary
 
 Future runtime databases, task prompts, project paths, execution or thread identifiers, worktrees, logs, backups, credentials, and other user data belong in a user data directory. They must not be committed to this source repository.
 
-## License
+## License and attribution
 
-No license has been selected yet. Until a `LICENSE` file is added, no license is granted for reuse, modification, or redistribution. License selection is a required gate before the project is presented as an open-source release.
+The project is licensed under the [Apache License 2.0](LICENSE). Contributions are submitted under the same license as described in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Redistributions must preserve the license and applicable copyright, patent, trademark, and attribution notices as required by Apache-2.0. The project currently has no `NOTICE` file and makes no claim that dependency attribution or release inventory is complete; those are later release gates.

@@ -1,5 +1,11 @@
 # Repository governance
 
+This file governs work on this source repository. Product-runtime semantics are
+owned by the files in the
+[contract ownership inventory](contract-ownership.md); this file does not
+define a runtime Task state, database schema, dispatch protocol, or adapter
+behavior.
+
 ## Authority chain
 
 The repository uses this human-to-detail authority chain:
@@ -26,7 +32,15 @@ Current capabilities, non-goals, proposals, active work, completed plans, supers
 
 ## Single authoritative owner
 
-A schema, version, path rule, state transition, permission rule, or protocol has one authoritative contract and one implementation owner. Interfaces and adapters consume that owner rather than copying its business rules.
+A schema, version, path rule, state transition, permission rule, or protocol has
+one authoritative contract and one implementation owner. The
+[contract ownership inventory](contract-ownership.md) locates those owners.
+Interfaces, adapters, ADRs, plans, examples, and evidence consume an owner
+rather than copying its mutable rules.
+
+An owner may delegate a check to another owner by linking to it. A summary or
+evidence table does not acquire normative authority, and a conflict is a failed
+governance condition rather than permission to choose either copy.
 
 ## State, plans, evidence, and authorization
 
@@ -34,9 +48,18 @@ Task state, a development plan, a validation result, an audit record, and user a
 
 In particular, readiness or plan approval does not imply permission for network access, secret access, push, pull-request creation, merge, release, deployment, or destructive cleanup.
 
+The runtime grant model and runtime pre-mutation checks are defined only by the
+[authorization contract](authorization-contract.md). Repository-development
+authorization continues to follow `AGENTS.md` and the user's current request.
+
 ## Task-owned scope
 
 Every change identifies its owned paths and resources. Preserve pre-existing, dirty, generated, ignored, untracked, and out-of-scope content. Cleanup is valid only for resources whose ownership and current identity can be verified.
+
+The repository's ignored `.local/` tree is local planning or working data. It
+is not a public contract, required contributor input, validation substitute, or
+commit candidate. A plan may cite the existence of local evidence without
+copying private contents into a committed contract.
 
 ## External actions
 
@@ -46,7 +69,14 @@ Partial external success is recorded as actual state. Do not use reset, force, d
 
 ## Fail-closed rule
 
-Do not continue a mutation when actor identity, repository identity, canonical path, expected revision, fencing token, receipt freshness, resource ownership, or authorization is uncertain.
+For work on this repository, do not continue a mutation when the acting user's
+authorization, repository identity, canonical task-owned path, current Git
+state, or resource ownership is uncertain. Do not infer permission from a plan,
+test result, audit, prior commit, or adjacent authorized action.
+
+Runtime fail-closed decisions are not defined here. They belong to the
+[authorization contract](authorization-contract.md), with semantic evidence
+provided by the linked domain, reliability, and workspace owners.
 
 ## Maintainer automation
 
@@ -55,3 +85,7 @@ Maintainer-only skills may automate audits and planning. Public behavior, contri
 ## External project boundary
 
 External repositories may be used for dogfood through explicit adapters and local policy configuration. Their domain rules, absolute paths, private instructions, exact validation commands, and unmerged proposals do not become generic core contracts.
+
+Reading or mutating an external repository requires authorization independent
+of readiness, implementation approval, a local commit, or an adapter's
+technical ability to perform the action.

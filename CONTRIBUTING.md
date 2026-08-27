@@ -1,6 +1,6 @@
 # Contributing
 
-Thank you for helping build `agent-task-orchestrator`. The project is currently establishing its repository contracts before implementing the runtime.
+Thank you for helping build `agent-task-orchestrator`. The project currently has governance and architecture contracts but no supported runtime.
 
 ## Start with the authority chain
 
@@ -34,7 +34,7 @@ Use the impact-based routes in [docs/reference/validation-policy.md](docs/refere
 - Actual results.
 - Relevant gates not run and why.
 
-At the current stage, verify links, capability wording, whitespace, and the staged file inventory.
+Run every validation route selected by the changed surface. Documentation changes always verify links, capability wording, whitespace, and the staged file inventory.
 
 ## Git and external actions
 
@@ -42,6 +42,8 @@ Commits must contain only task-owned paths. Commit, push, pull-request creation,
 
 Do not use destructive Git operations to remove unrelated user state or conceal a partial external operation.
 
-## License status
+## License and contribution terms
 
-The project has not selected a license yet. Contributions should not be accepted for redistribution until a `LICENSE` and contribution terms have been established.
+The project is licensed under the [Apache License 2.0](LICENSE). Unless you explicitly state otherwise, a contribution intentionally submitted for inclusion in this project is provided under Apache-2.0 without additional terms, consistent with section 5 of the license.
+
+By submitting a contribution, you represent that you have the right to do so. Preserve applicable copyright, patent, trademark, and attribution notices. If a future distribution includes a `NOTICE` file, follow the preservation requirements in section 4 of Apache-2.0. This project policy is not legal advice.

@@ -2,7 +2,7 @@
 
 ## Current system
 
-The current repository is a documentation and governance baseline only. It has no runtime components and makes no executable compatibility or safety claim.
+The repository has a governance and architecture-contract baseline only. It has no runtime components and makes no executable compatibility, platform, integration, or safety claim.
 
 ## Authority and ownership
 
@@ -14,8 +14,10 @@ The current repository is a documentation and governance baseline only. It has n
 | Repository governance invariants | [docs/reference/repository-governance.md](docs/reference/repository-governance.md) |
 | Validation routing and evidence | [docs/reference/validation-policy.md](docs/reference/validation-policy.md) |
 | Development plan lifecycle | [docs/plans/README.md](docs/plans/README.md) |
+| Normative contract inventory | [docs/reference/contract-ownership.md](docs/reference/contract-ownership.md) |
+| Architecture decisions and rationale | [docs/adr/README.md](docs/adr/README.md) |
 
-No runtime schema or implementation owner exists yet. A future implementation must establish those owners through reviewed architecture decisions before adding parallel copies of a contract.
+This document owns module responsibility and dependency direction. The contract inventory names the sole owners of state, persistence, protocols, authorization, ports, scheduling, completion/workspace, security, observability, compatibility, and validation. ADRs retain rationale but do not duplicate live normative rules.
 
 ## Planned boundaries, not current capabilities
 
@@ -25,24 +27,19 @@ The intended architecture separates:
 - `application`: commands, queries, authorization checks, and transaction orchestration.
 - `persistence`: SQLite schema, migrations, audit events, intents, receipts, leases, and backups.
 - `dispatcher`: durable claim, launch, reconciliation, and recovery workflows.
-- `ports`: execution, workspace, scheduler, project-policy, integration, and completion contracts.
+- `ports`: execution, workspace, scheduler, project-policy, and completion contracts.
 - `adapters`: replaceable implementations, including Manual and Codex execution backends.
 - `interfaces`: CLI and MCP surfaces sharing the application layer.
 
-These names express design direction only. They do not authorize creating code before the corresponding contracts and acceptance gates are agreed.
+These names express accepted design direction only. They are not current runtime components and do not by themselves authorize an external action.
 
-## Cross-cutting invariants for future design
+## Cross-module dependency constraints
 
-Future implementations are expected to preserve these constraints:
+- `domain` may depend only on language/runtime primitives; it must not import application, persistence, dispatcher, ports, adapters, interfaces, or observability modules.
+- `application` orchestrates domain rules and ports but does not copy domain judgments or depend on concrete adapters.
+- `persistence` implements storage contracts without performing external side effects.
+- `dispatcher` coordinates application services and ports without embedding project-specific policy.
+- `ports` expose contracts without importing vendor SDKs; `adapters` depend inward on ports and application contracts.
+- `interfaces` call the application layer, and `observability` consumes structured events without becoming a state owner.
 
-- Every task is bound to a registered project.
-- Parent hierarchy and dependency DAG are distinct relationships.
-- CLI, MCP, and adapters do not duplicate domain rules.
-- Task readiness does not grant unrelated external permissions.
-- SQLite-external effects use persisted intent, observed receipt, verification, and compare-and-swap finalization.
-- Long-running ownership uses durable leases or reservations with fencing, not process-long file locks.
-- Cleanup applies only to resources with verified system ownership.
-- Project-specific Git and review rules enter through policy or adapter contracts, not generic core conditionals.
-- Runtime and personal data remain outside the source repository.
-
-Each invariant remains a design requirement, not an implemented guarantee, until code and validation evidence are present.
+The exact future behavior behind these boundaries belongs to the [contract ownership inventory](docs/reference/contract-ownership.md). Every such behavior remains a design requirement, not an implemented guarantee, until matching code and validation evidence land.

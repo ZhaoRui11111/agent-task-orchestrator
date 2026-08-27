@@ -13,7 +13,27 @@ Documentation has explicit roles so that current contracts, plans, and historica
 ## Live authoritative references
 
 - [Repository governance](reference/repository-governance.md)
+- [Contract ownership inventory](reference/contract-ownership.md)
+- [Domain contract](reference/domain-contract.md)
+- [Persistence contract](reference/persistence-contract.md)
+- [Reliability protocol](reference/reliability-protocol.md)
+- [Authorization contract](reference/authorization-contract.md)
+- [Adapter contracts](reference/adapter-contracts.md)
+- [Scheduler contract](reference/scheduler-contract.md)
+- [Completion and workspace contract](reference/completion-workspace-contract.md)
+- [Observability contract](reference/observability-contract.md)
+- [Versioning and compatibility contract](reference/versioning-compatibility-contract.md)
 - [Validation policy](reference/validation-policy.md)
+
+## Security and compatibility
+
+- [Threat model](security/threat-model.md)
+- [Privacy and logging](security/privacy-and-logging.md)
+- [v0.1 compatibility evidence matrix](compatibility/v0.1.md)
+
+## Architecture decisions
+
+- [ADR index](adr/README.md)
 
 ## Development plans
 
