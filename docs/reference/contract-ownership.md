@@ -15,6 +15,7 @@ Each artifact appears exactly once in this inventory.
 | Artifact | Role | Subject locator |
 | --- | --- | --- |
 | [Repository governance](repository-governance.md) | Current repository-governance owner | Authority, capability truthfulness, task-owned development scope, and separation of local edits, commits, and external actions |
+| [Local agent Git workflow](local-agent-git-flow.md) | Current repository-development contract | Maintainer task branches, linked worktrees, coordinator state, integration reservation, exact-head gates, FF-only integration, push retry, recovery, and owned cleanup; not a product runtime contract |
 | [Contract ownership inventory](contract-ownership.md) | Current inventory owner | The mapping from contract subject to authoritative artifact; no domain or runtime rule |
 | [Domain contract](domain-contract.md) | Planned runtime contract | Project binding, Task state, hierarchy, dependency, eligibility, waiting, and Task revision |
 | [Persistence contract](persistence-contract.md) | Planned runtime contract | SQLite storage, ingress, connections, transactions, migrations, backup, corruption, downgrade handling, and runtime location |

@@ -10,6 +10,7 @@ logs/
 runtime/
 state/
 worktrees/
+/.worktrees/
 
 # Local-only planning and personal artifacts
 .local/

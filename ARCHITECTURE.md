@@ -12,6 +12,7 @@ The repository has a governance and architecture-contract baseline only. It has 
 | Current architecture and dependency constraints | This document |
 | Documentation roles and navigation | [docs/README.md](docs/README.md) |
 | Repository governance invariants | [docs/reference/repository-governance.md](docs/reference/repository-governance.md) |
+| Local maintainer task branches, worktrees, integration, and Git recovery | [docs/reference/local-agent-git-flow.md](docs/reference/local-agent-git-flow.md) |
 | Validation routing and evidence | [docs/reference/validation-policy.md](docs/reference/validation-policy.md) |
 | Development plan lifecycle | [docs/plans/README.md](docs/plans/README.md) |
 | Normative contract inventory | [docs/reference/contract-ownership.md](docs/reference/contract-ownership.md) |
@@ -43,3 +44,11 @@ These names express accepted design direction only. They are not current runtime
 - `interfaces` call the application layer, and `observability` consumes structured events without becoming a state owner.
 
 The exact future behavior behind these boundaries belongs to the [contract ownership inventory](docs/reference/contract-ownership.md). Every such behavior remains a design requirement, not an implemented guarantee, until matching code and validation evidence land.
+
+The repository's current
+[local agent Git workflow](docs/reference/local-agent-git-flow.md) coordinates
+how maintainers develop and integrate this source tree. It is operational
+governance outside the planned runtime dependency graph. It neither implements
+nor constrains a future project's `WorkspaceBackend`, `CompletionBackend`, or
+project-specific Git policy beyond the adapter contracts that will be designed
+and validated separately.

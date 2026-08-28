@@ -40,6 +40,21 @@ The [contract ownership inventory](docs/reference/contract-ownership.md) points 
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the public contribution workflow and [SECURITY.md](SECURITY.md) for security reporting and data-handling boundaries.
 
+## Maintainer development workflow
+
+The repository adopts a task branch and linked-worktree workflow for local
+maintainer agents. After bootstrap, `master` is the clean integration checkout;
+each task develops in an owned `task/<task-id>` branch and
+`.worktrees/<task-id>` worktree, passes exact-head gates, and reaches `master`
+only through FF-only integration. Push is a separate authorized action, and
+cleanup occurs only after verified push with no remaining task-worktree
+material.
+
+The authoritative lifecycle, recovery, and safety rules are in the
+[local agent Git workflow](docs/reference/local-agent-git-flow.md). This is
+current repository governance, not evidence that the planned orchestrator has
+implemented worktree or completion adapters.
+
 ## Data boundary
 
 Future runtime databases, task prompts, project paths, execution or thread identifiers, worktrees, logs, backups, credentials, and other user data belong in a user data directory. They must not be committed to this source repository.

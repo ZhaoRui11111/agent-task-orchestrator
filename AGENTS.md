@@ -54,6 +54,29 @@ At the current documentation-only stage, the minimum relevant checks are:
 - Never use reset, force push, or force cleanup to disguise partial external success or unknown state.
 - Do not rewrite historical evidence merely to remove a current finding.
 
+## Local task branch and worktree flow
+
+Follow [docs/reference/local-agent-git-flow.md](docs/reference/local-agent-git-flow.md)
+for repository development coordinated by maintainer agents. After its
+bootstrap completes, the repository root on `master` is integration-only; each
+implementation task uses its coordinator-owned `task/<task-id>` branch and
+`.worktrees/<task-id>` linked worktree. Subagents for the same task share that
+worktree.
+
+Use the installed `harness-git-flow` automation as the sole coordinator-state
+writer. Begin decisions with `trace`, honor single-use CAS tokens, recover
+pending intent before another mutation, reserve integration for the final
+review sequence, bind gate receipts to the exact task head, and use FF-only
+local integration. Push remains a separately authorized ordinary operation,
+and cleanup is allowed only after a verified push and an ownership-safe empty
+inventory.
+
+ExecPlan lifecycle and Git-flow lifecycle are independent. A branch refresh or
+base advance does not decide whether an ExecPlan approval or material review
+is stale; apply the plan's own base-transition rules and refresh evidence when
+required. The current Git-flow bootstrap is the sole direct-on-`master`
+exception and creates no task worktree.
+
 ## Public contribution boundary
 
 Maintainer skills may automate repository work, but the core, CLI, public contribution workflow, and required validation must not depend on private skills installed on one machine. Durable requirements belong in repository documentation, scripts, tests, and CI.

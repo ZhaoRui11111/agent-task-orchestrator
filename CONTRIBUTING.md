@@ -42,6 +42,22 @@ Commits must contain only task-owned paths. Commit, push, pull-request creation,
 
 Do not use destructive Git operations to remove unrelated user state or conceal a partial external operation.
 
+## Maintainer agent workflow
+
+Maintainer-agent tasks follow the
+[local task branch and worktree contract](docs/reference/local-agent-git-flow.md)
+after its bootstrap has completed. The repository root on `master` is then
+integration-only, while implementation occurs in the task's owned linked
+worktree. Gate receipts apply only to the exact reviewed head; local integration
+is FF-only; and push still requires separate authorization.
+
+External contributors do not need the installed maintainer automation. They
+may use a conventional branch and pull request, provided the contribution
+respects repository authority, scope, validation, and authorization rules.
+Maintainers decide whether and how an external contribution is brought under
+the local coordinator; matching branch names never imply coordinator
+ownership.
+
 ## License and contribution terms
 
 The project is licensed under the [Apache License 2.0](LICENSE). Unless you explicitly state otherwise, a contribution intentionally submitted for inclusion in this project is provided under Apache-2.0 without additional terms, consistent with section 5 of the license.
