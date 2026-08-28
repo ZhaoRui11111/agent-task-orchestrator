@@ -77,11 +77,12 @@ A clean unstaged check cannot substitute for that staged-inventory result.
 
 The repository contains an executable toolchain and feasibility harness whose
 current entry points are owned by the
-[toolchain contract](toolchain-contract.md). Local lint, typecheck, build,
-Node tests, documentation, dependency-shape, package-consumption, SQLite, and
-Codex boundary checks can be executed against a candidate. The committed
-Windows workflow is a CI skeleton only; hosted enforcement remains unverified
-until an actual run is observed. There is still no product runtime harness for
-the planned domain, persistence schema, dispatcher, adapters, scheduler, MCP,
-or support matrix, so those routes remain not implemented and cannot be
+[toolchain contract](toolchain-contract.md), plus targeted Domain Core unit,
+seeded property/state-machine, and dependency-direction tests. Local lint,
+typecheck, build, Node tests, documentation, dependency-shape,
+package-consumption, SQLite, and Codex boundary checks can be executed against
+a candidate. The committed Windows workflow is a CI skeleton only; hosted
+enforcement remains unverified until an actual run is observed. There is still
+no product runtime harness for persistence, dispatcher, adapters, scheduler,
+MCP, or a support matrix, so those routes remain not implemented and cannot be
 claimed as passing.

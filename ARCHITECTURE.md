@@ -2,11 +2,13 @@
 
 ## Current system
 
-The repository has a governance and architecture-contract baseline plus a
-minimal executable toolchain and feasibility harness. The harness is not an
-orchestrator runtime: it implements no Phase 1 domain, persistence, dispatcher,
-port, adapter, scheduler, or MCP component and makes no product compatibility,
-platform-integration, or safety claim.
+The repository has a governance and architecture-contract baseline, a minimal
+executable toolchain and feasibility harness, and a pure in-memory TypeScript
+Domain Core. The Domain Core implements only Project/Task values and domain
+rules; neither it nor the feasibility harness is an orchestrator runtime. The
+repository still implements no application service, persistence repository,
+dispatcher, port, adapter, scheduler, MCP component, product compatibility,
+platform-integration, or product safety claim.
 
 ## Authority and ownership
 
@@ -25,11 +27,12 @@ platform-integration, or safety claim.
 
 This document owns module responsibility and dependency direction. The contract inventory names the sole owners of state, persistence, protocols, authorization, ports, scheduling, completion/workspace, security, observability, compatibility, and validation. ADRs retain rationale but do not duplicate live normative rules.
 
-## Planned boundaries, not current capabilities
+## Implemented and planned boundaries
 
-The intended architecture separates:
+The architecture separates:
 
-- `domain`: task state, hierarchy, dependency, and eligibility rules.
+- `domain`: the implemented pure Task state, hierarchy, dependency,
+  eligibility, waiting-continuation, revision, error, and event owner.
 - `application`: commands, queries, authorization checks, and transaction orchestration.
 - `persistence`: SQLite schema, migrations, audit events, intents, receipts, leases, and backups.
 - `dispatcher`: durable claim, launch, reconciliation, and recovery workflows.
@@ -37,7 +40,9 @@ The intended architecture separates:
 - `adapters`: replaceable implementations, including Manual and Codex execution backends.
 - `interfaces`: CLI and MCP surfaces sharing the application layer.
 
-These names express accepted design direction only. They are not current runtime components and do not by themselves authorize an external action.
+Only `domain` is implemented. Every other name in this list remains accepted
+design direction rather than a current runtime component. None of these
+boundaries authorizes an external action.
 
 ## Cross-module dependency constraints
 
@@ -48,7 +53,11 @@ These names express accepted design direction only. They are not current runtime
 - `ports` expose contracts without importing vendor SDKs; `adapters` depend inward on ports and application contracts.
 - `interfaces` call the application layer, and `observability` consumes structured events without becoming a state owner.
 
-The exact future behavior behind these boundaries belongs to the [contract ownership inventory](docs/reference/contract-ownership.md). Every such behavior remains a design requirement, not an implemented guarantee, until matching code and validation evidence land.
+The exact behavior behind these boundaries belongs to the
+[contract ownership inventory](docs/reference/contract-ownership.md). Domain
+behavior is current only to the extent implemented and validated by its owner;
+every other behavior remains a design requirement, not an implemented
+guarantee, until matching code and validation evidence land.
 
 The repository's current
 [local agent Git workflow](docs/reference/local-agent-git-flow.md) coordinates

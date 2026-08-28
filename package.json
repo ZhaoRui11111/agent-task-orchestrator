@@ -1,7 +1,7 @@
 {
   "name": "agent-task-orchestrator",
   "version": "0.0.0-development",
-  "description": "Toolchain-only scaffold for a future local agent task orchestrator",
+  "description": "Domain-core package scaffold for a future local agent task orchestrator",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",

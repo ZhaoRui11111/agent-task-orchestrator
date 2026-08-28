@@ -6,14 +6,17 @@ This is an independent community project. It is not made, sponsored, or endorsed
 
 ## Current status
 
-The repository contains a governance and architecture-contract baseline plus
-a minimal executable TypeScript/Node toolchain and feasibility harness. It
-still has no executable orchestrator, product CLI, MCP server, plugin, runtime
-database schema, scheduler, supported adapter, supported release, or validated
-product platform integration. The current `ato` console entry reports scaffold
-status only.
+The repository contains a governance and architecture-contract baseline, a
+minimal executable TypeScript/Node toolchain and feasibility harness, and a
+pure in-memory Domain Core for Project/Task rules. It still has no application
+service, executable orchestrator, product CLI, MCP server, plugin, runtime
+database schema, dispatcher, scheduler, supported adapter, supported release,
+or validated product platform integration. The current `ato` console entry
+reports capability status only.
 
-Planned capabilities are not current capabilities. Design proposals and roadmaps must remain clearly labeled until their implementations and validation evidence exist.
+Unimplemented planned capabilities are not current capabilities. Design
+proposals and roadmaps must remain clearly labeled until their implementations
+and validation evidence exist.
 
 ## Intended scope
 
@@ -45,12 +48,13 @@ The [contract ownership inventory](docs/reference/contract-ownership.md) points 
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the public contribution workflow and [SECURITY.md](SECURITY.md) for security reporting and data-handling boundaries.
 
-## Development scaffold
+## Development package
 
 The frozen versions, package boundary, local commands, CI skeleton, and
 dependency maintenance rules are owned by the
-[toolchain contract](docs/reference/toolchain-contract.md). With the exact
-toolchain installed, the local repository gate is:
+[toolchain contract](docs/reference/toolchain-contract.md); executable Domain
+Core behavior is owned by the [domain contract](docs/reference/domain-contract.md).
+With the exact toolchain installed, the local repository gate is:
 
 ```powershell
 pnpm install --frozen-lockfile --ignore-scripts --store-dir=.pnpm-store --registry=https://registry.npmjs.org/

@@ -16,12 +16,15 @@ If documents conflict, stop the affected mutation and resolve the conflict inste
 
 ## Current repository state
 
-This repository has a governance baseline and an executable toolchain and
-feasibility scaffold. It still has no executable orchestrator product
-implementation. Do not describe planned modules, adapters, platform support,
-safety properties, or integration behavior as implemented. Follow the
+This repository has a governance baseline, an executable toolchain and
+feasibility scaffold, and a pure in-memory Domain Core. It still has no
+application service, product CLI, persistence repository, dispatcher, port,
+adapter, scheduler, MCP component, or executable orchestration runtime. Do not
+describe those planned modules, platform support, safety properties, or
+integration behavior as implemented. Follow the
 [toolchain contract](docs/reference/toolchain-contract.md) for current
-executable entry points and their deliberately narrow boundary.
+executable entry points and the [domain contract](docs/reference/domain-contract.md)
+for the Domain Core's deliberately narrow behavior.
 
 ## Before changing files
 

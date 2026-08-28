@@ -6,10 +6,11 @@ import test from "node:test";
 import { getScaffoldStatus } from "../src/index.ts";
 import { gitInventory, repoRoot } from "../scripts/repo-utils.mjs";
 
-test("package export remains a toolchain-only scaffold", () => {
+test("package status exposes Domain Core without overstating the product runtime", () => {
   assert.deepEqual(getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "toolchain-feasibility",
+    phase: "domain-core",
+    domainCoreImplemented: true,
     productRuntimeImplemented: false,
     supportedAdapters: [],
   });
@@ -34,5 +35,9 @@ test("package metadata exposes only the normal export and console boundary", () 
   assert.deepEqual(Object.keys(packageJson.exports), ["."]);
   assert.deepEqual(Object.keys(packageJson.bin), ["ato"]);
   assert.equal(packageJson.dependencies, undefined);
-  assert.deepEqual(gitInventory().filter((item) => item.startsWith("src/")), ["src/cli.ts", "src/index.ts"]);
+  assert.deepEqual(gitInventory().filter((item) => item.startsWith("src/")), [
+    "src/cli.ts",
+    "src/domain.ts",
+    "src/index.ts",
+  ]);
 });

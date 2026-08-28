@@ -8,7 +8,10 @@ const record = JSON.parse(readFileSync(evidencePath, "utf8"));
 const result = validateCodexEvidence(record);
 
 const productionFiles = gitInventory().filter((item) => item.startsWith("src/"));
-invariant(productionFiles.length === 2, "unexpected production source inventory");
+invariant(
+  JSON.stringify(productionFiles) === JSON.stringify(["src/cli.ts", "src/domain.ts", "src/index.ts"]),
+  "unexpected production source inventory",
+);
 for (const relative of productionFiles) {
   const source = readFileSync(path.join(repoRoot, relative), "utf8");
   invariant(!/codex|openai|@openai/iu.test(source), `${relative} depends on a Codex/OpenAI implementation`);

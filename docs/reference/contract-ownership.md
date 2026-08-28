@@ -20,7 +20,7 @@ Each artifact appears exactly once in this inventory.
 | [Local agent Git workflow](local-agent-git-flow.md) | Current repository-development contract | Maintainer task branches, linked worktrees, coordinator state, integration reservation, exact-head gates, FF-only integration, push retry, recovery, and owned cleanup; not a product runtime contract |
 | [Toolchain contract](toolchain-contract.md) | Current repository-toolchain contract | Exact Node, pnpm, and TypeScript selections; ESM/package entry boundaries; executable validation commands; CI skeleton; and dependency maintenance |
 | [Contract ownership inventory](contract-ownership.md) | Current inventory owner | The mapping from contract subject to authoritative artifact; no domain or runtime rule |
-| [Domain contract](domain-contract.md) | Planned runtime contract | Project binding, Task state, hierarchy, dependency, eligibility, waiting, and Task revision |
+| [Domain contract](domain-contract.md) | Current implemented Domain Core contract | Project binding, Task state, hierarchy, dependency, eligibility, waiting, and Task revision |
 | [Persistence contract](persistence-contract.md) | Planned runtime contract | SQLite storage, ingress, connections, transactions, migrations, backup, corruption, downgrade handling, and runtime location |
 | [Reliability protocol](reliability-protocol.md) | Planned runtime contract | Operation identity, claims, leases, fencing, CAS, intents, receipts, publication, recovery, retries, and fan-out outcomes |
 | [Authorization contract](authorization-contract.md) | Planned runtime contract | Grants and the fail-closed pre-mutation decision envelope |

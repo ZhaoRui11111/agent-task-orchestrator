@@ -2,8 +2,9 @@
 
 This file is the sole normative owner of the repository's current executable
 toolchain, package boundary, and repeatable validation entry points. It does
-not define a product runtime, domain behavior, persistence schema, adapter, or
-support promise.
+not define the Domain Core's behavior, a product runtime, persistence schema,
+adapter, or support promise. Domain behavior is owned only by the
+[domain contract](domain-contract.md).
 
 ## Frozen toolchain
 
@@ -38,10 +39,12 @@ and generation-local store, then pack the declared distribution, install it
 into a disposable consumer without registry access, import the library entry,
 and invoke the console entry.
 
-The current `src/` tree is intentionally limited to a toolchain status value
-and a matching console projection. It must not acquire Phase 1 domain,
+The package-root library export exposes a truthful capability status and the
+pure TypeScript Domain Core. The `ato` console remains only the matching status
+projection; it is not a product CLI. Production source remains limited to
+`src/index.ts`, `src/domain.ts`, and `src/cli.ts`. It must not acquire
 application, persistence, dispatcher, port, adapter, scheduler, MCP, or
-orchestrator behavior as part of this scaffold.
+orchestrator behavior as part of this boundary.
 
 ## Validation entry points
 

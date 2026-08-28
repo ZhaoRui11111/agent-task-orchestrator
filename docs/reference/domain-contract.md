@@ -2,10 +2,12 @@
 
 ## Status and scope
 
-This is the sole normative owner of planned Project/Task domain semantics. The
-repository has no domain implementation today. `MUST`, `MUST NOT`, and `SHOULD`
-below constrain future implementation and its evidence; they do not describe a
-current executable capability.
+This is the sole normative owner of Project/Task domain semantics. The
+repository implements these rules as the pure in-memory TypeScript
+[Domain Core](../../src/domain.ts). `MUST`, `MUST NOT`, and `SHOULD` below
+constrain that implementation and its evidence; they do not imply an
+application service, persistence layer, dispatcher, adapter, product CLI, or
+orchestration runtime.
 
 This contract deliberately contains no SQLite, Git, Codex, CLI, MCP, scheduler,
 or development-plan state. Storage is owned by the

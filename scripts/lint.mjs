@@ -81,9 +81,9 @@ for (const relative of inventory.filter((item) => item.startsWith("src/") && ite
   }
 }
 
-const expectedSource = ["src/cli.ts", "src/index.ts"];
+const expectedSource = ["src/cli.ts", "src/domain.ts", "src/index.ts"];
 if (JSON.stringify(inventory.filter((item) => item.startsWith("src/")).sort()) !== JSON.stringify(expectedSource)) {
-  failures.push("Phase 1 or unexpected source entered src/");
+  failures.push("production source inventory drifted");
 }
 
 const diffCheck = run("git", ["diff", "--check"]);

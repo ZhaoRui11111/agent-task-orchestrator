@@ -79,6 +79,10 @@ const expectedEntries = [
   "package/dist/cli.d.ts.map",
   "package/dist/cli.js",
   "package/dist/cli.js.map",
+  "package/dist/domain.d.ts",
+  "package/dist/domain.d.ts.map",
+  "package/dist/domain.js",
+  "package/dist/domain.js.map",
   "package/dist/index.d.ts",
   "package/dist/index.d.ts.map",
   "package/dist/index.js",
@@ -125,12 +129,23 @@ try {
 
   const importResult = spawnSync(
     process.execPath,
-    ["--input-type=module", "--eval", "import('agent-task-orchestrator').then((m) => console.log(JSON.stringify(m.getScaffoldStatus())))"],
+    [
+      "--input-type=module",
+      "--eval",
+      "import('agent-task-orchestrator').then((m) => console.log(JSON.stringify({status:m.getScaffoldStatus(),states:m.TASK_STATES,snapshot:m.createDomainSnapshot({projects:[],tasks:[]}).ok})))",
+    ],
     { cwd: consumer, encoding: "utf8", windowsHide: true },
   );
   invariant(importResult.status === 0, `package export failed: ${importResult.stderr}`);
   const imported = JSON.parse(importResult.stdout.trim());
-  invariant(imported.phase === "toolchain-feasibility" && imported.productRuntimeImplemented === false, "package export overstated runtime capability");
+  invariant(
+    imported.status.phase === "domain-core" &&
+      imported.status.domainCoreImplemented === true &&
+      imported.status.productRuntimeImplemented === false &&
+      JSON.stringify(imported.states) === JSON.stringify(["idea", "ready", "running", "waiting", "completed", "cancelled"]) &&
+      imported.snapshot === true,
+    "package export Domain Core or capability status drifted",
+  );
 
   const cliResult = pnpm(["exec", "ato"], consumer);
   invariant(JSON.parse(cliResult.stdout).productRuntimeImplemented === false, "console entry overstated runtime capability");
