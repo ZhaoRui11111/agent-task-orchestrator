@@ -2,7 +2,10 @@
 
 ## Current status
 
-This repository currently contains governance and architecture-contract documentation only. There is no supported runtime release. Planned security controls must not be described as implemented until matching code and negative tests exist.
+This repository contains governance and architecture contracts plus a minimal
+toolchain and feasibility harness. There is no supported runtime release.
+Planned product security controls must not be described as implemented until
+matching code and negative tests exist.
 
 ## Reporting a vulnerability
 
@@ -11,6 +14,13 @@ Use GitHub private vulnerability reporting after it is enabled for the repositor
 If private reporting is not yet available, open a minimal public issue requesting a private contact channel without including sensitive or exploitable details.
 
 Do not send secrets or exploit details to an unverified address. The repository does not currently publish a dedicated security email address or promise a response-time service level.
+
+Dependency vulnerability reports follow the same private-first path. The
+frozen dependency inventory can be checked locally with
+`pnpm dependency:check`; `pnpm dependency:audit` is a separate registry query
+and must not be reported as passed when network access was unavailable. The
+[toolchain contract](docs/reference/toolchain-contract.md) owns the current
+dependency and update mechanics.
 
 ## Data handling
 

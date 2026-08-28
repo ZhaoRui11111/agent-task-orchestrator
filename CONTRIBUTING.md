@@ -1,6 +1,8 @@
 # Contributing
 
-Thank you for helping build `agent-task-orchestrator`. The project currently has governance and architecture contracts but no supported runtime.
+Thank you for helping build `agent-task-orchestrator`. The project currently
+has governance and architecture contracts plus a toolchain/feasibility
+scaffold, but no supported runtime.
 
 ## Start with the authority chain
 
@@ -35,6 +37,19 @@ Use the impact-based routes in [docs/reference/validation-policy.md](docs/refere
 - Relevant gates not run and why.
 
 Run every validation route selected by the changed surface. Documentation changes always verify links, capability wording, whitespace, and the staged file inventory.
+
+The exact executable entry points are owned by the
+[toolchain contract](docs/reference/toolchain-contract.md). A normal local
+candidate runs:
+
+```powershell
+pnpm install --frozen-lockfile --ignore-scripts --store-dir=.pnpm-store --registry=https://registry.npmjs.org/
+pnpm verify:offline
+```
+
+Run `pnpm dependency:audit` separately when registry access is authorized.
+Dependency update proposals must preserve exact pins, update the lockfile, and
+pass every impact-selected route; an automated update is not pre-approved.
 
 ## Git and external actions
 

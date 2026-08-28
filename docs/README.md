@@ -14,6 +14,7 @@ Documentation has explicit roles so that current contracts, plans, and historica
 
 - [Repository governance](reference/repository-governance.md)
 - [Local agent Git workflow](reference/local-agent-git-flow.md)
+- [Toolchain contract](reference/toolchain-contract.md)
 - [Contract ownership inventory](reference/contract-ownership.md)
 - [Domain contract](reference/domain-contract.md)
 - [Persistence contract](reference/persistence-contract.md)
@@ -31,6 +32,12 @@ Documentation has explicit roles so that current contracts, plans, and historica
 - [Threat model](security/threat-model.md)
 - [Privacy and logging](security/privacy-and-logging.md)
 - [v0.1 compatibility evidence matrix](compatibility/v0.1.md)
+
+## Feasibility evidence
+
+- [Toolchain feasibility](feasibility/toolchain.md)
+- [Windows SQLite feasibility](feasibility/sqlite-windows.md)
+- [Codex stable public contract feasibility](feasibility/codex-stable-public-contract.md)
 
 ## Architecture decisions
 

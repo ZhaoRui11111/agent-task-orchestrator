@@ -2,7 +2,11 @@
 
 ## Current system
 
-The repository has a governance and architecture-contract baseline only. It has no runtime components and makes no executable compatibility, platform, integration, or safety claim.
+The repository has a governance and architecture-contract baseline plus a
+minimal executable toolchain and feasibility harness. The harness is not an
+orchestrator runtime: it implements no Phase 1 domain, persistence, dispatcher,
+port, adapter, scheduler, or MCP component and makes no product compatibility,
+platform-integration, or safety claim.
 
 ## Authority and ownership
 
@@ -12,6 +16,7 @@ The repository has a governance and architecture-contract baseline only. It has 
 | Current architecture and dependency constraints | This document |
 | Documentation roles and navigation | [docs/README.md](docs/README.md) |
 | Repository governance invariants | [docs/reference/repository-governance.md](docs/reference/repository-governance.md) |
+| Executable toolchain, package boundary, and local validation entry points | [docs/reference/toolchain-contract.md](docs/reference/toolchain-contract.md) |
 | Local maintainer task branches, worktrees, integration, and Git recovery | [docs/reference/local-agent-git-flow.md](docs/reference/local-agent-git-flow.md) |
 | Validation routing and evidence | [docs/reference/validation-policy.md](docs/reference/validation-policy.md) |
 | Development plan lifecycle | [docs/plans/README.md](docs/plans/README.md) |

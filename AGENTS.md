@@ -16,7 +16,12 @@ If documents conflict, stop the affected mutation and resolve the conflict inste
 
 ## Current repository state
 
-This repository is at governance bootstrap. It has no executable product implementation. Do not describe planned modules, adapters, platform support, safety properties, or integration behavior as implemented.
+This repository has a governance baseline and an executable toolchain and
+feasibility scaffold. It still has no executable orchestrator product
+implementation. Do not describe planned modules, adapters, platform support,
+safety properties, or integration behavior as implemented. Follow the
+[toolchain contract](docs/reference/toolchain-contract.md) for current
+executable entry points and their deliberately narrow boundary.
 
 ## Before changing files
 
@@ -39,12 +44,15 @@ Fail closed when actor identity, repository identity, canonical path, state revi
 
 Select validation by impact using [docs/reference/validation-policy.md](docs/reference/validation-policy.md). Record the commands run, binary acceptance criteria, actual results, and any gate not run.
 
-At the current documentation-only stage, the minimum relevant checks are:
+At the current scaffold stage, the minimum relevant checks include:
 
 - Repository-relative links resolve to existing files.
 - Current capabilities and proposals are not conflated.
 - `git diff --check` succeeds.
 - The staged file inventory contains only task-owned files.
+- Every impact-selected executable route in the
+  [toolchain contract](docs/reference/toolchain-contract.md) succeeds, or is
+  explicitly recorded as not run without a dependent capability claim.
 
 ## Git and external actions
 

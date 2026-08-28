@@ -4,9 +4,11 @@ This page is an inventory, not a semantic contract. The subject column only
 helps readers find the file that defines a rule; it does not restate or modify
 that rule. Follow the linked owner for normative language.
 
-The repository is still a documentation-only governance and architecture-contract baseline. Entries
-marked "planned runtime contract" are requirements for future implementation,
-not claims that a runtime, adapter, platform, test, or security control exists.
+The repository has a governance and architecture-contract baseline plus a
+minimal executable toolchain and feasibility harness. Entries marked "planned
+runtime contract" are requirements for future implementation, not claims that
+an orchestrator runtime, adapter, supported platform, or product security
+control exists.
 
 ## Inventory
 
@@ -16,6 +18,7 @@ Each artifact appears exactly once in this inventory.
 | --- | --- | --- |
 | [Repository governance](repository-governance.md) | Current repository-governance owner | Authority, capability truthfulness, task-owned development scope, and separation of local edits, commits, and external actions |
 | [Local agent Git workflow](local-agent-git-flow.md) | Current repository-development contract | Maintainer task branches, linked worktrees, coordinator state, integration reservation, exact-head gates, FF-only integration, push retry, recovery, and owned cleanup; not a product runtime contract |
+| [Toolchain contract](toolchain-contract.md) | Current repository-toolchain contract | Exact Node, pnpm, and TypeScript selections; ESM/package entry boundaries; executable validation commands; CI skeleton; and dependency maintenance |
 | [Contract ownership inventory](contract-ownership.md) | Current inventory owner | The mapping from contract subject to authoritative artifact; no domain or runtime rule |
 | [Domain contract](domain-contract.md) | Planned runtime contract | Project binding, Task state, hierarchy, dependency, eligibility, waiting, and Task revision |
 | [Persistence contract](persistence-contract.md) | Planned runtime contract | SQLite storage, ingress, connections, transactions, migrations, backup, corruption, downgrade handling, and runtime location |

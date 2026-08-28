@@ -75,8 +75,13 @@ A clean unstaged check cannot substitute for that staged-inventory result.
 
 ## Current enforcement status
 
-The repository currently contains documentation and governance only. The
-documentation route can be executed manually with local Git and link checks;
-no runtime test harness or CI enforcement is implemented yet. Future code must
-land executable commands and evidence before any other route is described as
-enforced.
+The repository contains an executable toolchain and feasibility harness whose
+current entry points are owned by the
+[toolchain contract](toolchain-contract.md). Local lint, typecheck, build,
+Node tests, documentation, dependency-shape, package-consumption, SQLite, and
+Codex boundary checks can be executed against a candidate. The committed
+Windows workflow is a CI skeleton only; hosted enforcement remains unverified
+until an actual run is observed. There is still no product runtime harness for
+the planned domain, persistence schema, dispatcher, adapters, scheduler, MCP,
+or support matrix, so those routes remain not implemented and cannot be
+claimed as passing.

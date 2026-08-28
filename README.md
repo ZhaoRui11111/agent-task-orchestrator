@@ -6,7 +6,12 @@ This is an independent community project. It is not made, sponsored, or endorsed
 
 ## Current status
 
-The repository contains a governance and architecture-contract baseline. There is still no executable orchestrator, CLI, MCP server, plugin, database schema, scheduler, supported adapter, or validated platform integration.
+The repository contains a governance and architecture-contract baseline plus
+a minimal executable TypeScript/Node toolchain and feasibility harness. It
+still has no executable orchestrator, product CLI, MCP server, plugin, runtime
+database schema, scheduler, supported adapter, supported release, or validated
+product platform integration. The current `ato` console entry reports scaffold
+status only.
 
 Planned capabilities are not current capabilities. Design proposals and roadmaps must remain clearly labeled until their implementations and validation evidence exist.
 
@@ -39,6 +44,21 @@ Read these documents in order when working in this repository:
 The [contract ownership inventory](docs/reference/contract-ownership.md) points to each live normative contract. [Architecture decisions](docs/adr/README.md) record why those contracts were selected; they do not replace the contract owners or prove implementation.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the public contribution workflow and [SECURITY.md](SECURITY.md) for security reporting and data-handling boundaries.
+
+## Development scaffold
+
+The frozen versions, package boundary, local commands, CI skeleton, and
+dependency maintenance rules are owned by the
+[toolchain contract](docs/reference/toolchain-contract.md). With the exact
+toolchain installed, the local repository gate is:
+
+```powershell
+pnpm install --frozen-lockfile --ignore-scripts --store-dir=.pnpm-store --registry=https://registry.npmjs.org/
+pnpm verify:offline
+```
+
+`pnpm dependency:audit` is a separate network-dependent query. Neither the CI
+skeleton nor a command that was not run is evidence of a passing gate.
 
 ## Maintainer development workflow
 

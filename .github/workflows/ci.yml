@@ -1,0 +1,44 @@
+{
+  "name": "Windows validation",
+  "on": {
+    "pull_request": {},
+    "push": {
+      "branches": ["master"]
+    }
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "jobs": {
+    "windows": {
+      "runs-on": "windows-2022",
+      "steps": [
+        {
+          "uses": "actions/checkout@v4"
+        },
+        {
+          "uses": "actions/setup-node@v4",
+          "with": {
+            "node-version-file": ".node-version"
+          }
+        },
+        {
+          "name": "Install frozen pnpm",
+          "run": "npm install --global pnpm@11.19.0 --ignore-scripts --registry=https://registry.npmjs.org/"
+        },
+        {
+          "name": "Install frozen dependencies",
+          "run": "pnpm install --frozen-lockfile --ignore-scripts --store-dir=.pnpm-store --registry=https://registry.npmjs.org/"
+        },
+        {
+          "name": "Run offline-equivalent repository gates",
+          "run": "pnpm verify:offline"
+        },
+        {
+          "name": "Query the registry vulnerability service",
+          "run": "pnpm dependency:audit"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "name": "agent-task-orchestrator",
+  "version": "0.0.0-development",
+  "description": "Toolchain-only scaffold for a future local agent task orchestrator",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": "24.19.0",
+    "pnpm": "11.19.0"
+  },
+  "packageManager": "pnpm@11.19.0",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "ato": "./dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "lint": "node scripts/lint.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test",
+    "docs:check": "node scripts/docs-check.mjs",
+    "dependency:check": "node scripts/dependency-security.mjs",
+    "dependency:audit": "pnpm audit --prod --audit-level high --registry=https://registry.npmjs.org/",
+    "package:smoke": "node scripts/package-smoke.mjs",
+    "spike:sqlite": "node scripts/sqlite-feasibility.mjs --json",
+    "spike:codex": "node scripts/codex-contract.mjs --json",
+    "verify:offline": "pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm docs:check && pnpm dependency:check && pnpm package:smoke && pnpm spike:sqlite && pnpm spike:codex"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}
