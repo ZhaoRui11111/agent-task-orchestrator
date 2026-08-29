@@ -41,6 +41,7 @@ export const DOMAIN_ERROR_CODES = Object.freeze([
   "INVALID_SNAPSHOT",
   "TASK_NOT_FOUND",
   "PROJECT_NOT_FOUND",
+  "PROJECT_ALREADY_EXISTS",
   "TASK_ALREADY_EXISTS",
   "ILLEGAL_TRANSITION",
   "TERMINAL_IMMUTABLE",
@@ -186,6 +187,20 @@ export interface DomainSnapshot {
 export interface DomainMutation {
   readonly snapshot: DomainSnapshot;
   readonly changedTaskIds: readonly string[];
+}
+
+export interface ProjectDomainMutation {
+  readonly snapshot: DomainSnapshot;
+  readonly changedProjectIds: readonly string[];
+}
+
+export interface RegisterProjectCommand {
+  readonly projectId: string;
+}
+
+export interface SetProjectEnabledCommand {
+  readonly projectId: string;
+  readonly enabled: boolean;
 }
 
 export interface CreateTaskCommand {
@@ -802,6 +817,73 @@ function mutation(snapshot: DomainSnapshot, changedTaskIds: readonly string[], e
     }),
     events,
   );
+}
+
+function projectMutation(snapshot: DomainSnapshot, projectId: string): DomainResult<ProjectDomainMutation> {
+  return success(
+    Object.freeze({
+      snapshot,
+      changedProjectIds: Object.freeze([projectId]),
+    }),
+  );
+}
+
+function registerProjectUnchecked(
+  snapshotInput: DomainSnapshot,
+  commandInput: RegisterProjectCommand,
+): DomainResult<ProjectDomainMutation> {
+  const snapshot = parseSnapshot(snapshotInput, "complete");
+  if (!snapshot.ok) return failure(snapshot.error);
+  const command = parseTaskCommand(commandInput, ["projectId"]);
+  if (!command.ok || !isIdentifier(command.value.projectId)) {
+    return failure(domainError("INVALID_INPUT", "Project registration contains an invalid field"));
+  }
+  if (projectById(snapshot.value, command.value.projectId) !== undefined) {
+    return failure(
+      domainError("PROJECT_ALREADY_EXISTS", "Project is already registered", {
+        projectId: command.value.projectId,
+      }),
+    );
+  }
+  const parsedSnapshot = parseSnapshot(
+    {
+      projects: [...snapshot.value.projects, { id: command.value.projectId, enabled: true }],
+      tasks: snapshot.value.tasks,
+    },
+    "complete",
+  );
+  if (!parsedSnapshot.ok) return failure(parsedSnapshot.error);
+  return projectMutation(parsedSnapshot.value, command.value.projectId);
+}
+
+function setProjectEnabledUnchecked(
+  snapshotInput: DomainSnapshot,
+  commandInput: SetProjectEnabledCommand,
+): DomainResult<ProjectDomainMutation> {
+  const snapshot = parseSnapshot(snapshotInput, "complete");
+  if (!snapshot.ok) return failure(snapshot.error);
+  const command = parseTaskCommand(commandInput, ["projectId", "enabled"]);
+  if (!command.ok || !isIdentifier(command.value.projectId) || typeof command.value.enabled !== "boolean") {
+    return failure(domainError("INVALID_INPUT", "Project enablement command contains an invalid field"));
+  }
+  const project = projectById(snapshot.value, command.value.projectId);
+  if (project === undefined) {
+    return failure(domainError("PROJECT_NOT_FOUND", "Project is not registered", { projectId: command.value.projectId }));
+  }
+  if (project.enabled === command.value.enabled) {
+    return failure(domainError("NO_OP", "Project enablement is unchanged", { projectId: project.id }));
+  }
+  const parsedSnapshot = parseSnapshot(
+    {
+      projects: snapshot.value.projects.map((candidate) =>
+        candidate.id === project.id ? { id: project.id, enabled: command.value.enabled } : candidate,
+      ),
+      tasks: snapshot.value.tasks,
+    },
+    "complete",
+  );
+  if (!parsedSnapshot.ok) return failure(parsedSnapshot.error);
+  return projectMutation(parsedSnapshot.value, project.id);
 }
 
 function replaceTasks(snapshot: DomainSnapshot, replacements: ReadonlyMap<string, Task>, additions: readonly Task[] = []): Parsed<DomainSnapshot> {
@@ -1782,6 +1864,20 @@ function guardPublicResult<T>(
 
 export function createDomainSnapshot(input: DomainSnapshot): DomainResult<DomainSnapshot> {
   return guardPublicResult("INVALID_SNAPSHOT", () => createDomainSnapshotUnchecked(input));
+}
+
+export function registerProject(
+  snapshotInput: DomainSnapshot,
+  commandInput: RegisterProjectCommand,
+): DomainResult<ProjectDomainMutation> {
+  return guardPublicResult("INVALID_INPUT", () => registerProjectUnchecked(snapshotInput, commandInput));
+}
+
+export function setProjectEnabled(
+  snapshotInput: DomainSnapshot,
+  commandInput: SetProjectEnabledCommand,
+): DomainResult<ProjectDomainMutation> {
+  return guardPublicResult("INVALID_INPUT", () => setProjectEnabledUnchecked(snapshotInput, commandInput));
 }
 
 export function createTask(

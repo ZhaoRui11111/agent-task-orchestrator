@@ -18,6 +18,7 @@ import {
   type MigrationHistoryEntry,
   type SchemaEvidence,
 } from "./migrations.ts";
+import { readApplicationState } from "./application-repository.ts";
 import { readDomainSnapshot } from "./repository.ts";
 import {
   assertOwnedRuntimeDirectory,
@@ -337,7 +338,8 @@ function verifyStandaloneDatabase(
   try {
     evidence = inspectSchemaEvidence(database);
     verifyDatabaseIntegrity(database);
-    if (evidence.schemaVersion >= 2) readDomainSnapshot(database);
+    if (evidence.schemaVersion >= 3) readApplicationState(database);
+    else if (evidence.schemaVersion >= 2) readDomainSnapshot(database);
   } finally {
     database.close();
   }

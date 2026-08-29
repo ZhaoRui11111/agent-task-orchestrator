@@ -2,10 +2,12 @@
 
 ## Status and authority
 
-This file is the sole normative owner of planned data classification, prompt and
-secret handling, log-content redaction, retention, diagnostic disclosure, and
-default no telemetry. No runtime logger, secret provider, diagnostic exporter,
-retention job, or telemetry implementation exists today.
+This file is the sole normative owner of data classification, prompt and secret
+handling, log-content redaction, retention, diagnostic disclosure, and default
+no telemetry. The schema-v3 application owner implements only the sanitized
+append-only audit subset described below. No runtime logger, secret provider,
+diagnostic exporter, retention job, or telemetry implementation exists today;
+the corresponding sections remain requirements for later implementations.
 
 The [observability contract](../reference/observability-contract.md) owns event
 schemas and where redaction is applied. This file owns what data may appear and
@@ -46,6 +48,25 @@ secret data is treated as `secret`.
   because prompt content requests it.
 
 ## Log redaction rules
+
+### Current application audit
+
+The implemented `application_audit` record is database audit history, not a
+general logger. Application code chooses an allowlisted event kind, result,
+stable reason, trusted actor/correlation IDs, opaque target kind/ID/revision,
+and trusted timestamp. Its bounded canonical details object contains only the
+exact action, stable reason, target kind, and nullable target revision.
+
+Task body, Project canonical path, prompts, source/repository content, tool or
+Agent output, free text, raw commands, environment values, credentials, and
+secrets are never copied into audit details. Accepted application operations
+and fully bound authorization denials append audit in the same transaction as
+their request and decision; SQLite triggers reject audit update or deletion.
+Failures before a safe typed/bound envelope produce no audit row rather than
+persisting unclassified input.
+
+The following broader redaction rules apply when an operational logger is
+implemented; EP-01C does not claim that logger or its HMAC key lifecycle.
 
 Redaction is allowlist-first. For each structured event schema:
 

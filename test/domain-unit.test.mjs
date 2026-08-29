@@ -9,9 +9,11 @@ import {
   createTask,
   evaluateTaskEligibility,
   evaluateWaitingContinuation,
+  registerProject,
   removeTaskDependency,
   setTaskParent,
   setTaskSupersession,
+  setProjectEnabled,
   transitionTask,
   updateTaskBody,
   updateTaskWaiting,
@@ -58,6 +60,22 @@ const waitingInput = (overrides = {}) => ({
   workspaceRevision: "workspace-1",
   backendThreadId: "thread-1",
   ...overrides,
+});
+
+test("Project registration and enablement are pure Domain Core mutations", () => {
+  const empty = createDomainSnapshot({ projects: [], tasks: [] });
+  assert.equal(empty.ok, true);
+  const registered = registerProject(empty.value, { projectId: "project" });
+  assert.equal(registered.ok, true);
+  assert.deepEqual(registered.value.changedProjectIds, ["project"]);
+  assert.deepEqual(registered.value.snapshot.projects, [{ id: "project", enabled: true }]);
+  expectFailure(registerProject(registered.value.snapshot, { projectId: "project" }), "PROJECT_ALREADY_EXISTS");
+  const disabled = setProjectEnabled(registered.value.snapshot, { projectId: "project", enabled: false });
+  assert.equal(disabled.ok, true);
+  assert.deepEqual(disabled.value.snapshot.projects, [{ id: "project", enabled: false }]);
+  expectFailure(setProjectEnabled(disabled.value.snapshot, { projectId: "project", enabled: false }), "NO_OP");
+  expectFailure(setProjectEnabled(disabled.value.snapshot, { projectId: "missing", enabled: true }), "PROJECT_NOT_FOUND");
+  assert.deepEqual(empty.value.projects, []);
 });
 
 function taskValue(state, overrides = {}) {

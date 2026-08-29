@@ -9,6 +9,7 @@ import {
   verifyBackupGeneration,
 } from "../src/index.ts";
 import { openPrimaryDatabase } from "../src/persistence/database.ts";
+import { readDomainForOwner } from "../src/persistence/application-repository.ts";
 import {
   inspectSchemaEvidence,
   loadMigrationRegistry,
@@ -19,17 +20,19 @@ import {
   cleanupPersistenceFixture,
   createPersistenceFixture,
   createVersionOneDatabase,
+  createVersionTwoDatabase,
   expectPersistenceError,
 } from "./persistence-test-helpers.mjs";
 
 test("committed migration registry is contiguous and checksums exact source bytes", () => {
   const registry = loadMigrationRegistry();
-  assert.equal(currentSchemaVersion(), 2);
+  assert.equal(currentSchemaVersion(), 3);
   assert.deepEqual(
     registry.map(({ version, id, fileName }) => ({ version, id, fileName })),
     [
       { version: 1, id: "persistence-metadata", fileName: "0001-persistence-metadata.sql" },
       { version: 2, id: "phase1-task-storage", fileName: "0002-phase1-task-storage.sql" },
+      { version: 3, id: "phase1-application", fileName: "0003-phase1-application.sql" },
     ],
   );
   for (const migration of registry) {
@@ -39,6 +42,8 @@ test("committed migration registry is contiguous and checksums exact source byte
     );
     assert.equal(Object.isFrozen(migration), true);
   }
+  assert.equal(registry[0].checksumSha256, "E31C5A3D24E4DB99620635A9CE83F752978C5FD2AF7A15C84CE13BEECAC9C34F");
+  assert.equal(registry[1].checksumSha256, "0FC2DEECBC8ABBA31F9E5063A870706320F66C5AEE882E4A05DA0CADCF9CEC7E");
 });
 
 test("fresh initialization atomically applies the complete staged schema", async () => {
@@ -46,19 +51,35 @@ test("fresh initialization atomically applies the complete staged schema", async
   let store;
   try {
     store = await openPersistence(fixture.layout, { applicationVersion: "fresh" });
-    assert.deepEqual(store.migration.appliedVersions, [1, 2]);
+    assert.deepEqual(store.migration.appliedVersions, [1, 2, 3]);
     assert.equal(store.migration.migratedFrom, 0);
     assert.equal(store.migration.preUpgradeBackupGeneration, null);
-    assert.equal(store.migration.history.length, 2);
+    assert.equal(store.migration.history.length, 3);
     const database = new DatabaseSync(fixture.layout.databasePath, { readOnly: true });
     try {
       const tables = database
         .prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")
         .all()
         .map((row) => row.name);
-      assert.deepEqual(tables, ["migration_history", "projects", "schema_metadata", "task_dependencies", "tasks"]);
+      assert.deepEqual(tables, [
+        "application_audit",
+        "application_requests",
+        "authorization_bootstrap",
+        "authorization_decisions",
+        "authorization_grants",
+        "migration_history",
+        "project_registry",
+        "projects",
+        "schema_metadata",
+        "task_dependencies",
+        "tasks",
+      ]);
       assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
-      assert.equal(database.prepare("PRAGMA user_version").get().user_version, 2);
+      assert.equal(
+        database.prepare("SELECT count(*) AS count FROM pragma_table_info('authorization_grants') WHERE name='source_grant_id'").get().count,
+        1,
+      );
+      assert.equal(database.prepare("PRAGMA user_version").get().user_version, 3);
     } finally {
       database.close();
     }
@@ -95,7 +116,7 @@ test("every shipped earlier prefix upgrades only after a verified pre-upgrade ba
   try {
     createVersionOneDatabase(fixture.layout);
     store = await openPersistence(fixture.layout, { applicationVersion: "upgrade" });
-    assert.deepEqual(store.migration.appliedVersions, [2]);
+    assert.deepEqual(store.migration.appliedVersions, [2, 3]);
     assert.equal(store.migration.migratedFrom, 1);
     assert.ok(store.migration.preUpgradeBackupGeneration);
     const generation = verifyBackupGeneration(
@@ -104,7 +125,26 @@ test("every shipped earlier prefix upgrades only after a verified pre-upgrade ba
     );
     assert.equal(generation.manifest.kind, "pre_upgrade");
     assert.equal(generation.manifest.sourceSchemaVersion, 1);
-    assert.equal(store.migration.schemaVersion, 2);
+    assert.equal(store.migration.schemaVersion, 3);
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("the released schema-v2 prefix upgrades to v3 without fabricating ProjectRegistry identity", async () => {
+  const fixture = createPersistenceFixture("migration-v2-upgrade");
+  let store;
+  try {
+    createVersionTwoDatabase(fixture.layout);
+    store = await openPersistence(fixture.layout, { applicationVersion: "upgrade-v3" });
+    assert.deepEqual(store.migration.appliedVersions, [3]);
+    assert.equal(store.migration.migratedFrom, 2);
+    assert.ok(store.migration.preUpgradeBackupGeneration);
+    assert.deepEqual(readDomainForOwner(store), { projects: [{ id: "legacy-project", enabled: true }], tasks: [] });
+    const database = new DatabaseSync(fixture.layout.databasePath, { readOnly: true });
+    assert.equal(database.prepare("SELECT count(*) AS count FROM project_registry").get().count, 0);
+    database.close();
   } finally {
     if (store) await store.close();
     cleanupPersistenceFixture(fixture);
@@ -125,7 +165,7 @@ test("a failed appended migration rolls back atomically and the shipped registry
       const extended = Object.freeze([
         ...registry,
         Object.freeze({
-          version: 3,
+          version: 4,
           id: "deliberate-test-failure",
           fileName: "test-only-invalid.sql",
           checksumSha256: sha256(sql),
@@ -144,7 +184,7 @@ test("a failed appended migration rolls back atomically and the shipped registry
         database.prepare("SELECT count(*) AS count FROM sqlite_schema WHERE name='should_rollback'").get().count,
         0,
       );
-      assert.equal(inspectSchemaEvidence(database).schemaVersion, 2);
+      assert.equal(inspectSchemaEvidence(database).schemaVersion, 3);
     } finally {
       database.close();
     }
@@ -197,8 +237,8 @@ const mismatchCases = [
     name: "newer schema",
     code: "SCHEMA_NEWER",
     mutate(database) {
-      database.prepare("UPDATE schema_metadata SET schema_version=3 WHERE singleton=1").run();
-      database.exec("PRAGMA user_version=3");
+      database.prepare("UPDATE schema_metadata SET schema_version=4 WHERE singleton=1").run();
+      database.exec("PRAGMA user_version=4");
     },
   },
 ];

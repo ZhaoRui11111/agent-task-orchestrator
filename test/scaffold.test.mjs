@@ -12,13 +12,15 @@ import {
   repoRoot,
 } from "../scripts/repo-utils.mjs";
 
-test("package status exposes the persistence foundation without overstating the product runtime", () => {
+test("package status exposes the Phase 1 application foundation without overstating the product runtime", () => {
   assert.deepEqual(getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "persistence-foundation",
+    phase: "phase1-application-service",
     domainCoreImplemented: true,
     persistenceFoundationImplemented: true,
-    applicationServiceImplemented: false,
+    projectRegistryImplemented: true,
+    runtimeAuthorizationImplemented: true,
+    applicationServiceImplemented: true,
     productRuntimeImplemented: false,
     supportedAdapters: [],
   });

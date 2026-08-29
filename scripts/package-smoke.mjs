@@ -75,6 +75,14 @@ function tarEntries(tgzPath) {
 const expectedEntries = [
   "package/LICENSE",
   "package/README.md",
+  "package/dist/application.d.ts",
+  "package/dist/application.d.ts.map",
+  "package/dist/application.js",
+  "package/dist/application.js.map",
+  "package/dist/authorization.d.ts",
+  "package/dist/authorization.d.ts.map",
+  "package/dist/authorization.js",
+  "package/dist/authorization.js.map",
   "package/dist/cli.d.ts",
   "package/dist/cli.d.ts.map",
   "package/dist/cli.js",
@@ -87,6 +95,10 @@ const expectedEntries = [
   "package/dist/index.d.ts.map",
   "package/dist/index.js",
   "package/dist/index.js.map",
+  "package/dist/persistence/application-repository.d.ts",
+  "package/dist/persistence/application-repository.d.ts.map",
+  "package/dist/persistence/application-repository.js",
+  "package/dist/persistence/application-repository.js.map",
   "package/dist/persistence/backup.d.ts",
   "package/dist/persistence/backup.d.ts.map",
   "package/dist/persistence/backup.js",
@@ -123,8 +135,13 @@ const expectedEntries = [
   "package/dist/persistence/values.d.ts.map",
   "package/dist/persistence/values.js",
   "package/dist/persistence/values.js.map",
+  "package/dist/project-registry.d.ts",
+  "package/dist/project-registry.d.ts.map",
+  "package/dist/project-registry.js",
+  "package/dist/project-registry.js.map",
   "package/migrations/0001-persistence-metadata.sql",
   "package/migrations/0002-phase1-task-storage.sql",
+  "package/migrations/0003-phase1-application.sql",
   "package/package.json",
 ].sort();
 
@@ -168,8 +185,12 @@ try {
   writeFileSync(
     path.join(consumer, "index.ts"),
     `import {
+  AUTHORIZATION_ACTIONS,
+  createApplicationService,
   currentSchemaVersion,
   getScaffoldStatus,
+  inspectProjectRoot,
+  type ApplicationIngress,
   type OpenPersistenceOptions,
   type RuntimeRootRequest,
 } from "agent-task-orchestrator";
@@ -184,6 +205,11 @@ void options;
 void request;
 void currentSchemaVersion();
 void getScaffoldStatus();
+void AUTHORIZATION_ACTIONS;
+void createApplicationService;
+void inspectProjectRoot;
+const ingress = null as unknown as ApplicationIngress;
+void ingress;
 `,
     "utf8",
   );
@@ -234,18 +260,34 @@ void getScaffoldStatus();
           sourceCheckoutRoot: process.env.ATO_SMOKE_CHECKOUT,
           projectRoots: [process.env.ATO_SMOKE_PROJECT],
         });
-        const snapshot = m.createDomainSnapshot({ projects: [], tasks: [] });
-        if (!snapshot.ok) throw new Error("empty Domain snapshot was rejected");
         const store = await m.openPersistence(layout, { applicationVersion: "package-smoke" });
-        store.initialize(snapshot.value);
-        const readback = store.read();
+        let sequence = 0;
+        const service = m.createApplicationService(store, {
+          currentActor: () => ({ actorId: "package-actor", principal: "os:package-actor" }),
+          now: () => "2026-08-29T12:00:00.000Z",
+          nextId: (kind) => kind + "-package-" + (++sequence),
+          confirmHighRisk: () => true,
+        });
+        const bootstrap = service.bootstrap({ kind: "authorization.bootstrap", expiresAt: "2026-09-20T12:00:00.000Z" });
+        if (!bootstrap.ok) throw new Error("package bootstrap was rejected");
+        const project = service.execute({ kind: "project.register", projectId: "project", root: process.env.ATO_SMOKE_PROJECT });
+        if (!project.ok) throw new Error("package Project registration was rejected");
+        const task = service.execute({
+          kind: "task.create",
+          projectId: "project",
+          expectedProjectResourceRevision: 1,
+          taskId: "task",
+          body: "body",
+          supersedesTaskId: null,
+        });
+        if (!task.ok) throw new Error("package Task creation was rejected");
         const backup = await store.createBackup();
         const verified = m.verifyBackupGeneration(layout, backup.generationId);
         await store.close();
         console.log(JSON.stringify({
           status: m.getScaffoldStatus(),
           states: m.TASK_STATES,
-          snapshot: readback.projects.length === 0 && readback.tasks.length === 0,
+          snapshot: project.value.projectId === "project" && task.value.id === "task",
           schema: m.currentSchemaVersion(),
           backup: verified.generationId === backup.generationId,
         }));
@@ -266,14 +308,16 @@ void getScaffoldStatus();
   invariant(importResult.status === 0, `package export failed: ${importResult.stderr}`);
   const imported = JSON.parse(importResult.stdout.trim());
   invariant(
-    imported.status.phase === "persistence-foundation" &&
+    imported.status.phase === "phase1-application-service" &&
       imported.status.domainCoreImplemented === true &&
       imported.status.persistenceFoundationImplemented === true &&
-      imported.status.applicationServiceImplemented === false &&
+      imported.status.projectRegistryImplemented === true &&
+      imported.status.runtimeAuthorizationImplemented === true &&
+      imported.status.applicationServiceImplemented === true &&
       imported.status.productRuntimeImplemented === false &&
       JSON.stringify(imported.states) === JSON.stringify(["idea", "ready", "running", "waiting", "completed", "cancelled"]) &&
       imported.snapshot === true &&
-      imported.schema === 2 &&
+      imported.schema === 3 &&
       imported.backup === true,
     "package export Domain Core, persistence registry, or capability status drifted",
   );

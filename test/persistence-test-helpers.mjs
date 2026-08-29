@@ -60,6 +60,32 @@ export function createVersionOneDatabase(layout, applicationVersion = "test-v1")
   database.close();
 }
 
+export function createVersionTwoDatabase(layout, applicationVersion = "test-v2", projectId = "legacy-project") {
+  const registry = loadMigrationRegistry();
+  const database = new DatabaseSync(layout.databasePath);
+  database.exec("PRAGMA foreign_keys=ON");
+  database.exec("PRAGMA journal_mode=WAL");
+  database.exec("BEGIN IMMEDIATE");
+  for (const migration of registry.slice(0, 2)) database.exec(migration.sql);
+  const appliedAt = new Date().toISOString();
+  for (const migration of registry.slice(0, 2)) {
+    database
+      .prepare(
+        "INSERT INTO migration_history(version, migration_id, checksum_sha256, applied_at, application_version) VALUES (?, ?, ?, ?, ?)",
+      )
+      .run(migration.version, migration.id, migration.checksumSha256, appliedAt, applicationVersion);
+  }
+  database
+    .prepare(
+      "INSERT INTO schema_metadata(singleton, schema_version, domain_initialized, registry_identity, schema_fingerprint, updated_at) VALUES (1, 2, 1, ?, ?, ?)",
+    )
+    .run(migrationRegistryIdentity(registry, 2), liveSchemaFingerprint(database), appliedAt);
+  database.prepare("INSERT INTO projects(project_id, enabled) VALUES (?, 1)").run(projectId);
+  database.exec("PRAGMA user_version=2");
+  database.exec("COMMIT");
+  database.close();
+}
+
 export function emptySnapshot(projectId = "project") {
   return Object.freeze({
     projects: Object.freeze([Object.freeze({ id: projectId, enabled: true })]),

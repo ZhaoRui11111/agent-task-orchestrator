@@ -1,7 +1,7 @@
 {
   "name": "agent-task-orchestrator",
   "version": "0.0.0-development",
-  "description": "Domain Core and local SQLite persistence foundation for a future agent task orchestrator",
+  "description": "Local Phase 1 Project and Task application foundation for a future agent task orchestrator",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",

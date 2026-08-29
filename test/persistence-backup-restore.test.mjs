@@ -27,6 +27,11 @@ import {
   verifyBackupGenerationForTesting,
 } from "../src/persistence/backup.ts";
 import { openPrimaryDatabase } from "../src/persistence/database.ts";
+import {
+  commitDomainForOwner,
+  initializeDomainForOwner,
+  readDomainForOwner,
+} from "../src/persistence/application-repository.ts";
 import { withLifecycleLock } from "../src/persistence/runtime.ts";
 import { canonicalJson, sha256 } from "../src/persistence/values.ts";
 import {
@@ -39,7 +44,7 @@ import {
 async function seedTask(store, body = "first") {
   const initialResult = createDomainSnapshot(emptySnapshot());
   assert.equal(initialResult.ok, true);
-  const initial = store.initialize(initialResult.value);
+  const initial = initializeDomainForOwner(store, initialResult.value);
   const created = createTask(initial, {
     id: "task",
     projectId: "project",
@@ -47,13 +52,13 @@ async function seedTask(store, body = "first") {
     supersedesTaskId: null,
   });
   assert.equal(created.ok, true);
-  return store.commit(initial, created.value);
+  return commitDomainForOwner(store, initial, created.value);
 }
 
 async function mutateTask(store, expected, body) {
   const mutation = updateTaskBody(expected, { taskId: "task", body });
   assert.equal(mutation.ok, true);
-  return store.commit(expected, mutation.value);
+  return commitDomainForOwner(store, expected, mutation.value);
 }
 
 test("online backup publishes an exact verified immutable generation while another reader is open", async () => {
@@ -65,12 +70,12 @@ test("online backup publishes an exact verified immutable generation while anoth
     const snapshot = await seedTask(first);
     second = await openPersistence(fixture.layout, { applicationVersion: "reader" });
     const generation = await first.createBackup();
-    assert.deepEqual(second.read(), snapshot);
+    assert.deepEqual(readDomainForOwner(second), snapshot);
     const verified = verifyBackupGeneration(fixture.layout, generation.generationId);
     assert.deepEqual(verified, generation);
     assert.equal(verified.manifest.kind, "manual");
-    assert.equal(verified.manifest.sourceSchemaVersion, 2);
-    assert.equal(verified.manifest.sourceHistory.length, 2);
+    assert.equal(verified.manifest.sourceSchemaVersion, 3);
+    assert.equal(verified.manifest.sourceHistory.length, 3);
     const directory = path.join(fixture.layout.backupGenerationsRoot, generation.generationId);
     assert.deepEqual(readdirSync(directory).sort(), ["manifest.json", "state.sqlite3"]);
     const database = new DatabaseSync(path.join(directory, "state.sqlite3"), { readOnly: true });
@@ -249,15 +254,15 @@ test("backup verification refuses missing, changed, extra, or newer material", a
       if (corruption === "newer") {
         const databasePath = path.join(directory, "state.sqlite3");
         const database = new DatabaseSync(databasePath);
-        database.prepare("UPDATE schema_metadata SET schema_version=3 WHERE singleton=1").run();
-        database.exec("PRAGMA user_version=3");
+        database.prepare("UPDATE schema_metadata SET schema_version=4 WHERE singleton=1").run();
+        database.exec("PRAGMA user_version=4");
         database.close();
         const databaseBytes = readFileSync(databasePath);
         const manifestPath = path.join(directory, "manifest.json");
         const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
         manifest.databaseLength = databaseBytes.byteLength;
         manifest.databaseSha256 = sha256(databaseBytes);
-        manifest.sourceSchemaVersion = 3;
+        manifest.sourceSchemaVersion = 4;
         writeFileSync(manifestPath, canonicalJson(manifest));
       }
       assert.throws(
@@ -304,7 +309,7 @@ test("restore requires acknowledgement, exact current file-set CAS, and zero con
       (error) => expectPersistenceError(error, "RESTORE_CONFLICT"),
     );
     store = await openPersistence(fixture.layout, { applicationVersion: "active" });
-    assert.deepEqual(store.read(), changed);
+    assert.deepEqual(readDomainForOwner(store), changed);
     const currentIdentity = originalIdentity;
     await assert.rejects(
       restoreBackup(fixture.layout, {
@@ -355,7 +360,7 @@ test("every failure after durable intent publication requires explicit restore r
     const receipt = await recoverInterruptedRestore(fixture.layout);
     assert.equal(receipt.restoreId, restoreId);
     store = await openPersistence(fixture.layout, { applicationVersion: "readback" });
-    assert.deepEqual(store.read(), backedUp);
+    assert.deepEqual(readDomainForOwner(store), backedUp);
   } finally {
     if (store) await store.close();
     cleanupPersistenceFixture(fixture);
@@ -509,7 +514,7 @@ test("interruption after retention preserves old bytes, blocks open, and recover
       );
     }
     store = await openPersistence(fixture.layout, { applicationVersion: "readback" });
-    assert.deepEqual(store.read(), backedUp);
+    assert.deepEqual(readDomainForOwner(store), backedUp);
   } finally {
     if (store) await store.close();
     cleanupPersistenceFixture(fixture);
@@ -567,7 +572,7 @@ test("interruption after publication or receipt resumes without fabricating roll
       const receipt = await recoverInterruptedRestore(fixture.layout);
       assert.equal(receipt.backupGenerationId, generation.generationId);
       store = await openPersistence(fixture.layout, { applicationVersion: "readback" });
-      assert.deepEqual(store.read(), backedUp);
+      assert.deepEqual(readDomainForOwner(store), backedUp);
       await store.close();
       store = undefined;
       await assert.rejects(

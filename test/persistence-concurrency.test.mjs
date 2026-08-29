@@ -12,6 +12,10 @@ import path from "node:path";
 import test from "node:test";
 import { openPersistence } from "../src/index.ts";
 import {
+  initializeDomainForOwner,
+  readDomainForOwner,
+} from "../src/persistence/application-repository.ts";
+import {
   assertNewSqliteMemberBindingForTesting,
   checkpointWal,
   openPrimaryDatabase,
@@ -59,7 +63,7 @@ test("SQLite open rejects unsafe and dangling sidecars before issuing a connecti
     let movedMarkerDirectory;
     try {
       store = await openPersistence(fixture.layout, { applicationVersion: "sidecar" });
-      store.initialize(emptySnapshot());
+      initializeDomainForOwner(store, emptySnapshot());
       await store.close();
       store = undefined;
       const primaryBefore = readFileSync(fixture.layout.databasePath);
@@ -141,7 +145,7 @@ test("write contention fails with typed BUSY at the configured bounded timeout",
   let second;
   try {
     store = await openPersistence(fixture.layout, { applicationVersion: "busy" });
-    store.initialize(emptySnapshot());
+    initializeDomainForOwner(store, emptySnapshot());
     await store.close();
     store = undefined;
     first = openPrimaryDatabase(fixture.layout.databasePath);
@@ -171,7 +175,7 @@ test("transaction callbacks reject async work and roll it back", async () => {
   let database;
   try {
     store = await openPersistence(fixture.layout, { applicationVersion: "async" });
-    store.initialize(emptySnapshot());
+    initializeDomainForOwner(store, emptySnapshot());
     await store.close();
     store = undefined;
     database = openPrimaryDatabase(fixture.layout.databasePath);
@@ -200,7 +204,7 @@ test("checkpoint mode is validated before interpolation", async () => {
       () => store.checkpoint("TRUNCATE); DROP TABLE tasks; --"),
       (error) => expectPersistenceError(error, "INVALID_INPUT"),
     );
-    assert.deepEqual(store.read(), { projects: [], tasks: [] });
+    assert.deepEqual(readDomainForOwner(store), { projects: [], tasks: [] });
   } finally {
     if (store) await store.close();
     cleanupPersistenceFixture(fixture);
@@ -214,7 +218,7 @@ test("a read transaction retains its snapshot while a writer commits and blocks 
   let writer;
   try {
     store = await openPersistence(fixture.layout, { applicationVersion: "snapshot" });
-    store.initialize(emptySnapshot());
+    initializeDomainForOwner(store, emptySnapshot());
     await store.close();
     store = undefined;
     reader = openPrimaryDatabase(fixture.layout.databasePath);
@@ -337,7 +341,7 @@ test("lifecycle and connection receipt identity replacement is detected", async 
     renameSync(receiptPath, ownedPath);
     writeFileSync(receiptPath, "replacement", { flag: "wx" });
     assert.throws(
-      () => store.read(),
+      () => readDomainForOwner(store),
       (error) => expectPersistenceError(error, "CONNECTION_RECEIPT_CHANGED"),
     );
     renameSync(receiptPath, replacementPath);
@@ -385,7 +389,7 @@ test("same-file lifecycle and connection receipt content tampering is detected",
     assert.equal(changed.length, original.length);
     writeFileSync(receiptPath, changed);
     assert.throws(
-      () => store.read(),
+      () => readDomainForOwner(store),
       (error) => expectPersistenceError(error, "CONNECTION_RECEIPT_CHANGED"),
     );
     writeFileSync(receiptPath, original);

@@ -2,268 +2,244 @@
 
 ## Status and authority
 
-This file is the sole normative owner of the planned runtime grant model and
-every fail-closed pre-mutation decision that combines actor, action, scope,
-resource revision, domain eligibility, resource ownership, and Project policy.
-No runtime authorization service, identity provider, or grant store exists
-today.
+This document is the normative owner of the implemented Phase 1 local runtime
+authorization model. The implementation is deliberately limited to the
+Project/Task/dependency application service. It is not an operating-system
+account system, team identity service, RBAC product, cloud identity provider,
+or authorization for development and external actions.
 
-This runtime contract does not authorize repository development, network
-access, secrets, Git publication, release, deployment, or modification of any
-external repository. Those actions still require the user's explicit authority
-at the time they are performed.
+Runtime grants never authorize repository development, network or secret
+access, Git writes, pull requests, release, deployment, adapters, execution,
+workspace mutation, scheduling, backup/restore, or any action outside the
+finite vocabulary below. Those actions require their own current authority and,
+where applicable, later product contracts.
 
-## Actor identity
+Project content, Task text, repository files, prompts, tool output, Agent text,
+Domain state, persisted audit, a prior authorization decision, and an approved
+plan are untrusted data. None can establish an actor, add an action, create a
+grant, or widen a scope.
 
-An `actor_id` is a stable, non-empty identity established by a trusted local
-ingress before application code runs. Actor kinds are `human`, `scheduler`,
-`service`, and `adapter`. A display name, prompt text, Task author, operating
-system process name, adapter payload, or Project content cannot assert an actor
-identity.
+## Trusted local ingress
 
-Delegation is explicit: a service acting for a human records both service
-`actor_id` and `delegated_by_actor_id`, and its effective permissions are the
-intersection of the service grant and delegation grant. Unknown, missing,
-conflicting, or unverifiable identity is denied.
+The application service accepts an `ApplicationIngress` supplied by a trusted
+local caller. That ingress establishes, outside command content:
 
-## Action vocabulary
+- one non-empty `actorId` and trusted local `principal`;
+- the current UTC timestamp;
+- fresh request, correlation, decision, audit, and grant identifiers; and
+- a separate boolean response to a named high-risk confirmation request.
 
-The initial exact action vocabulary is:
+Typed command fields cannot override those values. Missing, malformed,
+throwing, accessor-backed, duplicated, or ambiguous trusted values fail closed.
+EP-01C does not implement login, account discovery, principal ownership
+attestation, delegation identity, or multiple-user administration. A future
+ingress must preserve this boundary rather than inferring authority from
+content.
 
-`authorization.grant.issue`, `authorization.grant.revoke`, `policy.evaluate`,
-`project.register`, `project.update`, `project.disable`, `task.create`,
-`task.update`, `task.mark_ready`, `task.cancel`, `dependency.add`,
-`dependency.remove`, `scheduler.register`, `scheduler.inspect`,
-`scheduler.remove`, `dispatch.run`, `execution.claim`, `execution.resume`,
-`execution.retry`, `execution.inspect`, `execution.cancel`,
-`workspace.reserve`, `workspace.create`, `workspace.inspect`,
-`workspace.recover`, `workspace.cleanup`, `completion.gate.run`,
-`completion.gate.inspect`, `completion.gate.cancel`, `completion.evaluate`,
-`completion.accept`, `integration.reserve`, `integration.finalize`,
-`backup.create`, `backup.restore`, `migration.apply`, `diagnostic.read`,
-`diagnostic.export`, `external.merge`, `external.push`, `external.release`, and
-`external.deploy`.
+## Exact action vocabulary
 
-There is no wildcard action. Adding or renaming an action is a versioned public
-contract change. An unknown action is denied rather than mapped to a similar
-one.
+The complete implemented vocabulary is:
 
-## Trusted bootstrap authority
+- `authorization.grant.issue`
+- `authorization.grant.inspect`
+- `authorization.grant.revoke`
+- `policy.evaluate`
+- `project.register`
+- `project.update`
+- `project.disable`
+- `project.inspect`
+- `task.create`
+- `task.update`
+- `task.mark_ready`
+- `task.cancel`
+- `task.inspect`
+- `dependency.add`
+- `dependency.remove`
 
-The first grant cannot authorize itself. On a newly initialized database with
-no grant, one non-recursive bootstrap authority is established from an
-interactive local actor whose operating-system principal owns the protected
-runtime root. The persistence owner records that actor, OS-principal identity,
-runtime-root identity, creation/expiry, consumption, and resulting grant IDs in
-the singleton `authorization_bootstrap` record.
+There is no wildcard and no prefix expansion. Unknown actions and unimplemented
+commands are invalid input; they are not mapped to a similar action. In
+particular, this vocabulary contains no execution, claim, completion,
+scheduler, workspace, adapter, Git, network, backup/restore, diagnostic, CLI,
+MCP, release, or deployment capability.
 
-Bootstrap is not a grant or ProjectPolicy decision. It has exactly one power:
-before expiry, issue to that same actor a bounded initial system-scoped set of
-`authorization.grant.issue`, `authorization.grant.revoke`, and
-`policy.evaluate` grants. One atomic bootstrap operation proves the database has
-no grants, matches the interactive actor/OS/runtime-root identities, inserts
-that fixed set, records audit events, and marks bootstrap consumed under the
-[persistence transaction boundary](persistence-contract.md#transaction-boundaries).
-It performs no adapter, network, filesystem-target, Project, Task, or external
-mutation.
+## One-time bootstrap
 
-After that transaction, bootstrap can never be used again, including after a
-process restart; backup/restore preserves its consumed state. If any identity
-is unknown, the record is expired/consumed, or grants already exist, bootstrap
-fails closed. There is no default administrator, self-issued grant, environment
-variable override, or policy-adapter route around this trust root.
+A fresh schema-v3 runtime has no grants. Exactly once, a trusted local caller
+may invoke `authorization.bootstrap` with a finite expiry no more than 31 days
+after the trusted ingress time. Bootstrap requires a separate high-risk
+confirmation and atomically:
 
-All later issuance requires `authorization.grant.issue`; its constraints
-enumerate the actions/scopes it may delegate and maximum expiry, and an issuer
-cannot delegate beyond its own current authority. Revocation requires
-`authorization.grant.revoke` bound to the exact target grant identity/revision.
+1. proves that no bootstrap receipt exists;
+2. records the trusted actor and principal;
+3. records the canonical runtime-root identity (`rootKey`, platform, device,
+   inode, and mode) without following alias/reparse components;
+4. inserts one runtime-scoped grant for that actor for each of the fifteen
+   exact Phase 1 actions;
+5. appends the bootstrap request and sanitized audit event; and
+6. reads the terminal transaction state back before commit.
 
-## Read and inspection authorization
+The singleton bootstrap receipt is immutable and survives restart,
+backup/restore, and migration. It cannot be consumed again. Every later
+application operation revalidates the runtime root against that receipt; an
+unknown or changed identity is denied before any request, decision, audit, or
+product mutation is written.
 
-Before `scheduler.inspect`, `execution.inspect`, `workspace.inspect`,
-`completion.gate.inspect`, or `diagnostic.read`, the application creates a
-side-effect-free read decision. It verifies request schema, trusted
-actor/delegation, the exact read action and scope, target identity/revision, a
-current matching grant, correlation/query identity, and any credential or
-network authority needed to observe the target. Missing, stale, ambiguous, or
-denied input prevents the read.
+Bootstrap is a local trust-root ceremony, not a default administrator role.
+The fixed initial grants expire and can be revoked. There is no environment
+override, self-authorizing content, hidden fallback grant, or second bootstrap.
 
-The allow record binds those identities, decision/expiry time, and a stable
-reason code to exactly one bounded query. It carries no mutating intent and
-cannot reserve, create, update, remove, finalize, or authorize a later mutation.
-ProjectPolicy is not called for this read-only decision because the current
-ProjectPolicy port returns decision inputs for requested mutations and
-completion; a read grant cannot be broadened by omitting any privacy,
-diagnostic-access, or external-authority rule owned elsewhere.
+## Grant shape
 
-## Grant shape and semantics
+Every grant has these semantic fields:
 
-Every grant contains exactly these semantic fields:
+- stable `grantId` and positive CAS `revision`;
+- exact `actorId` and one exact action;
+- a `runtime` scope, or a `project` scope bound to exact `projectId`,
+  `resourceRevision`, and `configRevision`;
+- finite `notBefore` and `expiresAt` UTC timestamps;
+- nullable irreversible `revokedAt`; and
+- nullable `issuerGrantId` and `sourceGrantId`; both are null only for the
+  fixed bootstrap grants and both identify the exact administrative and
+  candidate-action authorities for every delegated grant.
 
-- unique `grant_id`;
-- positive `grant_revision`, initialized to `1`;
-- trusted `actor_id` and nullable `delegated_by_actor_id`;
-- one exact `action`;
-- `scope_kind` and stable `scope_id`;
-- exact `resource_revision` to which the decision applies;
-- `issued_by`, `issued_at`, and mandatory finite `expires_at`;
-- versioned, canonical `constraints`;
-- nullable `revoked_at`; and
-- an audit correlation ID.
+A grant is usable only for the trusted actor, exact action, exact scope, exact
+current Project revisions, and time interval `notBefore <= now < expiresAt`,
+while not revoked. Runtime scope is intentionally limited by the finite action
+vocabulary; it is not authority over external resources. Malformed or
+extra-field grant data fails closed.
 
-Scopes are `system`, `project`, `task`, `execution`, or `resource`. A scope
-matches exactly unless its constraints explicitly enumerate descendant stable
-IDs; textual prefixes, filesystem prefixes, parent hierarchy, dependency edges,
-and Project membership do not imply authorization inheritance. A create action
-binds `resource_revision` to the current revision of its owning Project or
-parent resource. Other mutations bind the exact target revision.
+Issuance requires both a current `authorization.grant.issue` grant and a
+current source grant for the candidate action at an equal-or-narrower scope.
+The candidate cannot begin before the trusted current time or outlive either
+source grant. Thus issuance can copy or narrow authority but cannot manufacture
+or expand it. Both provenance edges are persisted, must terminate at the
+immutable bootstrap set without cycles, and are revalidated by the combined
+decoder on every authoritative read. One deterministic issuance selection owns
+both the allow decision and provenance: the administrative grant recorded in
+the decision is exactly the `issuerGrantId` persisted on the new grant, even
+when another otherwise matching administrative grant has a shorter lifetime.
 
-A grant is usable only after `issued_at`, strictly before `expires_at`, while
-not revoked, for its exact actor/action/scope/revision and satisfied constraints.
-Clock uncertainty, malformed constraints, absent target revision, or a changed
-resource makes it unusable. Grant authority fields are immutable. Revocation is
-the only record transition: it CAS-matches `grant_revision`, sets `revoked_at`,
-increments that revision exactly once, and appends audit history. A revoked
-grant cannot be restored; changed authority requires a new grant.
+Grant authority fields are immutable. Revocation is the only update: it must
+match the exact current revision, set `revokedAt`, bind the revocation request,
+and increment the revision once. A revoked grant cannot be restored, changed,
+or deleted. Inspection and revocation also require the caller-supplied expected
+grant revision.
 
-## Preliminary ProjectPolicy query
+## Local policy and high-risk confirmation
 
-For a requested mutation whose exact target is a registered Project or a
-Project-owned resource, ProjectPolicy evaluation is a pre-final, non-mutating
-decision-input query. It uses a distinct preliminary authorization that verifies
-only:
+Authorization evaluation is the intersection of grant and local policy.
+Policy can only narrow a grant:
 
-1. request schema, actor/delegation identity, correlation ID, Project identity,
-   exact Project config revision, and requested mutation action/scope;
-2. a current `policy.evaluate` grant for that actor and Project scope; and
-3. the identity/freshness of any read-only domain, ownership, or external
-   observation supplied as policy input.
+- Task and dependency mutations are allowed by policy only while the owning
+  Domain Project is enabled.
+- `project.update` and `project.disable` may evaluate while the Project is
+  disabled so an explicitly authorized, separately confirmed update can
+  re-enable it.
+- inspection, grant administration, and `policy.evaluate` use the canonical
+  `read_not_applicable` policy result; they still require an exact grant.
 
-This preliminary authorization does not call ProjectPolicy, require the
-requested mutation's full authorization decision, or persist a mutating
-external-effect intent. With that preliminary allow record, the application may
-make exactly one side-effect-free ProjectPolicy call using the operation shape
-owned by the [adapter contract](adapter-contracts.md#projectpolicy-ato-project-policyv1).
-The adapter may read the supplied immutable decision context but MUST NOT write
-core or external state, issue/revoke a grant, invoke another mutating adapter,
-or reserve a resource.
+The following actions additionally require a fresh confirmation from trusted
+ingress after a matching grant is found:
 
-The result is a policy receipt bound to the query, requested action, subject and
-config revisions. It is only input to the final decision: `allow` cannot mutate
-anything, `deny|defer` blocks the requested mutation, and missing/stale/error
-results fail closed. This two-stage rule is the only ProjectPolicy bootstrap;
-policy never authorizes its own query.
+- `authorization.grant.issue`
+- `authorization.grant.revoke`
+- `project.register`
+- `project.update`
+- `project.disable`
 
-A system-scoped action with no registered Project target—including initial
-Project registration and authorization administration—has no ProjectPolicy to
-query. Its final decision records policy as `not_applicable/system_scope` and
-still requires every other action-specific check. Unknown Project ownership or
-an unresolved scope is denied, not treated as system scope.
+Confirmation is bound to actor, action, request, and correlation identities. A
+command field, Project/Task content, or a prior confirmation cannot supply or
+replay it. Missing, false, or throwing confirmation denies the operation.
 
-## Pre-mutation decision envelope
+## Application decision sequence
 
-The fixed one-time bootstrap transaction above is the sole exception to this
-ProjectPolicy sequence; it can issue only its named initial grant set and has no
-adapter or external effect.
+For every accepted typed command or exact inspection query, the application
+owner keeps trusted interaction and filesystem inspection outside the SQLite
+writer transaction. It performs a read-only preflight, then opens one short
+`BEGIN IMMEDIATE` transaction for the authoritative decision and commit:
 
-After the applicable preliminary policy receipt exists—or exact system scope
-has been established—and before the first requested mutation, including an
-external-effect intent write, workspace creation, cleanup, grant administration,
-or domain write, the application service evaluates all applicable steps below
-against one current final-decision context:
+1. establish trusted actor, time, and fresh operation identities;
+2. load and fully decode a read-only combined preflight snapshot and bind the
+   candidate target;
+3. establish that a matching current grant/policy could reach confirmation,
+   then obtain the separate trusted high-risk confirmation when required;
+4. refresh trusted time and allocate any trusted mutation identities;
+5. derive the prospective affected-Project set for cancellation propagation,
+   then revalidate the runtime root and every registered, newly registered, or
+   affected Project root immediately before beginning the writer transaction;
+6. inside `BEGIN IMMEDIATE`, decode the current combined snapshot again and
+   recompute the exact affected-Project set and compare it together with every
+   captured filesystem receipt, ProjectRegistry revision, bootstrap binding,
+   exact target, supplied revision, and current grant/policy state;
+7. ask the Domain Core for every Project/Task/dependency mutation;
+8. append request, allow decision, sanitized audit, registry/grant changes,
+   and the accepted Domain snapshot as one applicable atomic unit; and
+9. decode the terminal combined state before commit.
 
-1. **Request integrity:** schema, action, canonical resource identity, expected
-   revision, idempotency identity, and correlation identity are present and
-   internally consistent.
-2. **Actor:** trusted ingress establishes the exact actor and any delegation.
-3. **Grant:** an unexpired, unrevoked grant matches the exact action, scope,
-   resource revision, and constraints.
-4. **Domain eligibility:** when the command requires a state transition or
-   claim, the current result from the [domain owner](domain-contract.md) allows
-   it.
-5. **Ownership:** when an operation mutates or removes an external resource, a
-   current ownership receipt from the
-   [completion/workspace owner](completion-workspace-contract.md) matches that
-   exact resource and generation.
-6. **Policy:** for a Project-bound action, the preliminary ProjectPolicy receipt
-   returns `allow` for the exact requested action, subject revision,
-   policy/config revision, and external target and remains fresh. For a proven
-   system-scoped action, the decision records `not_applicable/system_scope`.
-7. **External authority:** credentials, login state, network permission, and
-   user authorization required for an external action are independently
-   present. A stored runtime grant cannot manufacture any of them.
-8. **Transactional recheck:** immediately before commit or external-effect
-   intent creation, the transaction rechecks grant expiry/revocation, resource
-   revision, eligibility, ownership identity, and policy freshness.
+No confirmation callback, filesystem inspection, ID provider call, awaited
+work, or external effect runs while the SQLite writer transaction is open.
+The transaction can only narrow or reject the preflight result; concurrent
+state change or receipt mismatch fails closed.
 
-Every required step must return a positive, current result. `deny`, `defer`,
-unknown, stale, ambiguous, missing, or evaluation error fails closed before the
-mutation. Policy may narrow an existing grant but cannot broaden it. Domain
-readiness, a completed test, a receipt, an approved development plan, or a prior
-similar operation is not a grant.
+The persistence owner never selects a Domain command or grants authority. The
+application owner never reimplements Domain transition, parent, cycle,
+terminal-state, or dependency rules. Stale revisions, uncertain path/identity,
+missing authorization, disabled policy, Domain rejection, duplicate request,
+and injected failure produce no partial accepted mutation.
 
-Only after all eight checks yield the final `allow` may a domain mutation commit
-or a persisted external-effect intent be created. Only after that intent commits
-may its mutating adapter call occur. The preliminary query record and policy
-receipt cannot substitute for either the final decision or intent.
+When one Domain command would mutate Tasks owned by more than one Project,
+every affected Project must be covered. In Phase 1 the only such implemented
+case is cancellation propagation to ready dependents. A Project-scoped
+`task.cancel` grant fails closed before the Domain write if propagation would
+cross a Project boundary; the finite runtime-scoped `task.cancel` capability
+is required for that multi-Project mutation. The application narrows the
+authorization-owner input to runtime-scoped grants for this second decision;
+therefore a lexically earlier Project grant cannot shadow a current runtime
+grant, while an expired or revoked runtime grant still fails closed. Runtime
+scope does not override
+local policy or Project identity: every affected Project must remain registered
+at the captured resource/config revisions, retain its revalidated root identity,
+and independently evaluate `task.cancel` policy as `allow`. A disabled affected
+Project, missing registry binding, changed affected set, stale revision, or
+uncertain/substituted root rejects the complete mutation atomically.
 
-A final Project-bound decision records the exact ProjectPolicy binding. A
-proven system-scoped action with no registered Project target records the
-canonical `system_not_applicable` policy binding instead; it never invents a
-policy ID or revision. Either binding is part of the operation semantic
-identity and must match the persisted intent.
+Exact reads (`project.inspect`, `task.inspect`, and
+`authorization.grant.inspect`) pass through the same application owner and
+consume a request, allow decision, and audit record. EP-01C intentionally has
+no list or diagnostic query that could bypass exact target authorization.
 
-## Decision record
+When evaluation reaches a fully bound authorization denial, the transaction
+atomically appends a denied request, denied decision, and sanitized
+`authorization.denied` audit event, with no Project, grant, Task, dependency,
+or Domain mutation. A competing affected-set or affected-Project revision
+change is represented by a terminal-decodable `scope_revision_stale` denial
+with no retained grant identity. Failures before a safe typed/bound decision
+envelope write nothing.
 
-A request that has not established a trusted actor, known action, canonical
-scope/resource identity, and expected revision is rejected at typed ingress and
-records only sanitized audit evidence; it cannot manufacture a partially bound
-authorization decision. Every evaluation after that boundary produces an
-authorization decision record with:
+## Persisted decision and audit records
 
-- decision ID, decision kind `read|preliminary_policy_query|final_mutation`,
-  correlation ID, and nullable bounded query ID;
-- actor and delegation identity;
-- action, scope, resource identity, and expected revision;
-- nullable grant ID/revision and expiry, present exactly when a matching grant
-  was found and absent for a `grant_missing` or pre-grant validation denial;
-- domain-eligibility evidence reference when applicable;
-- ownership-receipt reference when applicable;
-- `policy_binding_kind`; for `project_policy`, the policy ID, contract version,
-  config revision, and nullable policy-receipt reference (required for the
-  final Project-bound allow, absent while recording a failed preliminary query
-  or missing-receipt denial); for a read decision the canonical
-  `read_not_applicable` binding; or for proven system scope the canonical
-  `system_not_applicable` binding. Both not-applicable bindings have no policy
-  identity fields and neither can be used by the other decision kind;
-- external-authority requirement status;
-- `allow`, `deny`, or `defer` result plus a stable reason code; and
-- decision time and validity end, which cannot exceed grant or policy expiry.
+An authorization decision binds its fresh decision and request IDs, actor,
+exact action, result/reason, policy result, nullable matching grant ID/revision,
+nullable Project ID/resource revision, and trusted timestamp. It contains no
+reusable capability. A previous decision is history only and cannot authorize a
+later request.
 
-Only `allow` may be consumed, once, by its exact bounded query or mutation whose
-identities still match. A final mutation allow and its external-effect intent
-may be inserted in the same transaction, but the decision record is inserted
-first and the intent references it; neither may commit without the other. A
-later fresh allow for that exact semantic intent may commit only with the
-intent's authorization-binding CAS; it changes no semantic member and retains
-all prior decision records. A read or preliminary-policy allow is consumed only
-by its named query and cannot
-be referenced by a mutation intent. The record contains no secret values and
-is persisted with the query, mutation, or failed attempt's audit evidence.
-Replaying it after consumption or any bound revision, policy, ownership, or
-expiry change is denied.
+Application requests, bootstrap, decisions, and audit rows are append-only.
+Grant rows are insert-only except for the single CAS revocation transition.
+ProjectRegistry rows cannot be deleted. SQLite constraints, foreign keys,
+triggers, combined typed decoding, and terminal readback enforce these shapes.
 
-The preliminary policy-query allow is a separate record with action
-`policy.evaluate`, query ID, actor/grant, Project/config revision, requested
-mutation identity, expiry, and result. It never carries the final decision ID
-and is not consumable by a mutation.
+Audit details are fixed sanitized metadata selected by application code. Task
+body, Project path, prompts, tool output, Agent text, secrets, and arbitrary
+command content are not copied into audit records. See
+[privacy and logging](../security/privacy-and-logging.md).
 
-## External and destructive actions
+## Explicit non-claims
 
-`external.merge`, `external.push`, `external.release`, `external.deploy`,
-workspace cleanup, backup restore, and migration are distinct actions and need
-distinct grants. Permission for an earlier step never implies a later step.
-Destructive or externally visible work also requires the ProjectPolicy allow
-decision and the caller's current real-world authority. Partial external success
-is recorded as actual state and routed through reconciliation; authorization
-does not permit reset, force, deletion, or fabricated rollback.
+EP-01C does not implement a product CLI, CLI login or initialization surface,
+team accounts, RBAC, cloud identity, OS account ownership proof, credential
+storage, external policy adapter, execution/claim/completion authorization,
+workspace or scheduler authorization, backup/restore/doctor user experience,
+MCP, dispatcher, network effects, Git effects, release, or deployment. EP-01D
+owns the Phase 1 product CLI and operational surfaces. EP-02 owns real Manual
+ExecutionBackend and the running/completed execution loop.

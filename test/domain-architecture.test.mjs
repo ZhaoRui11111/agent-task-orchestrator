@@ -6,27 +6,43 @@ import * as packageSurface from "../src/index.ts";
 import { repoRoot } from "../scripts/repo-utils.mjs";
 
 const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
+  "APPLICATION_ERROR_CODES",
+  "AUTHORIZATION_ACTIONS",
   "DOMAIN_ERROR_CODES",
+  "HIGH_RISK_ACTIONS",
   "PERSISTENCE_ERROR_CODES",
+  "PROJECT_REGISTRY_ERROR_CODES",
   "PersistenceError",
+  "ProjectRegistryError",
   "RUNTIME_DIRECTORY_NAME",
   "RUNTIME_ENVIRONMENT_VARIABLE",
   "TASK_STATES",
   "TASK_TRANSITIONS",
   "WAITING_REASONS",
   "addTaskDependency",
+  "canIssueGrant",
+  "createApplicationService",
   "createDomainSnapshot",
   "createTask",
   "currentSchemaVersion",
+  "evaluateAuthorization",
   "evaluateTaskEligibility",
   "evaluateWaitingContinuation",
   "getScaffoldStatus",
   "inspectPrimaryIdentity",
+  "inspectProjectRoot",
+  "inspectTrustedRuntimeRoot",
+  "isAuthorizationAction",
+  "isHighRiskAction",
   "openPersistence",
+  "parseAuthorizationGrant",
   "prepareRuntimeLayout",
   "recoverInterruptedRestore",
+  "registerProject",
   "removeTaskDependency",
   "restoreBackup",
+  "revalidateProjectRoot",
+  "setProjectEnabled",
   "setTaskParent",
   "setTaskSupersession",
   "transitionTask",
@@ -56,14 +72,16 @@ function baseInput() {
   };
 }
 
-test("the package exposes only the intended Domain Core and persistence-foundation runtime surface", () => {
+test("the package exposes only the intended Phase 1 Domain, persistence, registry, authorization, and application surface", () => {
   assert.deepEqual(Object.keys(packageSurface).sort(), [...EXPECTED_RUNTIME_EXPORTS].sort());
   assert.deepEqual(packageSurface.getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "persistence-foundation",
+    phase: "phase1-application-service",
     domainCoreImplemented: true,
     persistenceFoundationImplemented: true,
-    applicationServiceImplemented: false,
+    projectRegistryImplemented: true,
+    runtimeAuthorizationImplemented: true,
+    applicationServiceImplemented: true,
     productRuntimeImplemented: false,
     supportedAdapters: [],
   });

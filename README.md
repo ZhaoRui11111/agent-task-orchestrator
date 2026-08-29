@@ -8,13 +8,14 @@ This is an independent community project. It is not made, sponsored, or endorsed
 
 The repository contains a governance and architecture-contract baseline, a
 minimal executable TypeScript/Node toolchain and feasibility harness, a pure
-in-memory Domain Core for Project/Task rules, and a narrow local SQLite
-persistence foundation. That foundation owns a safe runtime root, staged
-schema, migrations, exact Project/Task snapshot storage, and verified
-backup/restore recovery primitives. It still has no application service,
-executable orchestrator, product CLI, ProjectRegistry/authorization
-experience, MCP server, plugin, dispatcher, scheduler, execution backend,
-supported adapter, supported release, or validated product platform
+in-memory Domain Core for Project/Task rules, a safe local ProjectRegistry, a
+finite runtime authorization model, one typed Project/Task/dependency
+application service, and schema-v3 SQLite persistence. The application service
+is the sole public product command/query owner and atomically coordinates
+Domain snapshots, registry/grant changes, authorization decisions, and
+sanitized audit. It still has no executable orchestrator, product CLI, MCP
+server, plugin, dispatcher, scheduler, execution backend or claim/completion
+loop, supported adapter, supported release, or validated product platform
 integration. The current `ato` console entry reports capability status only.
 
 Unimplemented planned capabilities are not current capabilities. Design
@@ -57,7 +58,9 @@ The frozen versions, package boundary, local commands, CI skeleton, and
 dependency maintenance rules are owned by the
 [toolchain contract](docs/reference/toolchain-contract.md); executable Domain
 Core behavior is owned by the [domain contract](docs/reference/domain-contract.md),
-and the implemented storage boundary by the
+the finite local grant model by the
+[authorization contract](docs/reference/authorization-contract.md), and the
+implemented storage boundary by the
 [persistence contract](docs/reference/persistence-contract.md).
 With the exact toolchain installed, the local repository gate is:
 

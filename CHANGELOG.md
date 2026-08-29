@@ -22,9 +22,15 @@ All notable changes to this project will be documented in this file.
   Domain Core Project/Task storage, typed repository CAS/readback, bounded
   WAL transactions, verified online backup generations, and explicit
   identity-bound restore recovery.
+- Added Phase 1 schema v3 with a canonical local ProjectRegistry, one-time
+  runtime-root-bound authorization bootstrap, finite inspectable/revocable
+  grants, exact revision-aware application commands and queries, atomic Domain
+  snapshot/registry/authorization/audit commits, typed combined-state
+  corruption refusal, restart readback, and failure/concurrency evidence.
 
 These entries do not announce a release or supported runtime. The executable
 material is limited to the development package, feasibility harness, pure
-in-memory Domain Core, and narrow local persistence foundation; application,
-authorization, product CLI, execution/completion, dispatcher, adapter,
-scheduler, MCP, and orchestration runtime behavior remain unimplemented.
+in-memory Domain Core, ProjectRegistry, runtime authorization, typed Phase 1
+application service, and local schema-v3 persistence; product CLI,
+execution/completion, dispatcher, adapter, scheduler, MCP, and orchestration
+runtime behavior remain unimplemented.

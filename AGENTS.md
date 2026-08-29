@@ -17,16 +17,22 @@ If documents conflict, stop the affected mutation and resolve the conflict inste
 ## Current repository state
 
 This repository has a governance baseline, an executable toolchain and
-feasibility scaffold, a pure in-memory Domain Core, and the narrow local SQLite
-persistence foundation defined by the persistence contract. It still has no
-application service, product CLI, ProjectRegistry/authorization experience,
-dispatcher, port, adapter, scheduler, MCP component, or executable
-orchestration runtime. The persistence owner does not itself authorize or
-select a Domain mutation. Do not describe those planned modules, platform
-support, safety properties, or integration behavior as implemented. Follow the
+feasibility scaffold, a pure in-memory Domain Core, and the local Phase 1
+schema-v3 foundation defined by the persistence contract. ProjectRegistry,
+runtime authorization, and the typed application service are implemented for
+local Project/Task/dependency management. The application owner alone selects
+Domain commands, evaluates current explicit grants, and coordinates accepted
+snapshot/registry/grant/decision/audit commits; persistence still neither
+authorizes nor selects a Domain mutation. The repository still has no product
+CLI, dispatcher, port, adapter, scheduler, MCP component, execution claim or
+completion loop, or executable orchestration runtime. Do not describe those
+planned modules, platform support, safety properties, or integration behavior
+as implemented. Follow the
 [toolchain contract](docs/reference/toolchain-contract.md) for current
 executable entry points, the [domain contract](docs/reference/domain-contract.md)
-for Domain Core behavior, and the
+for Domain Core behavior, the
+[authorization contract](docs/reference/authorization-contract.md) for the
+current finite local grant model, and the
 [persistence contract](docs/reference/persistence-contract.md) for the staged
 schema and storage/recovery boundary.
 

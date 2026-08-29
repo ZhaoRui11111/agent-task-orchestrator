@@ -5,8 +5,10 @@
 This is the sole normative owner of Project/Task domain semantics. The
 repository implements these rules as the pure in-memory TypeScript
 [Domain Core](../../src/domain.ts). `MUST`, `MUST NOT`, and `SHOULD` below
-constrain that implementation and its evidence; they do not imply an
-application service, persistence layer, dispatcher, adapter, product CLI, or
+constrain that implementation and its evidence. The implemented Phase 1
+application service invokes this owner for Project registration/enablement and
+Task/dependency mutations; the contract does not itself authorize those calls
+or imply a dispatcher, adapter, product CLI, execution backend, or
 orchestration runtime.
 
 This contract deliberately contains no SQLite, Git, Codex, CLI, MCP, scheduler,
@@ -17,6 +19,12 @@ the [authorization contract](authorization-contract.md).
 
 ## Project binding
 
+- `registerProject` is the sole pure Domain command that adds a Project. It
+  rejects duplicate IDs and initializes the Project enabled without inventing
+  a filesystem, adapter, or authorization identity.
+- `setProjectEnabled` is the sole pure Domain command that changes the enabled
+  flag. The application owner supplies current registry revisions and
+  authorization; Domain returns a complete trusted Project mutation.
 - Every Task has exactly one `project_id`, referring to a registered Project.
 - `project_id` is immutable after Task creation. Moving work between Projects
   requires a new Task that explicitly supersedes the old one.

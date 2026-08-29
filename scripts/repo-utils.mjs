@@ -19,10 +19,13 @@ export const taskArtifactsRoot = path.join(repoRoot, ".task-artifacts");
 const ownedGenerationReceipts = new Map();
 
 export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
+  "src/application.ts",
+  "src/authorization.ts",
   "src/cli.ts",
   "src/domain.ts",
   "src/index.ts",
   "src/node-builtins.d.ts",
+  "src/persistence/application-repository.ts",
   "src/persistence/backup.ts",
   "src/persistence/database.ts",
   "src/persistence/errors.ts",
@@ -32,11 +35,13 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/persistence/runtime.ts",
   "src/persistence/store.ts",
   "src/persistence/values.ts",
+  "src/project-registry.ts",
 ]);
 
 export const EXPECTED_MIGRATION_FILES = Object.freeze([
   "migrations/0001-persistence-metadata.sql",
   "migrations/0002-phase1-task-storage.sql",
+  "migrations/0003-phase1-application.sql",
 ]);
 
 const ALLOWED_PERSISTENCE_BUILTINS = new Set([
@@ -124,7 +129,8 @@ export function productionBoundaryFailures(inventory, readSource) {
       ...source.matchAll(/\bimport\s*\(\s*["'](node:[^"']+)["']\s*\)/gu),
     ].map((match) => match[1]);
     for (const builtin of builtins) {
-      if (!relative.startsWith("src/persistence/")) {
+      const registryBuiltin = relative === "src/project-registry.ts" && (builtin === "node:fs" || builtin === "node:path");
+      if (!relative.startsWith("src/persistence/") && !registryBuiltin) {
         failures.push(`${relative}: Node built-in escaped the persistence owner boundary`);
       } else if (!ALLOWED_PERSISTENCE_BUILTINS.has(builtin)) {
         failures.push(`${relative}: undeclared persistence built-in ${builtin}`);

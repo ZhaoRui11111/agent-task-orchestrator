@@ -1,4 +1,8 @@
-import type { DomainMutation, DomainSnapshot } from "../domain.ts";
+import {
+  bindApplicationDatabase,
+  readApplicationState,
+  unbindApplicationDatabase,
+} from "./application-repository.ts";
 import {
   createBackupUnderLock,
   type BackupGeneration,
@@ -20,11 +24,7 @@ import {
   migrateDatabase,
   type MigrationResult,
 } from "./migrations.ts";
-import {
-  commitDomainMutation,
-  initializeDomainSnapshot,
-  readDomainSnapshot,
-} from "./repository.ts";
+import { readDomainSnapshot } from "./repository.ts";
 import {
   assertConnectionReceiptHeld,
   assertRuntimeLayout,
@@ -70,7 +70,8 @@ function inspectBeforeWritableOpen(layout: RuntimeLayout): number | null {
   try {
     const evidence = inspectSchemaEvidence(database);
     verifyDatabaseIntegrity(database);
-    if (evidence.schemaVersion >= 2) readDomainSnapshot(database);
+    if (evidence.schemaVersion >= 3) readApplicationState(database);
+    else if (evidence.schemaVersion >= 2) readDomainSnapshot(database);
     return evidence.schemaVersion;
   } finally {
     database.close();
@@ -91,9 +92,6 @@ export interface PersistenceStore {
   readonly connectionPolicy: ConnectionPolicyEvidence;
   readonly layout: RuntimeLayout;
   readonly applicationVersion: string;
-  read(): DomainSnapshot;
-  initialize(snapshot: DomainSnapshot): DomainSnapshot;
-  commit(expected: DomainSnapshot, mutation: DomainMutation): DomainSnapshot;
   checkpoint(mode?: "PASSIVE" | "RESTART" | "TRUNCATE"): CheckpointResult;
   createBackup(): Promise<BackupGeneration>;
   close(): Promise<void>;
@@ -123,6 +121,7 @@ class PersistenceStoreOwner implements PersistenceStore {
     this.#receipt = receipt;
     this.migration = migration;
     this.connectionPolicy = connectionPolicy;
+    bindApplicationDatabase(this, database, () => this.#assertOpen());
   }
 
   #assertOpen(): void {
@@ -131,21 +130,6 @@ class PersistenceStoreOwner implements PersistenceStore {
     }
     assertRuntimeLayout(this.layout);
     assertConnectionReceiptHeld(this.layout, this.#receipt);
-  }
-
-  read(): DomainSnapshot {
-    this.#assertOpen();
-    return readDomainSnapshot(this.#database);
-  }
-
-  initialize(snapshot: DomainSnapshot): DomainSnapshot {
-    this.#assertOpen();
-    return initializeDomainSnapshot(this.#database, snapshot);
-  }
-
-  commit(expected: DomainSnapshot, mutation: DomainMutation): DomainSnapshot {
-    this.#assertOpen();
-    return commitDomainMutation(this.#database, expected, mutation);
   }
 
   checkpoint(mode: "PASSIVE" | "RESTART" | "TRUNCATE" = "PASSIVE"): CheckpointResult {
@@ -172,6 +156,7 @@ class PersistenceStoreOwner implements PersistenceStore {
     await withLifecycleLock(this.layout, "close", (token) => {
       if (this.#state === "open") {
         assertConnectionReceiptHeld(this.layout, this.#receipt);
+        unbindApplicationDatabase(this);
         this.#database.close();
         this.#state = "database_closed";
       }
@@ -222,7 +207,7 @@ export async function openPersistence(
         },
       });
       verifyDatabaseIntegrity(database);
-      readDomainSnapshot(database);
+      readApplicationState(database);
       enforcePrivatePrimaryFiles(layout);
       const connectionPolicy = verifyConnectionPolicy(database);
       receipt = createConnectionReceipt(layout, options.applicationVersion, token);

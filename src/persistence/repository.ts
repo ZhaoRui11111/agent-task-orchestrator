@@ -3,6 +3,7 @@ import {
   type DomainMutation,
   type DomainSnapshot,
   type Project,
+  type ProjectDomainMutation,
   type Task,
 } from "../domain.ts";
 import {
@@ -61,7 +62,7 @@ function validateCallerSnapshot(value: DomainSnapshot, label: string): DomainSna
   return result.value;
 }
 
-function readDomainSnapshotUntransactional(database: SqliteDatabase): DomainSnapshot {
+export function readDomainSnapshotUntransactional(database: SqliteDatabase): DomainSnapshot {
   let projectRows: readonly Record<string, unknown>[];
   let taskRows: readonly Record<string, unknown>[];
   let dependencyRows: readonly Record<string, unknown>[];
@@ -348,7 +349,26 @@ export function commitDomainMutation(
     throw persistenceFailure("INVALID_INPUT", "changedTaskIds does not exactly bind the Domain mutation");
   }
 
-  return runWriteTransaction(database, () => {
+  return runWriteTransaction(database, () =>
+    writeDomainMutationUntransactional(database, expected, mutation),
+  );
+}
+
+export function writeDomainMutationUntransactional(
+  database: SqliteDatabase,
+  expectedInput: DomainSnapshot,
+  mutationInput: DomainMutation,
+): DomainSnapshot {
+  const expected = validateCallerSnapshot(expectedInput, "Expected snapshot");
+  const mutation = parseMutation(mutationInput);
+  if (canonicalJson(expected.projects) !== canonicalJson(mutation.snapshot.projects)) {
+    throw persistenceFailure("INVALID_INPUT", "Domain mutations must not change the Project registry");
+  }
+  const actualChanged = changedTaskIds(expected, mutation.snapshot);
+  if (canonicalJson(actualChanged) !== canonicalJson(mutation.changedTaskIds) || actualChanged.length === 0) {
+    throw persistenceFailure("INVALID_INPUT", "changedTaskIds does not exactly bind the Domain mutation");
+  }
+  try {
     if (!readDomainInitialized(database)) {
       throw persistenceFailure("REVISION_CONFLICT", "Persistence store has not been initialized");
     }
@@ -395,5 +415,77 @@ export function commitDomainMutation(
       throw persistenceFailure("INTEGRITY_ERROR", "Mutation terminal readback did not match the Domain result");
     }
     return readback;
-  });
+  } catch (error) {
+    throw normalizeSqliteFailure(error, "INTEGRITY_ERROR");
+  }
+}
+
+function projectMap(snapshot: DomainSnapshot): ReadonlyMap<string, Project> {
+  return new Map(snapshot.projects.map((project) => [project.id, project]));
+}
+
+export function writeProjectMutationUntransactional(
+  database: SqliteDatabase,
+  expectedInput: DomainSnapshot,
+  mutationInput: ProjectDomainMutation,
+): DomainSnapshot {
+  const expected = validateCallerSnapshot(expectedInput, "Expected snapshot");
+  const mutationRecord = exactRecord(mutationInput, ["snapshot", "changedProjectIds"], "Project mutation");
+  const next = validateCallerSnapshot(mutationRecord.snapshot as DomainSnapshot, "Project mutation snapshot");
+  const changedValues = canonicalArray(mutationRecord.changedProjectIds, "Project mutation changedProjectIds");
+  if (changedValues.length !== 1 || !isNonemptyString(changedValues[0])) {
+    throw persistenceFailure("INVALID_INPUT", "Project mutation must bind one changed Project");
+  }
+  const projectId = changedValues[0] as string;
+  if (canonicalJson(expected.tasks) !== canonicalJson(next.tasks)) {
+    throw persistenceFailure("INVALID_INPUT", "Project mutation must not change Tasks");
+  }
+  const before = projectMap(expected);
+  const after = projectMap(next);
+  const actualChanged = next.projects
+    .filter((project) => canonicalJson(before.get(project.id) ?? null) !== canonicalJson(project))
+    .map((project) => project.id);
+  if (
+    [...before.keys()].some((id) => !after.has(id)) ||
+    actualChanged.length !== 1 ||
+    actualChanged[0] !== projectId
+  ) {
+    throw persistenceFailure("INVALID_INPUT", "changedProjectIds does not exactly bind the Project mutation");
+  }
+  const current = readDomainSnapshotUntransactional(database);
+  if (canonicalJson(current) !== canonicalJson(expected)) {
+    throw persistenceFailure("REVISION_CONFLICT", "Persisted snapshot no longer matches the expected Project set");
+  }
+  const previous = before.get(projectId);
+  const project = after.get(projectId);
+  if (project === undefined) {
+    throw persistenceFailure("INVALID_INPUT", "Changed Project is absent from the Project mutation");
+  }
+  try {
+    if (previous === undefined) {
+      database.prepare("INSERT INTO projects(project_id, enabled) VALUES (?, ?)").run(project.id, project.enabled ? 1 : 0);
+      if (!readDomainInitialized(database)) {
+        const marker = database
+          .prepare("UPDATE schema_metadata SET domain_initialized=1 WHERE singleton=1 AND domain_initialized=0")
+          .run();
+        if (statementChanges(marker.changes) !== 1) {
+          throw persistenceFailure("REVISION_CONFLICT", "Domain initialization marker compare-and-swap failed");
+        }
+      }
+    } else {
+      const update = database
+        .prepare("UPDATE projects SET enabled=? WHERE project_id=? AND enabled=?")
+        .run(project.enabled ? 1 : 0, project.id, previous.enabled ? 1 : 0);
+      if (statementChanges(update.changes) !== 1) {
+        throw persistenceFailure("REVISION_CONFLICT", "Project enablement compare-and-swap failed", { projectId });
+      }
+    }
+    const readback = readDomainSnapshotUntransactional(database);
+    if (canonicalJson(readback) !== canonicalJson(next)) {
+      throw persistenceFailure("INTEGRITY_ERROR", "Project mutation terminal readback did not match the Domain result");
+    }
+    return readback;
+  } catch (error) {
+    throw normalizeSqliteFailure(error, "INTEGRITY_ERROR");
+  }
 }

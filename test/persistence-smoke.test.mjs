@@ -11,6 +11,11 @@ import {
   restoreBackup,
   updateTaskBody,
 } from "../src/index.ts";
+import {
+  commitDomainForOwner,
+  initializeDomainForOwner,
+  readDomainForOwner,
+} from "../src/persistence/application-repository.ts";
 import { createOwnedGeneration, removeOwnedGeneration } from "../scripts/repo-utils.mjs";
 
 function fixture() {
@@ -32,10 +37,10 @@ test("persistence foundation round-trips, backs up, and restores Domain Core sta
   let store;
   try {
     store = await openPersistence(layout, { applicationVersion: "test" });
-    assert.deepEqual(store.migration.appliedVersions, [1, 2]);
+    assert.deepEqual(store.migration.appliedVersions, [1, 2, 3]);
     const initial = createDomainSnapshot({ projects: [{ id: "project", enabled: true }], tasks: [] });
     assert.equal(initial.ok, true);
-    const initialized = store.initialize(initial.value);
+    const initialized = initializeDomainForOwner(store, initial.value);
     const created = createTask(initialized, {
       id: "task",
       projectId: "project",
@@ -43,7 +48,7 @@ test("persistence foundation round-trips, backs up, and restores Domain Core sta
       supersedesTaskId: null,
     });
     assert.equal(created.ok, true);
-    const persisted = store.commit(initialized, created.value);
+    const persisted = commitDomainForOwner(store, initialized, created.value);
     const backup = await store.createBackup();
     await store.close();
     store = undefined;
@@ -51,7 +56,7 @@ test("persistence foundation round-trips, backs up, and restores Domain Core sta
     store = await openPersistence(layout, { applicationVersion: "test" });
     const changed = updateTaskBody(persisted, { taskId: "task", body: "second" });
     assert.equal(changed.ok, true);
-    store.commit(persisted, changed.value);
+    commitDomainForOwner(store, persisted, changed.value);
     await store.close();
     store = undefined;
 
@@ -65,7 +70,7 @@ test("persistence foundation round-trips, backs up, and restores Domain Core sta
     assert.equal(receipt.backupGenerationId, backup.generationId);
 
     store = await openPersistence(layout, { applicationVersion: "test" });
-    assert.deepEqual(store.read(), persisted);
+    assert.deepEqual(readDomainForOwner(store), persisted);
   } finally {
     if (store !== undefined) await store.close();
     removeOwnedGeneration(generation);

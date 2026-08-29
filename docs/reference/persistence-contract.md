@@ -4,14 +4,15 @@
 
 This file is the sole normative owner of the implemented SQLite persistence
 foundation: runtime-root selection, physical schema allocation, connection and
-transaction policy, authoritative Domain Core storage ingress, migration
-identity, backup publication, restore recovery, and incompatible/corrupt-state
-handling.
+transaction policy, authoritative Domain/application storage ingress,
+migration identity, backup publication, restore recovery, and
+incompatible/corrupt-state handling.
 
-The current implementation is deliberately narrower than an application
-runtime. It stores Project/Task Domain Core snapshots and exposes trusted
-storage primitives; it does not authorize a mutation, select or invoke a
-Domain command, register a Project, provide a product CLI, or implement an
+The current implementation stores exact Project/Task Domain snapshots plus the
+Phase 1 ProjectRegistry, runtime grants, application requests, authorization
+decisions, and sanitized audit. It exposes lifecycle operations and the typed
+application transaction owner; it does not authorize a mutation or select or
+invoke a Domain command. It provides no product CLI and implements no
 execution, workspace, scheduler, intent/effect, claim, lease, fence, gate,
 completion, adapter, MCP, or dispatcher record. Those records receive physical
 schema only in the later ExecPlan that owns their behavior.
@@ -28,15 +29,16 @@ only records required by its approved implementation phase. A planned field or
 table in another contract is not a reservation, and migration `0001` is not a
 synonym for the eventual complete product schema.
 
-EP-01B ships exactly these immutable migrations:
+The repository ships exactly these immutable migrations:
 
 | Version and file | Current physical allocation |
 | --- | --- |
 | `1`, `0001-persistence-metadata.sql` | `schema_metadata` and `migration_history` only |
 | `2`, `0002-phase1-task-storage.sql` | `projects`, `tasks`, `task_dependencies`, and their indexes only |
+| `3`, `0003-phase1-application.sql` | `project_registry`, `application_requests`, `authorization_bootstrap`, `authorization_grants`, `authorization_decisions`, `application_audit`, their indexes, and append-only/revoke-only triggers only |
 
-Later Phase 1 plans append migrations for their own approved records. Phase 2
-or Phase 3 execution, workspace, scheduling, intent/effect, claim/lease/fence,
+Later plans append migrations for their own approved records. Phase 2 or Phase
+3 execution, workspace, scheduling, intent/effect, claim/lease/fence,
 gate, completion, adapter, MCP, and dispatcher records are not allocated by
 these migrations and are not current persistence capabilities.
 
@@ -68,9 +70,9 @@ applied registry member. It is not inferred from table shape.
 - `enabled`: constrained `INTEGER` boolean `0` or `1`.
 
 This row is the minimum Project value required to reconstruct the implemented
-Domain Core. Canonical root, repository identity, adapter configuration,
-authorization, policy, and lifecycle fields belong to EP-01C or later and are
-not silently represented here.
+Domain Core. Canonical root and registry revisions live in the separate
+schema-v3 `project_registry` owner. Adapter configuration and later lifecycle
+fields are not silently represented here.
 
 `tasks` stores the complete current Domain Core Task shape:
 
@@ -102,10 +104,37 @@ to Projects, parents, and superseded Tasks are also deferred so one atomic
 snapshot mutation can insert a valid multi-row graph before commit. Indexes
 cover Project, parent, supersession, and reverse-dependency lookup.
 
-All current tables use SQLite `STRICT` mode. There is no durable title,
-timestamp, audit event, execution, workspace, scheduler, authorization,
-adapter, policy, lease, fence, gate, or intent/receipt field in schema version
-2.
+All schema-v2 tables use SQLite `STRICT` mode. There is no durable title,
+execution, workspace, scheduler, adapter, lease, fence, gate, or external
+intent/receipt field in that prefix.
+
+### Phase 1 application storage
+
+Schema version `3` adds only records required by the implemented local
+Project/Task/dependency application owner:
+
+- `project_registry` binds one opaque Project ID to a unique canonical local
+  root key, platform/device/inode/mode identity, positive config and resource
+  revisions, and trusted creation/update times. Its Project row is FK-bound to
+  the Domain `projects` row and cannot be deleted.
+- `application_requests` binds each fresh request/correlation/actor/action to
+  one exact runtime, Project, Task, or grant target and `bootstrap|allow|deny`
+  result.
+- singleton `authorization_bootstrap` binds the trusted actor/principal and
+  immutable runtime-root identity/expiry to its request.
+- `authorization_grants` stores the exact finite action, runtime or
+  revision-bound Project scope, lifetime, administrative/source provenance,
+  and single irreversible CAS revocation.
+- `authorization_decisions` records the exact result/reason, policy result,
+  nullable grant revision, and nullable Project revision for one request.
+- `application_audit` stores one allowlisted event/result/reason with fixed
+  sanitized JSON metadata; it does not store Task bodies, Project paths,
+  prompts, tool output, Agent text, or secrets.
+
+Every schema-v3 table is `STRICT`. Requests, bootstrap, decisions, and audit
+are append-only; grants are insert-only except for one revision-incrementing
+revocation. There are still no execution, intent/effect, workspace, scheduler,
+claim/lease/fence, gate, completion, adapter, MCP, or dispatcher tables.
 
 ## Writer and reader closure
 
@@ -113,7 +142,10 @@ adapter, policy, lease, fence, gate, or intent/receipt field in schema version
 | --- | --- | --- |
 | `schema_metadata.schema_version`, registry identity/fingerprint, `updated_at`, and `migration_history` | `src/persistence/migrations.ts` | startup compatibility, backup/restore verification, future doctor surface |
 | `schema_metadata.domain_initialized` one-time `0` to `1` transition | `src/persistence/repository.ts` inside the initial snapshot transaction | startup compatibility, repository decoder, backup/restore verification |
-| `projects`, `tasks`, `task_dependencies` | `src/persistence/repository.ts` inside a `PersistenceStore` transaction | the same repository decoder, backup verification, later application services |
+| `projects`, `tasks`, `task_dependencies` | `src/persistence/repository.ts`, invoked only through the internal schema-v3 application transaction after initialization | the same repository decoder, combined application decoder, backup verification |
+| `project_registry` | `src/persistence/application-repository.ts` in the accepted application transaction | the combined decoder and application service |
+| `authorization_bootstrap`, `authorization_grants` | `src/persistence/application-repository.ts` in bootstrap or authorized grant transactions | the combined decoder and application authorization owner |
+| `application_requests`, `authorization_decisions`, `application_audit` | `src/persistence/application-repository.ts` in the same decision/operation transaction | the combined decoder, application result mapping, backup verification, and later operational surfaces |
 | backup generation and manifest | `src/persistence/backup.ts` under the lifecycle lock | the same verifier and later user surfaces |
 | lifecycle lock and connection receipts | `src/persistence/runtime.ts` | persistence lifecycle operations only |
 | restore intent, retained generation, and restore receipt | `src/persistence/backup.ts` under the lifecycle lock | explicit recovery and later doctor/user surfaces |
@@ -200,25 +232,35 @@ user interaction, filesystem work, or an external effect. Busy exhaustion is
 a typed result. Checkpoint results are explicit; a `TRUNCATE` checkpoint does
 not claim success while an active reader still needs WAL frames.
 
-The sole repository decoder reads all Projects, Tasks, and dependency edges,
-checks SQLite storage classes, and invokes `createDomainSnapshot`. Missing,
-unknown, impossible, or corrupt state is a typed failure: no default, skipped
-row, empty replacement, or partial success is returned.
+The Domain repository decoder reads all Projects, Tasks, and dependency edges,
+checks SQLite storage classes, and invokes `createDomainSnapshot`. The
+schema-v3 application decoder then reads every registry, bootstrap, grant,
+request, decision, and audit row, checks exact storage classes/enums/JSON/time
+shapes and all cross-record bindings, and returns one combined immutable state.
+For every accepted delegated `authorization.grant.issue`, it also requires the
+new grant's runtime-versus-Project scope, Project identity, and resource
+revision to match the persisted issue decision target; provenance authority
+alone cannot broaden or redirect that issued scope after the fact.
+Missing, unknown, impossible, or corrupt state is a typed failure: no default,
+skipped row, empty replacement, or partial success is returned.
 
-The store provides two narrow write primitives:
+The foundation retains internal one-time Domain initialization and trusted
+Domain mutation primitives, but `PersistenceStore` exposes no public
+`read`/`initialize`/`commit` product bypass. The application transaction is the
+only current product command/query path. It compares the complete expected
+snapshot/revisions, applies the trusted Domain or Project mutation and
+applicable registry/grant changes, appends the request/decision/audit records,
+then decodes terminal combined state before commit.
 
-- one-time `initialize`, accepted only while Project and Task storage is empty;
-  and
-- `commit(expectedSnapshot, mutation)`, accepted only for a complete trusted
-  Domain Core mutation whose Project list is unchanged, changed Task IDs are
-  exact/sorted/unique, no Task is deleted, each new Task starts at revision `1`,
-  and every changed Task advances its exact prior revision by one.
-
-`commit` compares the complete persisted snapshot to `expectedSnapshot`,
-writes every changed Task and edge in one transaction, and compares terminal
-readback with the mutation snapshot. It does not choose a Domain command,
-authorize a mutation, or expose direct SQL. Project registration and
-authorization belong to EP-01C.
+Accepted bootstrap commits request, immutable bootstrap receipt, all fifteen
+initial grants, and audit atomically. Accepted application mutation or exact
+read commits request, allow decision, audit, and every applicable snapshot,
+registry, dependency, or grant change atomically. A fully bound authorization
+denial commits only its deny request/decision/audit. Domain rejection, stale or
+uncertain identity before a safe decision, duplicate/replayed request,
+corruption, CAS conflict, or injected exception commits no partial operation.
+Persistence does not choose a Domain command, evaluate grants/policy, perform
+trusted confirmation, or expose direct SQL.
 
 ## Migration identity and atomicity
 
@@ -232,7 +274,7 @@ Before writable open, an existing database is inspected read-only. The runner
 rejects an absent/incomplete metadata owner, unknown or newer version,
 non-contiguous/missing/reordered history, ID or checksum mismatch, registry
 identity mismatch, live schema-fingerprint mismatch, failed integrity/FK
-check, or bad Domain decode. It never initializes a replacement over an
+check, or bad Domain/combined application decode. It never initializes a replacement over an
 existing empty, corrupt, or incompatible database.
 
 Fresh version `0` initialization applies the registry without a pre-upgrade
@@ -264,8 +306,9 @@ Manifest schema version `1` binds:
 - source application version and creation time.
 
 Verification rejects any extra/missing/reparse member, changed byte, malformed
-manifest, incompatible history/schema, integrity/FK failure, or Domain decode
-failure. It binds the generation directory, manifest, and database identities,
+manifest, incompatible history/schema, integrity/FK failure, or current-schema
+combined application decode failure. It binds the generation directory,
+manifest, and database identities,
 hashes the database, reopens that same object read-only, and repeats exact
 identity/content/inventory readback before issuing the generation. A generation
 is immutable by contract and is reverified at every use; filesystem write
@@ -320,8 +363,10 @@ external effect, or initialize a replacement at the same path. A database
 newer than the binary is refused. In-place downgrade does not exist; only the
 separately acknowledged verified-backup mechanism can publish older data.
 
-EP-01B proves a local persistence foundation on the observed development host.
-It does not establish a release, Windows support, a running/completed execution
-loop, Manual/Codex/Git/Scheduler adapter, claim/completion protocol, application
-service, authorization experience, product CLI, `backup`/`restore`/`doctor`
-user surface, MCP server, plugin, deployment, or external Project operation.
+The current repository proves a local schema-v3 persistence and application
+foundation on the observed development host. It does not establish a release,
+Windows support, a running/completed execution loop,
+Manual/Codex/Git/Scheduler adapter, claim/completion protocol, product CLI,
+`backup`/`restore`/`doctor` user surface, MCP server, plugin, deployment, or
+external Project operation. ProjectRegistry inspection never authorizes or
+performs a mutation inside a registered Project.

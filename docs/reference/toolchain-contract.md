@@ -2,9 +2,11 @@
 
 This file is the sole normative owner of the repository's current executable
 toolchain, package boundary, and repeatable validation entry points. It does
-not define the Domain Core's behavior, persistence semantics, a product
-runtime, adapter, or support promise. Domain and persistence behavior are owned
-by the [domain contract](domain-contract.md) and
+not define the Domain Core's behavior, authorization semantics, persistence
+semantics, a product runtime, adapter, or support promise. Domain,
+authorization, and persistence behavior are owned by the
+[domain contract](domain-contract.md),
+[authorization contract](authorization-contract.md), and
 [persistence contract](persistence-contract.md), respectively.
 
 ## Frozen toolchain
@@ -70,20 +72,22 @@ first reproduce the frozen dependency install in an empty disposable project
 and generation-local store, then pack the declared distribution, install it
 into a disposable consumer without registry access, typecheck the public
 declarations without undeclared Node type dependencies, import the library
-entry, exercise a fresh persistence open/read/backup, and invoke the console
-entry.
+entry, exercise trusted bootstrap plus Project/Task application commands and a
+fresh persistence backup, and invoke the console entry.
 
 The package-root library export exposes a truthful capability status, the pure
-TypeScript Domain Core, and the narrow persistence foundation. The packed
-inventory includes the immutable SQL files under `migrations/`, and the
+TypeScript Domain Core, ProjectRegistry identity owner, finite authorization
+owner, typed application service, and schema-v3 persistence foundation. The
+packed inventory includes the immutable SQL files under `migrations/`, and the
 compiled migration registry consumes those same bytes. The `ato` console
 remains only the matching status projection; it is not a product CLI.
 
 Production source is limited to `src/index.ts`, `src/domain.ts`, `src/cli.ts`,
-the narrow built-in declarations in `src/node-builtins.d.ts`, and
+`src/project-registry.ts`, `src/authorization.ts`, `src/application.ts`, the
+narrow built-in declarations in `src/node-builtins.d.ts`, and
 `src/persistence/`. `node:sqlite` is confined to the persistence owner. The
-package has no production dependency and must not acquire an application
-service, dispatcher, port, adapter, scheduler, MCP, product CLI, or executable
+package has no production dependency and must not acquire a dispatcher, port,
+adapter, scheduler, MCP, product CLI, execution/completion loop, or executable
 orchestrator as part of this boundary.
 
 ## Validation entry points
@@ -95,7 +99,7 @@ The following package scripts are the public local entry points:
 | `pnpm lint` | Repository hygiene, frozen configuration, source-boundary, and diff checks |
 | `pnpm typecheck` | Strict TypeScript checking without output |
 | `pnpm build` | Produce the ESM package and declarations |
-| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including real local feasibility contracts |
+| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application atomicity, persistence, and real local feasibility contracts |
 | `pnpm test:persistence` | Run the targeted migration, repository, concurrency, path-security, backup, and restore suite through the same artifact-baseline gate |
 | `pnpm docs:check` | Resolve exact-case repository-relative Markdown links and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |

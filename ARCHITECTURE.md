@@ -4,14 +4,17 @@
 
 The repository has a governance and architecture-contract baseline, a minimal
 executable toolchain and feasibility harness, a pure in-memory TypeScript
-Domain Core, and a local SQLite persistence foundation. The persistence owner
-implements a safe runtime root, staged schema versions `1` and `2`, verified
-connections/migrations, exact Domain snapshot storage, and lower-level
-backup/restore recovery. Neither it nor the feasibility harness is an
-orchestrator runtime. The repository still implements no application service,
-product CLI, ProjectRegistry/authorization experience, dispatcher, port,
-adapter, scheduler, MCP component, product compatibility,
-platform-integration, or product safety claim.
+Domain Core, a filesystem-identity ProjectRegistry, a finite local runtime
+authorization owner, a typed Project/Task/dependency application service, and
+a local SQLite persistence foundation. Schema versions `1` through `3` own
+metadata, exact Domain snapshots, ProjectRegistry, grants, requests,
+authorization decisions, and append-only application audit. The application
+service orchestrates those owners in one transaction; persistence never
+selects a Domain command or grants authority. These Phase 1 components are not
+an execution runtime. The repository still implements no product CLI,
+dispatcher, port, adapter, scheduler, MCP component, execution
+claim/completion loop, product compatibility, platform-integration, or product
+safety claim.
 
 ## Authority and ownership
 
@@ -35,28 +38,44 @@ This document owns module responsibility and dependency direction. The contract 
 The architecture separates:
 
 - `domain`: the implemented pure Task state, hierarchy, dependency,
-  eligibility, waiting-continuation, revision, error, and event owner.
-- `application`: commands, queries, authorization checks, and transaction orchestration.
-- `persistence`: the implemented SQLite runtime-root, connection, migration,
-  Domain snapshot repository, backup, and restore owner; later records are
-  added only by their implementing phase.
+  Project enablement, eligibility, waiting-continuation, revision, error, and
+  event owner.
+- `project-registry`: the implemented canonical local-root identity,
+  no-alias/reparse, runtime-overlap, and revalidation owner; it never writes a
+  registered Project directory.
+- `authorization`: the implemented pure finite-action grant evaluator,
+  narrowing local policy inputs, issuance-subset rule, expiry/revocation, and
+  high-risk classification owner.
+- `application`: the implemented typed Project/Task/dependency command and
+  exact-query owner, including trusted ingress, authorization decisions,
+  Domain command selection, transaction orchestration, and result mapping.
+- `persistence`: the implemented SQLite runtime-root, connection, staged
+  migration, combined schema-v3 repository, transaction, backup, restore, and
+  typed-corruption owner; later records are added only by their implementing
+  phase.
 - `dispatcher`: durable claim, launch, reconciliation, and recovery workflows.
 - `ports`: execution, workspace, scheduler, project-policy, and completion contracts.
 - `adapters`: replaceable implementations, including Manual and Codex execution backends.
 - `interfaces`: CLI and MCP surfaces sharing the application layer.
 
-Only `domain` and the narrow `persistence` foundation described above are
-implemented. Every other name in this list remains accepted design direction
-rather than a current runtime component. Neither implemented boundary
-authorizes an external action.
+Only `domain`, `project-registry`, `authorization`, `application`, and
+`persistence` as narrowly described above are implemented. Every later name in
+this list remains accepted design direction rather than a current runtime
+component. No implemented boundary authorizes an external action.
 
 ## Cross-module dependency constraints
 
 - `domain` may depend only on language/runtime primitives; it must not import application, persistence, dispatcher, ports, adapters, interfaces, or observability modules.
-- `application` orchestrates domain rules and ports but does not copy domain judgments or depend on concrete adapters.
+- `project-registry` may inspect only local filesystem identity and depends on
+  neither application nor persistence; it must not mutate registered targets.
+- `authorization` is a pure decision owner and depends on neither application,
+  persistence, content, nor concrete adapters.
+- `application` orchestrates domain, ProjectRegistry, authorization, and
+  persistence owners but does not copy Domain judgments or depend on concrete
+  adapters.
 - `persistence` depends inward on `domain`, owns SQLite/filesystem storage
-  mechanics, and neither invokes application policy nor performs external
-  Project effects.
+  mechanics and typed application records, and neither invokes authorization
+  policy nor performs external Project effects.
 - `dispatcher` coordinates application services and ports without embedding project-specific policy.
 - `ports` expose contracts without importing vendor SDKs; `adapters` depend inward on ports and application contracts.
 - `interfaces` call the application layer, and `observability` consumes structured events without becoming a state owner.
@@ -64,9 +83,9 @@ authorizes an external action.
 The exact behavior behind these boundaries belongs to the
 [contract ownership inventory](docs/reference/contract-ownership.md). Domain
 behavior is current only to the extent implemented and validated by its owner;
-the same rule applies to the persistence foundation, and every other behavior
-remains a design requirement rather than an implemented guarantee until
-matching code and validation evidence land.
+the same rule applies to ProjectRegistry, authorization, application, and
+persistence, and every later behavior remains a design requirement rather than
+an implemented guarantee until matching code and validation evidence land.
 
 The repository's current
 [local agent Git workflow](docs/reference/local-agent-git-flow.md) coordinates

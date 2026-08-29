@@ -14,6 +14,7 @@ successful narrow check does not waive another applicable route.
 | --- | --- |
 | Documentation or governance | Repository documentation gate, authority review, and capability-truthfulness review |
 | Domain or state machine | Targeted unit tests plus property/state-machine tests for legal and illegal histories |
+| ProjectRegistry or application service | Canonical path/identity and revision negatives, typed command/query parity with Domain, accepted/denied atomicity, restart readback, concurrent writers, injected failure, and public-boundary tests |
 | Persistence, schema, migration, backup, or restore | Targeted repository tests, fresh/upgrade/downgrade matrix, concurrent-reader/writer tests, and interruption or corruption recovery |
 | Dispatcher, publication, lease, or recovery | Contract tests, competing-worker tests, fencing and CAS tests, and failpoint recovery at every durable transition |
 | Adapter or external side effect | Shared adapter contract suite plus E2E on every platform/API combination for which support will be claimed |
@@ -79,16 +80,19 @@ A clean unstaged check cannot substitute for that staged-inventory result.
 The repository contains an executable toolchain and feasibility harness whose
 current entry points are owned by the
 [toolchain contract](toolchain-contract.md), targeted Domain Core unit/seeded
-state-machine/dependency-direction tests, and targeted persistence tests for
-the current schema, migrations, exact repository mapping, concurrent
-reader/writer behavior, runtime-root negatives, backup, restore, and failpoint
+state-machine/dependency-direction tests, ProjectRegistry path/identity tests,
+finite authorization and application Domain-parity/atomicity tests, and
+targeted persistence tests for schema v3, migrations from every shipped
+prefix, exact combined repository mapping, concurrent reader/writer behavior,
+runtime-root negatives, backup, restore, typed corruption, and failpoint
 recovery. Local lint, typecheck, build, Node tests, documentation,
 dependency-shape, package-consumption, SQLite, and Codex boundary checks can be
 executed against a candidate when the frozen local dependency is installed.
 The committed Windows workflow is a CI skeleton only; hosted enforcement
-remains unverified until an actual run is observed. There is still no product
-runtime harness for application services, authorization, dispatcher, adapters,
-scheduler, MCP, or a support matrix, so those routes remain unimplemented and
+remains unverified until an actual run is observed. The Phase 1 application and
+authorization routes are implemented test surfaces, but there is still no
+product CLI, execution runtime, dispatcher, adapter, scheduler, MCP, external
+effect, or support-matrix harness, so those routes remain unimplemented and
 cannot be claimed as passing. Repository task-artifact checks cover only
 maintainer workflow scratch and do not count as product persistence or
 destructive-action support.
