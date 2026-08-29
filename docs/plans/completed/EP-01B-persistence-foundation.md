@@ -9,9 +9,9 @@ Phase 2 execution work as separate, unimplemented plans.
 {
   "schema_version": 3,
   "lifecycle": {
-    "status": "active",
+    "status": "completed",
     "created_at": "2026-08-29 12:35:39+08:00",
-    "updated_at": "2026-08-29 16:05:36+08:00",
+    "updated_at": "2026-08-29 17:34:06+08:00",
     "authorization": {
       "implementation": {
         "authorized": true,
@@ -367,8 +367,12 @@ Phase 2 execution work as separate, unimplemented plans.
       "base_transitions": []
     },
     "milestone_progress": [
-      {"id": "M2", "status": "complete", "updated_at": "2026-08-29 16:37:59+08:00"},
-      {"id": "M3", "status": "complete", "updated_at": "2026-08-29 16:37:59+08:00"}
+      {"id": "M1", "status": "complete", "updated_at": "2026-08-29 17:30:59+08:00"},
+      {"id": "M2", "status": "complete", "updated_at": "2026-08-29 17:30:59+08:00"},
+      {"id": "M3", "status": "complete", "updated_at": "2026-08-29 17:30:59+08:00"},
+      {"id": "M4", "status": "complete", "updated_at": "2026-08-29 17:30:59+08:00"},
+      {"id": "M5", "status": "complete", "updated_at": "2026-08-29 17:30:59+08:00"},
+      {"id": "M6", "status": "complete", "updated_at": "2026-08-29 17:30:59+08:00"}
     ],
     "validation_results": [
       {
@@ -376,77 +380,98 @@ Phase 2 execution work as separate, unimplemented plans.
         "status": "passed",
         "method": "Resolve the completed EP-01A terminal and its historical scope, inspect Git ancestry and the exact intervening log/diff, run the intentional strict chain check, and manually assess the current-base governance impact.",
         "evidence": "EP-01B/V1/current at 2026-08-29 16:37:59+08:00. terminal-resolve uniquely identified 71dc606d5e4c40de4f669d0732da653d81bc8f92 and historical scope there was completion-ready with no error, warning, outside-scope path, or blocker. Git proved it is an ancestor of material base 2df03a4f6a2106555740944596924561e2753e89 with exactly 5c286f3 and 2df03a4 between them. Their inventory changes task-artifact governance/tooling only; product/schema owners are unchanged. The mechanical chain check returned only the planned E_CHAIN exact-base limitation, so the strict product predecessor remains EP-01A while current governance constraints are incorporated.",
-        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
       },
       {
         "id": "V2",
         "status": "passed",
         "method": "Run the network-disabled targeted persistence suite under exact Node 24.19.0 and inspect migration registry/files, earlier-prefix upgrade, backup, rollback/restart, history, postcondition, and compatibility cases.",
         "evidence": "EP-01B/V2/current at 2026-08-29 16:37:59+08:00. test:persistence exited 0 with 56 passed and no failure/skip/todo. It proved exact immutable 0001/0002 registry bytes and checksums, fresh 0-to-2, shipped 1-to-2 with verified pre-upgrade backup, atomic injected migration rollback/restart, and typed refusal of unowned, missing, malformed, unknown, checksum-mismatched, drifted, or newer schema before normal access.",
-        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
       },
       {
         "id": "V3",
         "status": "passed",
         "method": "Run the targeted persistence connection/concurrency tests and inspect no-follow SQLite-member bindings, policy pragmas, transaction behavior, contention timing, read snapshots, lifecycle locks, and connection receipts.",
         "evidence": "EP-01B/V3/current at 2026-08-29 16:37:59+08:00. The 56-test persistence route proved FK ON, primary WAL, synchronous FULL, read_uncommitted OFF, busy_timeout 5000, bounded competing-writer BUSY, synchronous callback enforcement and rollback, stable reader snapshots with TRUNCATE checkpoint blocked, and fail-closed lock/receipt contention, stale residue, corruption, identity replacement, parent swap, and release behavior. It also proved complete no-follow main/WAL/SHM preflight, dangling-sidecar refusal before connection issuance, and retained identity for a newly appearing sidecar.",
-        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
       },
       {
         "id": "V4",
         "status": "passed",
         "method": "Run the targeted backup/restore suite with deterministic mutation seams and inspect online clone, standalone normalization, verification, publication, CAS, durable intent, retention, readback, and recovery outcomes.",
         "evidence": "EP-01B/V4/current at 2026-08-29 16:37:59+08:00. Online backup produced exact private DELETE-mode generations and refused source/stage/inventory/publication swaps, including a post-clone dangling WAL before normalization while preserving marker bytes and publishing nothing. Restore required acknowledgement, exact current main/WAL/SHM CAS and zero receipts; retained prior bytes; published durable intent before moves; normalized all post-intent failure to recovery-required; and deterministically handled retained/published/receipt interruptions while blocking corrupt, incomplete, mixed, substituted, stale, conflicting, or newer material.",
-        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
       },
       {
         "id": "V5",
         "status": "passed",
         "method": "Run the targeted Windows runtime-root and path-security suite against default and override selection, lexical/real topology, permissions, identities, inventories, and caller ingress.",
         "evidence": "EP-01B/V5/current at 2026-08-29 16:37:59+08:00 on Windows 10.0.22631 x64. The route proved the supplied Local Application Data default and TASK_ORCHESTRATOR_DATA_DIR override undergo the same validation; refused relative/root/UNC/traversal, checkout/Project overlap, non-directory, reparse ancestor/target, issued-directory swap, unsafe inventory, and caller-selected descendant paths; enforced private nodes where available; and truthfully recorded Windows mode enforcement as unavailable without a support claim.",
-        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
       },
       {
         "id": "V6",
         "status": "passed",
         "method": "Run the targeted typed-ingress and repository tests and inspect exact DomainSnapshot round-trip, initialization, revision/snapshot CAS, transaction rollback, SQLite storage classes, enum/conditional shape, and graph reconstruction.",
         "evidence": "EP-01B/V6/current at 2026-08-29 16:37:59+08:00. The repository round-tripped every frozen Project/Task/dependency field, initialized only an explicitly empty snapshot once, committed trusted next-revision mutations atomically, and rejected stale complete snapshots, changed Projects, FK failure, wrong storage class, unknown enum, invalid waiting shape, and cross-Project graph corruption without defaults, skipped rows, or partial writes.",
-        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
       },
       {
         "id": "V7",
         "status": "passed",
         "method": "Run docs:check and git diff --check, inspect the complete task inventory/trace, and manually compare every changed authority and capability statement with the implemented source and explicit non-goals.",
         "evidence": "EP-01B/V7/current at 2026-08-29 16:37:59+08:00. docs:check passed 57 Markdown files and 225 exact-case local links with zero forbidden item; diff check passed. Trace reported the exact task-owned material inventory, outside_scope=[], overlap=[], and pre_existing_dirty=[]. Authority review found one owner for staged schema, runtime path, migrations, repository decode, backup/restore, versioning, validation, and security boundaries. All surfaces describe only the narrow persistence foundation and leave EP-01C/EP-01D, application commands, product CLI, execution/completion, adapters, scheduler, MCP, external integration, hosted CI, release, and platform support unimplemented or unverified. Final staged inventory remains a separate terminal step.",
-        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
       },
       {
         "id": "V8",
         "status": "passed",
         "method": "Run pnpm lint under exact Node 24.19.0 and inspect its shared production-source and migration inventories, built-in ownership, forbidden material, and Domain Core isolation checks.",
         "evidence": "EP-01B/V8/current at 2026-08-29 16:37:59+08:00. lint exited 0 over 111 files and the exact 13-file production source boundary. It enforced the exact two-file migration inventory, confined filesystem/node:sqlite I/O to persistence, retained the pure Domain Core boundary, and rejected generated, runtime, sensitive, feasibility, vendor, or reparse material.",
-        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
       },
       {
         "id": "V9",
         "status": "passed",
         "method": "Run exact TypeScript version inspection plus network-disabled pnpm typecheck and pnpm build under the frozen repository configuration.",
         "evidence": "EP-01B/V9/current at 2026-08-29 16:37:59+08:00. The installed compiler reported TypeScript 5.9.3 exactly; strict NodeNext/noUncheckedIndexedAccess/exactOptionalPropertyTypes typecheck and build both exited 0 with no fallback compiler, diagnostic, or source rewrite.",
-        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
+      },
+      {
+        "id": "V10",
+        "status": "passed",
+        "method": "Run the complete network-disabled pnpm verify:offline route at the final material state, inspect the full Node test discovery/count and unsupported-boundary output, then verify the task-artifact root is absent after the run.",
+        "evidence": "EP-01B/V10/current at 2026-08-29 17:30:59+08:00. The final-state complete route exited 0 with all 101 tests passed and zero failed, skipped, or todo; every persistence, configuration, repository-utility, Domain Core, feasibility, package, and boundary test was discovered. All fixtures remained creator-owned, external E2E stayed explicitly not_run, and .task-artifacts was absent after completion.",
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
       },
       {
         "id": "V11",
         "status": "passed",
         "method": "Run the offline dependency-security route and inspect package, lockfile, package-manager, runtime, registry, install-script, credential, and dependency shape.",
         "evidence": "EP-01B/V11/current at 2026-08-29 16:37:59+08:00. dependency:check exited 0 with zero production dependencies and typescript@5.9.3 as the sole development dependency under Node 24.19.0 and pnpm 11.19.0. No install script, credential, download, registry query, online audit, or dependency repair was used or claimed.",
-        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
       },
       {
         "id": "V12",
         "status": "passed",
         "method": "Run pnpm package:smoke offline with the exact frozen local store and inspect packed inventory, consumer types/export, persistence exercise, console boundary, uninstall, and creator cleanup.",
         "evidence": "EP-01B/V12/current at 2026-08-29 16:37:59+08:00. package smoke exited 0 with exact TypeScript 5.9.3, 53 packed files, consumer declarations and root export passed, fresh open/read/backup verification passed, the ato console remained status-only, uninstall passed, and the run removed its own generation. No product CLI or platform-support claim was created.",
-        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
+      },
+      {
+        "id": "V13",
+        "status": "passed",
+        "method": "Disable npm/pnpm network behavior, use the existing frozen task-local store, run pnpm verify:offline end to end at the final material state without substitution or repair, and confirm no creator-owned artifact survives.",
+        "evidence": "EP-01B/V13/current at 2026-08-29 17:30:59+08:00 on Windows 10.0.22631 x64 with Node 24.19.0, pnpm 11.19.0, and TypeScript 5.9.3. verify:offline exited 0: lint 111 files/13 production sources; exact typecheck and build passed; tests 101/101 with no skip/todo; docs 57 Markdown/225 links/0 forbidden; zero production dependencies; package smoke 53 files with consumer types/export/persistence/console/uninstall passed; real Windows SQLite matrix passed with survivingGenerationMembers=0; Codex boundary passed with externalE2E=not_run and supportClaim=false. No download, repair, omission, or surviving .task-artifacts root occurred.",
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
+      },
+      {
+        "id": "V14",
+        "status": "passed",
+        "method": "Run a fresh schema-v3 exec_plan trace immediately before recording V14, require the exact material state, approval/base/scope, current independent audits, completed milestones, terminal V1-V13, final summary, and no error or warning; then record only this plan-excluded result and rerun trace for completion readiness before staging.",
+        "evidence": "EP-01B/V14/current at 2026-08-29 17:33:27+08:00. The pre-record fresh trace exited 0 at revision f53e612aec890a201dd96850a968156fd70947e2 with active schema-v3 plan, exact material state git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9, approval digest 048C8F1B56866DA0D05FE0DA37A62A00407C157C18BC4216AFC7ECD17D455622, approval/current base 2df03a4f6a2106555740944596924561e2753e89, no errors, warnings, outside-scope path, overlap, or pre-existing dirty item, fresh independent A0/A1/A2, M1-M6 complete, V1-V13 passed, and a nonempty final summary. validation_not_terminal for V14 itself was the sole blocker. This V14 record is plan-excluded; final staging, terminal commit, prune, exact-head gates, ready, integration, and push remain coordinator consumers rather than inputs.",
+        "state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9"
       }
     ],
     "ownership_receipts": [],
@@ -551,12 +576,12 @@ Phase 2 execution work as separate, unimplemented plans.
       },
       "a2": {
         "report_status": "complete",
-        "reviewer": "/root/ep01b_a2, A2 attempt 4",
-        "independence": "Fresh independent strictly read-only reviewer; no repository, plan, Git, coordinator, network, secret, artifact, other-repository, or external-state mutation.",
-        "scope": "Closure audit of F-A1-01 through F-A1-06 and the directly adjacent F-A2-01/F-A2-02 residual family, including the final standalone-backup normalization repair and regression evidence.",
-        "reviewed_at": "2026-08-29 16:37:13+08:00",
-        "evidence": "Trace before and after review exactly reproduced git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd with no error, warning, scope overlap, outside-scope path, or pre-existing dirty path. database.ts now owns every filesystem SQLite open: complete no-follow main/WAL/SHM capture precedes construction, subsequent assertions retain newly appearing sidecars, and standalone normalization validates the bound main plus terminal DELETE-mode no-sidecar inventory after close. backup.ts routes the post-clone normalization seam through that owner and retains its immediate pre-rename source/stage/inventory/object/content checks. A deterministic dangling stage-WAL injection leaves its marker unchanged, publishes no generation, and restores the fixture for safe creator cleanup. Restore current-primary CAS remains initial, post-stage, and immediate pre-intent; post-intent errors remain recovery-required. Read-only handle closure, exact shared source/migration inventories, built-in ownership, and metadata writer documentation did not regress. Current validation passed lint, typecheck, test:persistence 56/56, verify:offline 101/101, docs 57/225/0, zero production dependencies, package smoke 53, zero SQLite-matrix survivors, Codex blocked boundary, and git diff checks. The four historical .task-artifacts directories are a separate authorization/lifecycle blocker and were not modified.",
-        "reviewed_state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd",
+        "reviewer": "/root/ep01b_a2_final, A2 attempt 7",
+        "independence": "Fresh independent strictly read-only reviewer, separate from the implementer and evidence author; no repository, plan, Git, coordinator, network, secret, artifact, cleanup, other-repository, or external-state mutation.",
+        "scope": "Exact final material state, complete active plan/evidence and authoritative contracts, F-A1-01 through F-A1-06, adjacent F-A2-01/F-A2-02 regression family, F-A2-03 lifecycle-evidence repair, final validation, Git-flow artifact receipt, and root-absence evidence.",
+        "reviewed_at": "2026-08-29 17:30:59+08:00",
+        "evidence": "Fresh independent A2 reproduced exact state git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9, approval digest 048C8F1B56866DA0D05FE0DA37A62A00407C157C18BC4216AFC7ECD17D455622, approval/current base 2df03a4f6a2106555740944596924561e2753e89, warnings=[], outside_scope=[], overlap=[], and pre_existing_dirty=[]. It found no implementation, contract, or test regression in the F-A1-01 through F-A1-06 closures or the F-A2-01/F-A2-02 identity/backup/restore family. F-A2-03 is closed: tracked evidence now treats terminal commit, terminal-head prune, exact-head gates, ready, FF-only integration, and push only as later coordinator consumers, with no post-head writeback promise into task material. The manifest-backed receipt consistently recorded removal of 9 files, 50 directories, and one untraversed reparse alias at task head f53e612aec890a201dd96850a968156fd70947e2, and .task-artifacts remained absent. Parent exact-state network-disabled verify:offline passed 101/101 with no fail/skip/todo; the adjacent targeted persistence route passed 56/56 before only evidence prose changed. Independent read-only cross-checks reconfirmed lint 111/13, docs 57/225/0, zero production dependencies, truthful Codex blocked boundary, diff check, and root absence. The report returned findings=[], exact closes F-A1-01 through F-A1-06, and closure_safe=true.",
+        "reviewed_state_id": "git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9",
         "parent_disposition": "complete",
         "closes": ["F-A1-01", "F-A1-02", "F-A1-03", "F-A1-04", "F-A1-05", "F-A1-06"],
         "findings": []
@@ -626,6 +651,22 @@ Phase 2 execution work as separate, unimplemented plans.
         "finding_ids": ["F-A2-01"],
         "disposition": "superseded",
         "reason": "Fresh independent A2 attempt 3 at 2026-08-29 16:30:29+08:00 bound git-sha1:4f8111982fdc198ad04d8f58682d5445ce3fdc7b and verified the primary/read-only no-follow and retained-Map repairs plus every F-A1-02 through F-A1-06 closure, but found one direct HIGH F-A2-01 residual: standalone backup normalization still opened the cloned database without complete stage main/WAL/SHM preflight. The parent confirmed it in scope, routed the open through the shared binding owner, added the exact post-clone dangling-WAL regression, reran affected/full validation, and required attempt 4."
+      },
+      {
+        "audit": "A2",
+        "attempt": 4,
+        "report_status": "complete",
+        "finding_ids": [],
+        "disposition": "superseded",
+        "reason": "Fresh independent A2 attempt 4 at 2026-08-29 16:37:13+08:00 bound git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd, closed F-A1-01 through F-A1-06 and F-A2-01/F-A2-02 with no new finding, and was closure-safe. The later user-authorized manifest prune and its truthful evidence changed material state, so that otherwise clean report is preserved as superseded and a fresh final-state A2 was required."
+      },
+      {
+        "audit": "A2",
+        "attempt": 5,
+        "report_status": "complete",
+        "finding_ids": ["F-A2-03"],
+        "disposition": "superseded",
+        "reason": "Fresh independent A2 attempt 5 bound git-sha1:a8fbe303b14604cf0396ad3734304698b8dda7ee and confirmed one MEDIUM lifecycle-evidence finding: tracked evidence promised to append terminal task commit, prune, gates, integration, and push after those head-bound events, creating a material-head/receipt cycle. The parent removed every post-head tracked writeback promise, retained coordinator state and the final user report as the only post-state owners, reran the exact final-state offline gate, and required a fresh closure A2."
       }
     ],
     "validation_attempts": [],
@@ -656,7 +697,7 @@ Phase 2 execution work as separate, unimplemented plans.
         "previous_approval_sha256": "D67C7C7D8CFC47650B1CAEE6F7FC8F3680A90576054CC21692F508E70156AA98"
       }
     ],
-    "final_summary": null
+    "final_summary": "EP-01B delivers only the authorized Phase 1 persistence foundation: safe runtime-root and SQLite lifecycle ownership, immutable staged 0001/0002 migrations, exact typed Project/Task/dependency repositories, verified online backup, explicit CAS-bound recoverable restore, complete no-follow main/WAL/SHM protection, and truthful compatibility/security/versioning contracts with zero production dependencies. Fresh independent A0 approved the final contract, A1 identified six findings, and fresh A2 attempt 7 closes all six plus the adjacent residual family with findings=[] at git-sha1:832cefbdca677c6bd9c9c73eec8448939fce77b9. Network-disabled validation passes 101/101 tests, the complete offline route, package and SQLite matrices, documentation and dependency gates, with no surviving task artifact. EP-01C, EP-01D, application commands, product CLI, authorization service, execution/completion, adapters, scheduler, MCP, hosted CI, release, deployment, and platform support remain explicitly unimplemented or unverified; terminal commit, exact-head coordinator receipts, FF-only integration, and eligible ordinary push are later consumers of this completed candidate."
   }
 }
 ```

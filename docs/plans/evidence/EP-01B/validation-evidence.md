@@ -2,10 +2,10 @@
 
 ## Status
 
-This is the candidate evidence log for EP-01B. It is non-normative and remains
-in progress until the completed ExecPlan binds every result to the stable
-material state and the coordinator records the separate exact-head receipts.
-No entry here creates authorization, a release, or a platform-support claim.
+This is the final tracked candidate evidence log for EP-01B. It is
+non-normative: the ExecPlan owns material-state validation and audit bindings,
+while coordinator state owns the later exact-head receipts. No entry here
+creates authorization, a release, or a platform-support claim.
 
 ## Scope and environment
 
@@ -47,14 +47,17 @@ open during standalone backup normalization. The parent confirmed that
 residual in scope. The repaired candidate now routes that open through the
 same complete no-follow main/WAL/SHM binding owner, requires terminal DELETE
 mode with no sidecar, and covers the post-clone seam with a dangling internal
-junction whose target bytes must remain unchanged. A fresh repeat A2 remains
-required after this material evidence is stable.
+junction whose target bytes must remain unchanged. Fresh independent A2
+attempt 4 at `git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd`
+closed `F-A1-01` through `F-A1-06`, closed both A2 residuals, reported no new
+finding, and was closure-safe. Because the later authorized artifact receipt
+had to be recorded in this material evidence file, the plan's current A2
+record is the sole closure owner for the resulting final stable state.
 
 ## Candidate validation observations
 
-The following checks have run successfully against the evolving candidate and
-must be rerun after the final material change before they become completion
-evidence:
+The following checks ran successfully at the final material state and are
+bound by the plan's validation records:
 
 | Route | Command | Current observation |
 | --- | --- | --- |
@@ -100,7 +103,7 @@ The targeted persistence suite currently demonstrates:
   canonical-manifest, newer-backup refusal, and unsafe present-sidecar refusal
   before SQLite issues a connection.
 
-## Offline compiler provenance and remaining lifecycle condition
+## Offline compiler provenance and artifact lifecycle
 
 The task initially lacked `node_modules`; its first task-local offline install
 failed closed with `ERR_PNPM_NO_OFFLINE_TARBALL`, and attempted authorization
@@ -127,10 +130,10 @@ the latter reported lint
 production dependencies, package smoke with 53 files, the Windows SQLite
 matrix with zero matrix survivors, and the truthful blocked Codex boundary.
 
-Four ignored `.task-artifacts` generations remain: the two earlier pre-repair
-residues, the malformed-reader generation retained by the first failed full
-route, and the dangling-sidecar generation retained by the first version of
-that regression. Their exact names are
+Four ignored `.task-artifacts` generations had remained: the two earlier
+pre-repair residues, the malformed-reader generation retained by the first
+failed full route, and the dangling-sidecar generation retained by the first
+version of that regression. Their exact names were
 `concurrency-readonly-close-jm1YOr`,
 `concurrency-receipt-swap-EH39QK`,
 `concurrency-sidecar-dangling-xNcprx`, and
@@ -138,15 +141,36 @@ that regression. Their exact names are
 own generations. The clean candidate head allowed the coordinator's sole
 `prune-artifacts` route to be requested, but the permission reviewer rejected
 the deletion because the user instruction separately prohibits destructive
-cleanup. Nothing was deleted or moved and no workaround was attempted. V10
-and V13 therefore cannot claim the terminal no-survivor criterion without new
-explicit user approval for that exact manifest-backed prune. Hosted CI,
-online dependency audit, release, product CLI, application service, adapter,
-external E2E, and supported-platform claims remain not run or unimplemented.
+cleanup. Nothing was deleted or moved and no workaround was attempted before
+authorization.
 
-## Final exact-head records
+The user later explicitly authorized deletion of those exact four root
+children. Immediately before mutation the task worktree was clean and all
+four children were ordinary directories with no link/reparse attribute. The
+Git-flow `prune-artifacts` command accepted no caller path, revalidated the
+frozen manifest and complete no-follow inventory, and at
+`2026-08-29T09:10:47Z` recorded a receipt bound to task head
+`f53e612aec890a201dd96850a968156fd70947e2`: 9 files, 50 directories, and
+one internal reparse alias were removed without following the alias. The
+`.task-artifacts` root was absent immediately afterward. A complete
+network-disabled `pnpm verify:offline` then passed lint `111/13`, exact
+typecheck/build, tests `101/101` with no skip/todo, docs `57/225/0`, zero
+production dependencies, package smoke with 53 files, the real Windows SQLite
+matrix with zero per-run survivors, and the truthful blocked Codex boundary;
+the root remained absent after the run. A final-material rerun produced the
+same successful observations, satisfying the local V10/V13 criteria; the
+terminal-head prune receipt is a separate post-completion coordinator
+consumer. Hosted CI, online dependency audit, release, product CLI,
+application service, adapter, external E2E, and supported-platform claims
+remain not run or unimplemented.
 
-Final material identity, full command results, independent A1/A2 dispositions,
-candidate inventory, staged inventory, plan completion trace, task commit,
-artifact-prune receipt, coordinator gate receipts, FF-only integration, and
-ordinary push status are appended only after those events actually occur.
+## Evidence ownership after candidate completion
+
+This tracked file records the final material identity, local validation,
+independent audit disposition, candidate inventory, plan completion trace, and
+staged inventory before the terminal task commit. The terminal task commit,
+terminal-head prune receipt, exact-head gate receipts, ready transition,
+FF-only integration, and ordinary push are later consumers of that completed
+candidate. Their post-state is recorded only by the coordinator state and the
+final user report; it is not written back into tracked task material after the
+head-bound receipts are issued.
