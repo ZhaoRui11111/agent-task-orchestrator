@@ -366,8 +366,89 @@ Phase 2 execution work as separate, unimplemented plans.
       "current_material_base": "2df03a4f6a2106555740944596924561e2753e89",
       "base_transitions": []
     },
-    "milestone_progress": [],
-    "validation_results": [],
+    "milestone_progress": [
+      {"id": "M2", "status": "complete", "updated_at": "2026-08-29 16:37:59+08:00"},
+      {"id": "M3", "status": "complete", "updated_at": "2026-08-29 16:37:59+08:00"}
+    ],
+    "validation_results": [
+      {
+        "id": "V1",
+        "status": "passed",
+        "method": "Resolve the completed EP-01A terminal and its historical scope, inspect Git ancestry and the exact intervening log/diff, run the intentional strict chain check, and manually assess the current-base governance impact.",
+        "evidence": "EP-01B/V1/current at 2026-08-29 16:37:59+08:00. terminal-resolve uniquely identified 71dc606d5e4c40de4f669d0732da653d81bc8f92 and historical scope there was completion-ready with no error, warning, outside-scope path, or blocker. Git proved it is an ancestor of material base 2df03a4f6a2106555740944596924561e2753e89 with exactly 5c286f3 and 2df03a4 between them. Their inventory changes task-artifact governance/tooling only; product/schema owners are unchanged. The mechanical chain check returned only the planned E_CHAIN exact-base limitation, so the strict product predecessor remains EP-01A while current governance constraints are incorporated.",
+        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+      },
+      {
+        "id": "V2",
+        "status": "passed",
+        "method": "Run the network-disabled targeted persistence suite under exact Node 24.19.0 and inspect migration registry/files, earlier-prefix upgrade, backup, rollback/restart, history, postcondition, and compatibility cases.",
+        "evidence": "EP-01B/V2/current at 2026-08-29 16:37:59+08:00. test:persistence exited 0 with 56 passed and no failure/skip/todo. It proved exact immutable 0001/0002 registry bytes and checksums, fresh 0-to-2, shipped 1-to-2 with verified pre-upgrade backup, atomic injected migration rollback/restart, and typed refusal of unowned, missing, malformed, unknown, checksum-mismatched, drifted, or newer schema before normal access.",
+        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+      },
+      {
+        "id": "V3",
+        "status": "passed",
+        "method": "Run the targeted persistence connection/concurrency tests and inspect no-follow SQLite-member bindings, policy pragmas, transaction behavior, contention timing, read snapshots, lifecycle locks, and connection receipts.",
+        "evidence": "EP-01B/V3/current at 2026-08-29 16:37:59+08:00. The 56-test persistence route proved FK ON, primary WAL, synchronous FULL, read_uncommitted OFF, busy_timeout 5000, bounded competing-writer BUSY, synchronous callback enforcement and rollback, stable reader snapshots with TRUNCATE checkpoint blocked, and fail-closed lock/receipt contention, stale residue, corruption, identity replacement, parent swap, and release behavior. It also proved complete no-follow main/WAL/SHM preflight, dangling-sidecar refusal before connection issuance, and retained identity for a newly appearing sidecar.",
+        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+      },
+      {
+        "id": "V4",
+        "status": "passed",
+        "method": "Run the targeted backup/restore suite with deterministic mutation seams and inspect online clone, standalone normalization, verification, publication, CAS, durable intent, retention, readback, and recovery outcomes.",
+        "evidence": "EP-01B/V4/current at 2026-08-29 16:37:59+08:00. Online backup produced exact private DELETE-mode generations and refused source/stage/inventory/publication swaps, including a post-clone dangling WAL before normalization while preserving marker bytes and publishing nothing. Restore required acknowledgement, exact current main/WAL/SHM CAS and zero receipts; retained prior bytes; published durable intent before moves; normalized all post-intent failure to recovery-required; and deterministically handled retained/published/receipt interruptions while blocking corrupt, incomplete, mixed, substituted, stale, conflicting, or newer material.",
+        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+      },
+      {
+        "id": "V5",
+        "status": "passed",
+        "method": "Run the targeted Windows runtime-root and path-security suite against default and override selection, lexical/real topology, permissions, identities, inventories, and caller ingress.",
+        "evidence": "EP-01B/V5/current at 2026-08-29 16:37:59+08:00 on Windows 10.0.22631 x64. The route proved the supplied Local Application Data default and TASK_ORCHESTRATOR_DATA_DIR override undergo the same validation; refused relative/root/UNC/traversal, checkout/Project overlap, non-directory, reparse ancestor/target, issued-directory swap, unsafe inventory, and caller-selected descendant paths; enforced private nodes where available; and truthfully recorded Windows mode enforcement as unavailable without a support claim.",
+        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+      },
+      {
+        "id": "V6",
+        "status": "passed",
+        "method": "Run the targeted typed-ingress and repository tests and inspect exact DomainSnapshot round-trip, initialization, revision/snapshot CAS, transaction rollback, SQLite storage classes, enum/conditional shape, and graph reconstruction.",
+        "evidence": "EP-01B/V6/current at 2026-08-29 16:37:59+08:00. The repository round-tripped every frozen Project/Task/dependency field, initialized only an explicitly empty snapshot once, committed trusted next-revision mutations atomically, and rejected stale complete snapshots, changed Projects, FK failure, wrong storage class, unknown enum, invalid waiting shape, and cross-Project graph corruption without defaults, skipped rows, or partial writes.",
+        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+      },
+      {
+        "id": "V7",
+        "status": "passed",
+        "method": "Run docs:check and git diff --check, inspect the complete task inventory/trace, and manually compare every changed authority and capability statement with the implemented source and explicit non-goals.",
+        "evidence": "EP-01B/V7/current at 2026-08-29 16:37:59+08:00. docs:check passed 57 Markdown files and 225 exact-case local links with zero forbidden item; diff check passed. Trace reported the exact task-owned material inventory, outside_scope=[], overlap=[], and pre_existing_dirty=[]. Authority review found one owner for staged schema, runtime path, migrations, repository decode, backup/restore, versioning, validation, and security boundaries. All surfaces describe only the narrow persistence foundation and leave EP-01C/EP-01D, application commands, product CLI, execution/completion, adapters, scheduler, MCP, external integration, hosted CI, release, and platform support unimplemented or unverified. Final staged inventory remains a separate terminal step.",
+        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+      },
+      {
+        "id": "V8",
+        "status": "passed",
+        "method": "Run pnpm lint under exact Node 24.19.0 and inspect its shared production-source and migration inventories, built-in ownership, forbidden material, and Domain Core isolation checks.",
+        "evidence": "EP-01B/V8/current at 2026-08-29 16:37:59+08:00. lint exited 0 over 111 files and the exact 13-file production source boundary. It enforced the exact two-file migration inventory, confined filesystem/node:sqlite I/O to persistence, retained the pure Domain Core boundary, and rejected generated, runtime, sensitive, feasibility, vendor, or reparse material.",
+        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+      },
+      {
+        "id": "V9",
+        "status": "passed",
+        "method": "Run exact TypeScript version inspection plus network-disabled pnpm typecheck and pnpm build under the frozen repository configuration.",
+        "evidence": "EP-01B/V9/current at 2026-08-29 16:37:59+08:00. The installed compiler reported TypeScript 5.9.3 exactly; strict NodeNext/noUncheckedIndexedAccess/exactOptionalPropertyTypes typecheck and build both exited 0 with no fallback compiler, diagnostic, or source rewrite.",
+        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+      },
+      {
+        "id": "V11",
+        "status": "passed",
+        "method": "Run the offline dependency-security route and inspect package, lockfile, package-manager, runtime, registry, install-script, credential, and dependency shape.",
+        "evidence": "EP-01B/V11/current at 2026-08-29 16:37:59+08:00. dependency:check exited 0 with zero production dependencies and typescript@5.9.3 as the sole development dependency under Node 24.19.0 and pnpm 11.19.0. No install script, credential, download, registry query, online audit, or dependency repair was used or claimed.",
+        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+      },
+      {
+        "id": "V12",
+        "status": "passed",
+        "method": "Run pnpm package:smoke offline with the exact frozen local store and inspect packed inventory, consumer types/export, persistence exercise, console boundary, uninstall, and creator cleanup.",
+        "evidence": "EP-01B/V12/current at 2026-08-29 16:37:59+08:00. package smoke exited 0 with exact TypeScript 5.9.3, 53 packed files, consumer declarations and root export passed, fresh open/read/backup verification passed, the ato console remained status-only, uninstall passed, and the run removed its own generation. No product CLI or platform-support claim was created.",
+        "state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd"
+      }
+    ],
     "ownership_receipts": [],
     "audits": {
       "a0": {
@@ -403,7 +484,7 @@ Phase 2 execution work as separate, unimplemented plans.
             "changes_task_diff": true,
             "disposition": "a2_required",
             "resolution": "Retain and revalidate issued and dynamic directory/file identities immediately before and after every protected mutation and after each await or hook, bind verification and publication to the same source/stage/content, reserve SQLite-created targets exclusively or equivalently, enforce private mode before sensitive bytes, and add deterministic swaps at the actual operation boundaries.",
-            "closure_evidence": "Not closed at A1: repair the implementation and operation-boundary tests, rerun every affected path/backup/restore gate, and obtain fresh independent A2 on the repaired final material state.",
+            "closure_evidence": "Closed by fresh independent A2 attempt 4 at 2026-08-29 16:37:13+08:00. All filesystem SQLite opens now preflight and retain the complete no-follow main/WAL/SHM identity set; backup clone/normalization and publication bind stage/source/container/content at their actual boundaries; restore binds stage, current-primary CAS, retained topology, durable intent, publication, and readback. Deterministic dangling-sidecar, newly appearing sidecar, source/stage/inventory/publication, restore CAS, and recovery seams passed with no adjacent residual finding.",
             "closure_state_id": null
           },
           {
@@ -415,7 +496,7 @@ Phase 2 execution work as separate, unimplemented plans.
             "changes_task_diff": true,
             "disposition": "a2_required",
             "resolution": "Make successful exclusive intent publication the exact catch boundary and normalize every subsequent failure to RESTORE_RECOVERY_REQUIRED while preserving the restoreId and original cause.",
-            "closure_evidence": "Not closed at A1: add deterministic failures immediately after intent publication and before primary moves, rerun restore recovery evidence, and obtain fresh independent A2.",
+            "closure_evidence": "Closed by fresh independent A2 attempt 4 at 2026-08-29 16:37:13+08:00. Exclusive intent publication is the exact recovery boundary; every later failure preserves restoreId and becomes RESTORE_RECOVERY_REQUIRED. Tests inject immediately after intent and at retain/publish/receipt boundaries, while current-primary CAS is repeated after staging and immediately before intent publication.",
             "closure_state_id": null
           },
           {
@@ -427,7 +508,7 @@ Phase 2 execution work as separate, unimplemented plans.
             "changes_task_diff": true,
             "disposition": "a2_required",
             "resolution": "Retain the handle outside the setup block, close every unsuccessful open while preserving the authoritative typed error, and add a deterministic post-construction setup failure regression.",
-            "closure_evidence": "Not closed at A1: repair openReadOnlyDatabase, rerun backup/corruption and handle-release evidence, and obtain fresh independent A2.",
+            "closure_evidence": "Closed by fresh independent A2 attempt 4 at 2026-08-29 16:37:13+08:00. openReadOnlyDatabase retains and closes every constructed handle on setup/policy failure while preserving the typed error, and the malformed-database regression requires immediate containing-directory rename after failure on Windows.",
             "closure_state_id": null
           },
           {
@@ -439,7 +520,7 @@ Phase 2 execution work as separate, unimplemented plans.
             "changes_task_diff": true,
             "disposition": "a2_required",
             "resolution": "Add only scripts/codex-contract.mjs to the task scope, obtain fresh independent A0 for the revised approval digest before editing it, and consume the same exact production-source inventory owner as lint without weakening the Codex/OpenAI prohibition.",
-            "closure_evidence": "Not closed at A1: this approval revision invalidates the prior A0; after fresh A0, repair the gate, rerun verify:offline, and obtain fresh independent A2.",
+            "closure_evidence": "Closed by fresh independent A2 attempt 4 at 2026-08-29 16:37:13+08:00 after fresh A0 attempt 6 approved the exact revised scope. scripts/codex-contract.mjs consumes the shared 13-file production inventory and the complete offline route exits 0 while retaining externalE2E=not_run and supportClaim=false.",
             "closure_state_id": null
           },
           {
@@ -451,7 +532,7 @@ Phase 2 execution work as separate, unimplemented plans.
             "changes_task_diff": true,
             "disposition": "a2_required",
             "resolution": "Extend the in-scope lint owner and regression evidence to enforce the exact committed migration inventory and declared Node built-in ownership boundary.",
-            "closure_evidence": "Not closed at A1: repair V8 without weakening its approved criterion, rerun lint/configuration/scaffold evidence, and obtain fresh independent A2.",
+            "closure_evidence": "Closed by fresh independent A2 attempt 4 at 2026-08-29 16:37:13+08:00. The shared lint owner enforces the exact 13-file production boundary, exact two-file migration inventory, and declared Node built-in ownership; lint passes 111 files with no weakening or omission.",
             "closure_state_id": null
           },
           {
@@ -463,10 +544,22 @@ Phase 2 execution work as separate, unimplemented plans.
             "changes_task_diff": true,
             "disposition": "a2_required",
             "resolution": "Split durable field ownership explicitly: migrations own schema/version/registry/timestamp identity while the repository initializer solely owns the one-time domain_initialized transition.",
-            "closure_evidence": "Not closed at A1: repair the authoritative table and include the change in the already-required fresh A2 review.",
+            "closure_evidence": "Closed by fresh independent A2 attempt 4 at 2026-08-29 16:37:13+08:00. The authoritative persistence contract assigns migration schema/version/registry/timestamp fields to migrations.ts and assigns only the one-time domain_initialized transition to repository initialization.",
             "closure_state_id": null
           }
         ]
+      },
+      "a2": {
+        "report_status": "complete",
+        "reviewer": "/root/ep01b_a2, A2 attempt 4",
+        "independence": "Fresh independent strictly read-only reviewer; no repository, plan, Git, coordinator, network, secret, artifact, other-repository, or external-state mutation.",
+        "scope": "Closure audit of F-A1-01 through F-A1-06 and the directly adjacent F-A2-01/F-A2-02 residual family, including the final standalone-backup normalization repair and regression evidence.",
+        "reviewed_at": "2026-08-29 16:37:13+08:00",
+        "evidence": "Trace before and after review exactly reproduced git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd with no error, warning, scope overlap, outside-scope path, or pre-existing dirty path. database.ts now owns every filesystem SQLite open: complete no-follow main/WAL/SHM capture precedes construction, subsequent assertions retain newly appearing sidecars, and standalone normalization validates the bound main plus terminal DELETE-mode no-sidecar inventory after close. backup.ts routes the post-clone normalization seam through that owner and retains its immediate pre-rename source/stage/inventory/object/content checks. A deterministic dangling stage-WAL injection leaves its marker unchanged, publishes no generation, and restores the fixture for safe creator cleanup. Restore current-primary CAS remains initial, post-stage, and immediate pre-intent; post-intent errors remain recovery-required. Read-only handle closure, exact shared source/migration inventories, built-in ownership, and metadata writer documentation did not regress. Current validation passed lint, typecheck, test:persistence 56/56, verify:offline 101/101, docs 57/225/0, zero production dependencies, package smoke 53, zero SQLite-matrix survivors, Codex blocked boundary, and git diff checks. The four historical .task-artifacts directories are a separate authorization/lifecycle blocker and were not modified.",
+        "reviewed_state_id": "git-sha1:c761ba4429cc0f7ba7c1a9ab8d126ddd4c85e4bd",
+        "parent_disposition": "complete",
+        "closes": ["F-A1-01", "F-A1-02", "F-A1-03", "F-A1-04", "F-A1-05", "F-A1-06"],
+        "findings": []
       }
     },
     "audit_attempts": [
@@ -515,8 +608,24 @@ Phase 2 execution work as separate, unimplemented plans.
         "attempt": 1,
         "report_status": "complete",
         "finding_ids": ["F-A2-01", "F-A2-02"],
-        "disposition": "reopened",
+        "disposition": "superseded",
         "reason": "Fresh independent A2 attempt 1 at 2026-08-29 15:59:25+08:00 bound git-sha1:7613a664cc7b07c1894df83242ee55d05077dc6c and independently closed F-A1-02 through F-A1-06, but left F-A1-01 open through two direct residuals. F-A2-01 (HIGH) found that present WAL/SHM members could be touched before no-follow binding and that backup rename lacked an immediate post-hook exact stage-inventory/content check. F-A2-02 (MEDIUM) found no current-primary CAS recapture after the restore staging await or at durable-intent publication. Both findings were confirmed in scope, require implementation and operation-boundary tests, and route to fresh repeat A2 without broad A1 reopening or A3."
+      },
+      {
+        "audit": "A2",
+        "attempt": 2,
+        "report_status": "complete",
+        "finding_ids": ["F-A2-01"],
+        "disposition": "superseded",
+        "reason": "Fresh independent A2 attempt 2 bound git-sha1:ac9764468ccc0b974696631d282f45c4bb510357 and closed F-A2-02 plus the backup-publication half of F-A2-01, but found the HIGH identity family still open: existsSync could misclassify a dangling reparse entry as absent, and a newly appearing sidecar was validated without being inserted into the retained Map. The parent confirmed the residual in scope, replaced every production SQLite-member presence decision with no-follow lstat, retained new sidecars, added deterministic regressions, and routed the repair to fresh repeat A2."
+      },
+      {
+        "audit": "A2",
+        "attempt": 3,
+        "report_status": "complete",
+        "finding_ids": ["F-A2-01"],
+        "disposition": "superseded",
+        "reason": "Fresh independent A2 attempt 3 at 2026-08-29 16:30:29+08:00 bound git-sha1:4f8111982fdc198ad04d8f58682d5445ce3fdc7b and verified the primary/read-only no-follow and retained-Map repairs plus every F-A1-02 through F-A1-06 closure, but found one direct HIGH F-A2-01 residual: standalone backup normalization still opened the cloned database without complete stage main/WAL/SHM preflight. The parent confirmed it in scope, routed the open through the shared binding owner, added the exact post-clone dangling-WAL regression, reran affected/full validation, and required attempt 4."
       }
     ],
     "validation_attempts": [],

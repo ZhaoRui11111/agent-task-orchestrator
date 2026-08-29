@@ -5,6 +5,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -82,12 +83,14 @@ test("online backup publishes an exact verified immutable generation while anoth
   }
 });
 
-test("backup revalidates clone identities, exact inventory, and exclusive publication boundaries", async () => {
-  for (const boundary of ["stage", "source", "inventory", "publish"]) {
+test("backup revalidates clone identities, sidecars, exact inventory, and publication boundaries", async () => {
+  for (const boundary of ["stage", "source", "sidecar", "inventory", "publish"]) {
     const fixture = createPersistenceFixture(`backup-boundary-${boundary}`);
     let store;
     let database;
     let attemptedGeneration;
+    let movedSidecarTarget;
+    let sidecarTarget;
     try {
       store = await openPersistence(fixture.layout, { applicationVersion: "boundary" });
       await seedTask(store);
@@ -110,10 +113,25 @@ test("backup revalidates clone identities, exact inventory, and exclusive public
                   const stage = path.join(fixture.layout.backupStagingRoot, name);
                   renameSync(stage, `${stage}.owned`);
                   mkdirSync(stage);
-                } else {
+                } else if (boundary === "source") {
                   const original = readFileSync(fixture.layout.databasePath);
                   renameSync(fixture.layout.databasePath, `${fixture.layout.databasePath}.owned`);
                   writeFileSync(fixture.layout.databasePath, original);
+                } else {
+                  const name = readdirSync(fixture.layout.backupStagingRoot)[0];
+                  assert.ok(name);
+                  attemptedGeneration = name;
+                  const stage = path.join(fixture.layout.backupStagingRoot, name);
+                  sidecarTarget = path.join(fixture.generation, "backup-sidecar-target");
+                  mkdirSync(sidecarTarget);
+                  writeFileSync(path.join(sidecarTarget, "outside-marker"), "unchanged");
+                  symlinkSync(
+                    sidecarTarget,
+                    path.join(stage, "state.sqlite3-wal"),
+                    process.platform === "win32" ? "junction" : "dir",
+                  );
+                  movedSidecarTarget = `${sidecarTarget}.moved`;
+                  renameSync(sidecarTarget, movedSidecarTarget);
                 }
               },
               beforePublish: boundary === "publish" ? () => {
@@ -151,10 +169,21 @@ test("backup revalidates clone identities, exact inventory, and exclusive public
           existsSync(path.join(fixture.layout.backupGenerationsRoot, attemptedGeneration)),
           false,
         );
+      } else if (boundary === "sidecar") {
+        assert.ok(attemptedGeneration);
+        assert.ok(movedSidecarTarget);
+        assert.equal(readFileSync(path.join(movedSidecarTarget, "outside-marker"), "utf8"), "unchanged");
+        assert.equal(
+          existsSync(path.join(fixture.layout.backupGenerationsRoot, attemptedGeneration)),
+          false,
+        );
       }
     } finally {
       if (database?.isOpen) database.close();
       if (store) await store.close();
+      if (movedSidecarTarget && sidecarTarget && existsSync(movedSidecarTarget)) {
+        renameSync(movedSidecarTarget, sidecarTarget);
+      }
       cleanupPersistenceFixture(fixture);
     }
   }

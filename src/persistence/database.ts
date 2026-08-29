@@ -1,10 +1,10 @@
 import { DatabaseSync } from "node:sqlite";
-import { existsSync } from "node:fs";
 import { normalizeSqliteFailure, persistenceFailure } from "./errors.ts";
 import {
   enforcePrivateRegularFile,
   type FileIdentity,
   inspectPrivateRegularFile,
+  pathEntryExistsNoFollow,
   reservePrivateRegularFile,
   sameFileObjectIdentity,
 } from "./values.ts";
@@ -67,51 +67,48 @@ function safeInteger(value: unknown, label: string): number {
   return value;
 }
 
-interface SqliteFileBinding {
-  readonly path: string;
-  readonly identity: FileIdentity;
-}
-
 function sqliteMemberPaths(databasePath: string): readonly string[] {
   return Object.freeze([databasePath, `${databasePath}-wal`, `${databasePath}-shm`]);
 }
 
-function captureSqliteFileBindings(databasePath: string, reserveMain: boolean): readonly SqliteFileBinding[] {
-  const bindings: SqliteFileBinding[] = [];
+function captureSqliteFileBindings(databasePath: string, reserveMain: boolean): Map<string, FileIdentity> {
+  const bindings = new Map<string, FileIdentity>();
   for (const [index, memberPath] of sqliteMemberPaths(databasePath).entries()) {
-    if (index === 0 && reserveMain && !existsSync(memberPath)) {
-      bindings.push(Object.freeze({ path: memberPath, identity: reservePrivateRegularFile(memberPath) }));
-    } else if (existsSync(memberPath)) {
-      bindings.push(Object.freeze({ path: memberPath, identity: inspectPrivateRegularFile(memberPath) }));
+    const present = pathEntryExistsNoFollow(memberPath);
+    if (index === 0 && reserveMain && !present) {
+      bindings.set(memberPath, reservePrivateRegularFile(memberPath));
+    } else if (present) {
+      bindings.set(memberPath, inspectPrivateRegularFile(memberPath));
     } else if (index === 0) {
       throw persistenceFailure("PATH_IDENTITY_CHANGED", "SQLite main database is absent");
     }
   }
-  return Object.freeze(bindings);
+  return bindings;
 }
 
 function assertSqliteFileBindings(
   databasePath: string,
-  bindings: readonly SqliteFileBinding[],
+  bindings: Map<string, FileIdentity>,
 ): void {
-  const expectedByPath = new Map(bindings.map((binding) => [binding.path, binding.identity]));
   for (const memberPath of sqliteMemberPaths(databasePath)) {
-    const expected = expectedByPath.get(memberPath);
+    const expected = bindings.get(memberPath);
     if (expected !== undefined) {
-      if (!existsSync(memberPath)) {
+      if (!pathEntryExistsNoFollow(memberPath)) {
         throw persistenceFailure("PATH_IDENTITY_CHANGED", "Bound SQLite file disappeared during open");
       }
       const observed = enforcePrivateRegularFile(memberPath);
       if (!sameFileObjectIdentity(expected, observed)) {
         throw persistenceFailure("PATH_IDENTITY_CHANGED", "Bound SQLite file changed during open");
       }
-    } else if (existsSync(memberPath)) {
-      enforcePrivateRegularFile(memberPath);
+    } else if (pathEntryExistsNoFollow(memberPath)) {
+      bindings.set(memberPath, enforcePrivateRegularFile(memberPath));
     }
   }
 }
 
-export function openPrimaryDatabase(databasePath: string): SqliteDatabase {
+export function openPrimaryDatabase(
+  databasePath: string,
+): SqliteDatabase {
   const bindings = captureSqliteFileBindings(databasePath, true);
   let database: SqliteDatabase;
   try {
@@ -127,6 +124,7 @@ export function openPrimaryDatabase(databasePath: string): SqliteDatabase {
     database.exec("PRAGMA synchronous=FULL");
     database.exec("PRAGMA read_uncommitted=OFF");
     database.exec(`PRAGMA busy_timeout=${SQLITE_BUSY_TIMEOUT_MS}`);
+    assertSqliteFileBindings(databasePath, bindings);
     verifyConnectionPolicy(database);
     assertSqliteFileBindings(databasePath, bindings);
     return database;
@@ -145,6 +143,18 @@ export function openPrimaryDatabase(databasePath: string): SqliteDatabase {
   }
 }
 
+export function assertNewSqliteMemberBindingForTesting(
+  databasePath: string,
+  createMember: () => void,
+  replaceMember: () => void,
+): void {
+  const bindings = captureSqliteFileBindings(databasePath, false);
+  createMember();
+  assertSqliteFileBindings(databasePath, bindings);
+  replaceMember();
+  assertSqliteFileBindings(databasePath, bindings);
+}
+
 export function openReadOnlyDatabase(databasePath: string): SqliteDatabase {
   const bindings = captureSqliteFileBindings(databasePath, false);
   let database: SqliteDatabase | undefined;
@@ -155,6 +165,7 @@ export function openReadOnlyDatabase(databasePath: string): SqliteDatabase {
     database.exec("PRAGMA synchronous=FULL");
     database.exec("PRAGMA read_uncommitted=OFF");
     database.exec(`PRAGMA busy_timeout=${SQLITE_BUSY_TIMEOUT_MS}`);
+    assertSqliteFileBindings(databasePath, bindings);
     if (
       pragmaValue(database, "foreign_keys") !== 1 ||
       pragmaValue(database, "synchronous") !== 2 ||
@@ -182,7 +193,64 @@ export function openReadOnlyDatabase(databasePath: string): SqliteDatabase {
     if (bindingError !== undefined) {
       throw normalizeSqliteFailure(bindingError, "SQLITE_OPEN_FAILED");
     }
+    assertSqliteFileBindings(databasePath, bindings);
     throw normalizeSqliteFailure(error, "SQLITE_OPEN_FAILED");
+  }
+}
+
+export function normalizeStandaloneDatabase(databasePath: string): void {
+  const bindings = captureSqliteFileBindings(databasePath, false);
+  let database: SqliteDatabase | undefined;
+  let journalTransitionStarted = false;
+  try {
+    database = new DatabaseSync(databasePath, { timeout: SQLITE_BUSY_TIMEOUT_MS });
+    assertSqliteFileBindings(databasePath, bindings);
+    database.exec("PRAGMA foreign_keys=ON");
+    database.exec("PRAGMA synchronous=FULL");
+    assertSqliteFileBindings(databasePath, bindings);
+    journalTransitionStarted = true;
+    database.exec("PRAGMA journal_mode=DELETE");
+    const row = database.prepare("PRAGMA journal_mode").get();
+    if (row === undefined || String(Object.values(row)[0]).toLowerCase() !== "delete") {
+      throw persistenceFailure("BACKUP_INVALID", "Standalone backup did not normalize to DELETE journal mode");
+    }
+    verifyDatabaseIntegrity(database);
+  } catch (error) {
+    let bindingError: unknown;
+    if (!journalTransitionStarted) {
+      try {
+        assertSqliteFileBindings(databasePath, bindings);
+      } catch (failure) {
+        bindingError = failure;
+      }
+    }
+    if (database?.isOpen) {
+      try {
+        database.close();
+      } catch {
+        // The normalization or binding failure remains authoritative.
+      }
+    }
+    if (bindingError !== undefined) {
+      throw normalizeSqliteFailure(bindingError, "BACKUP_INVALID");
+    }
+    throw normalizeSqliteFailure(error, "BACKUP_INVALID");
+  }
+  database.close();
+
+  const expectedMain = bindings.get(databasePath);
+  if (expectedMain === undefined) {
+    throw persistenceFailure("PATH_IDENTITY_CHANGED", "Standalone database binding lost its main file");
+  }
+  const terminalMain = enforcePrivateRegularFile(databasePath);
+  if (!sameFileObjectIdentity(expectedMain, terminalMain)) {
+    throw persistenceFailure("PATH_IDENTITY_CHANGED", "Standalone database identity changed during normalization");
+  }
+  for (const memberPath of sqliteMemberPaths(databasePath).slice(1)) {
+    if (pathEntryExistsNoFollow(memberPath)) {
+      inspectPrivateRegularFile(memberPath);
+      throw persistenceFailure("BACKUP_INVALID", "Standalone backup retained a SQLite sidecar after normalization");
+    }
   }
 }
 

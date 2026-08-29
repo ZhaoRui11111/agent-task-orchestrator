@@ -151,6 +151,16 @@ export function sameFileObjectIdentity(left: FileIdentity, right: FileIdentity):
   );
 }
 
+export function pathEntryExistsNoFollow(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if ((error as { readonly code?: unknown } | null)?.code === "ENOENT") return false;
+    throw persistenceFailure("PATH_IDENTITY_CHANGED", "Path entry presence could not be inspected safely", {}, error);
+  }
+}
+
 export function inspectRegularFile(path: string): FileIdentity {
   try {
     const stats = lstatSync(path);

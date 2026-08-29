@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import {
-  existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
@@ -18,6 +17,7 @@ import {
   inspectRegularFile,
   isCanonicalUtcTimestamp,
   isNonemptyString,
+  pathEntryExistsNoFollow,
   readRegularFile,
   sameFileIdentity,
   sha256,
@@ -153,7 +153,7 @@ function createPrivateDirectoryTree(candidate: string, platform: string): string
 
   for (const segment of segments) {
     const next = path.join(current, segment);
-    if (existsSync(next)) {
+    if (pathEntryExistsNoFollow(next)) {
       const observed = identityOfDirectory(next);
       const parentAfter = identityOfDirectory(current);
       if (!sameDirectoryIdentity(parentIdentity, parentAfter)) {
@@ -428,7 +428,7 @@ export async function withLifecycleLock<T>(
   try {
     identity = writeExclusiveFile(layout.lifecycleLockPath, bytes);
   } catch (error) {
-    if (existsSync(layout.lifecycleLockPath)) {
+    if (pathEntryExistsNoFollow(layout.lifecycleLockPath)) {
       try {
         inspectRegularFile(layout.lifecycleLockPath);
       } catch (identityError) {
@@ -616,7 +616,7 @@ export function assertConnectionReceiptHeld(layout: RuntimeLayout, receipt: Conn
 
 export function hasRestoreIntent(layout: RuntimeLayout): boolean {
   assertRuntimeLayout(layout);
-  if (!existsSync(layout.restoreIntentPath)) return false;
+  if (!pathEntryExistsNoFollow(layout.restoreIntentPath)) return false;
   inspectRegularFile(layout.restoreIntentPath);
   assertRuntimeLayout(layout);
   return true;

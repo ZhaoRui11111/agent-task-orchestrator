@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 import {
-  existsSync,
   readdirSync,
   renameSync,
 } from "node:fs";
 import path from "node:path";
-import { backup, DatabaseSync } from "node:sqlite";
+import { backup } from "node:sqlite";
 import {
+  normalizeStandaloneDatabase,
   openReadOnlyDatabase,
   type SqliteDatabase,
   sqliteInteger,
@@ -43,6 +43,7 @@ import {
   inspectRegularFile,
   isCanonicalUtcTimestamp,
   isNonemptyString,
+  pathEntryExistsNoFollow,
   readRegularFile,
   reservePrivateRegularFile,
   sameFileIdentity,
@@ -470,23 +471,6 @@ export function verifyBackupGenerationForTesting(
   return verifyBackupGenerationWithHooks(layout, generationId, hooks);
 }
 
-function normalizeBackupDatabase(databasePath: string): void {
-  const database = new DatabaseSync(databasePath);
-  try {
-    database.exec("PRAGMA foreign_keys=ON");
-    database.exec("PRAGMA synchronous=FULL");
-    database.exec("PRAGMA journal_mode=DELETE");
-    const row = database.prepare("PRAGMA journal_mode").get();
-    if (row === undefined || String(Object.values(row)[0]).toLowerCase() !== "delete") {
-      throw persistenceFailure("BACKUP_INVALID", "Standalone backup did not normalize to DELETE journal mode");
-    }
-    verifyDatabaseIntegrity(database);
-  } finally {
-    database.close();
-  }
-  enforcePrivateRegularFile(databasePath);
-}
-
 async function cloneDatabase(
   source: SqliteDatabase,
   targetPath: string,
@@ -496,7 +480,7 @@ async function cloneDatabase(
 ): Promise<FileIdentity> {
   assertContainer();
   assertSource();
-  if (existsSync(targetPath)) {
+  if (pathEntryExistsNoFollow(targetPath)) {
     throw persistenceFailure("BACKUP_CONFLICT", "SQLite backup target already exists");
   }
   const reserved = reservePrivateRegularFile(targetPath);
@@ -513,7 +497,7 @@ async function cloneDatabase(
     if (!sameFileObjectIdentity(reserved, cloned) || cloned.size <= 0) {
       throw persistenceFailure("PATH_IDENTITY_CHANGED", "SQLite backup target identity changed during clone");
     }
-    normalizeBackupDatabase(targetPath);
+    normalizeStandaloneDatabase(targetPath);
     assertSource();
     assertContainer();
     const normalized = enforcePrivateRegularFile(targetPath);
@@ -590,7 +574,7 @@ export async function createBackupUnderLock(
   }
   assertOwnedRuntimeDirectory(layout, stageDirectory);
   const generationDirectory = path.join(layout.backupGenerationsRoot, generationId);
-  if (existsSync(generationDirectory)) {
+  if (pathEntryExistsNoFollow(generationDirectory)) {
     throw persistenceFailure("BACKUP_CONFLICT", "Backup generation destination already exists");
   }
   hooks.beforePublish?.();
@@ -609,7 +593,7 @@ export async function createBackupUnderLock(
     throw persistenceFailure("BACKUP_INVALID", "Backup stage binding changed before publication");
   }
   assertBackupInventory(layout, stageDirectory);
-  if (existsSync(generationDirectory)) {
+  if (pathEntryExistsNoFollow(generationDirectory)) {
     throw persistenceFailure("BACKUP_CONFLICT", "Backup generation destination appeared before publication");
   }
   try {
@@ -627,7 +611,7 @@ export async function createBackupUnderLock(
   if (!sameDirectoryIdentity(stageDirectory.identity, publishedDirectory.identity)) {
     throw persistenceFailure("PATH_IDENTITY_CHANGED", "Backup generation identity changed during publication");
   }
-  if (existsSync(stageDirectory.path)) {
+  if (pathEntryExistsNoFollow(stageDirectory.path)) {
     throw persistenceFailure("PATH_IDENTITY_CHANGED", "Backup stage remained after publication");
   }
   hooks.afterPublish?.();
@@ -653,7 +637,7 @@ function inspectPrimaryMember(layout: RuntimeLayout, fileName: (typeof PRIMARY_M
 
 function capturePrimaryIdentity(layout: RuntimeLayout): PrimaryIdentity {
   assertRuntimeLayout(layout);
-  const members = PRIMARY_MEMBER_NAMES.filter((fileName) => existsSync(memberPath(layout, fileName))).map(
+  const members = PRIMARY_MEMBER_NAMES.filter((fileName) => pathEntryExistsNoFollow(memberPath(layout, fileName))).map(
     (fileName) => inspectPrimaryMember(layout, fileName),
   );
   const identitySha256 = sha256(canonicalJson({ members, schemaVersion: 1 }));
@@ -870,7 +854,7 @@ function readRestoreIntent(
   layout: RuntimeLayout,
 ): Readonly<{ intent: RestoreIntent; identity: FileIdentity; checksumSha256: string }> {
   assertRuntimeLayout(layout);
-  if (!existsSync(layout.restoreIntentPath)) {
+  if (!pathEntryExistsNoFollow(layout.restoreIntentPath)) {
     throw persistenceFailure("RESTORE_BLOCKED", "No restore intent is available for recovery");
   }
   const read = readJsonFile(layout.restoreIntentPath, "restore intent", "RESTORE_BLOCKED");
@@ -928,7 +912,7 @@ function receiptPath(layout: RuntimeLayout, restoreId: string): string {
 function existingReceipt(layout: RuntimeLayout, intent: RestoreIntent): RestoreReceipt | null {
   assertRuntimeLayout(layout);
   const filePath = receiptPath(layout, intent.restoreId);
-  if (!existsSync(filePath)) return null;
+  if (!pathEntryExistsNoFollow(filePath)) return null;
   const read = readJsonFile(filePath, "restore receipt", "RESTORE_BLOCKED");
   let receipt: RestoreReceipt;
   try {
@@ -1005,7 +989,7 @@ function assertCompleteRetainedDirectory(layout: RuntimeLayout, intent: RestoreI
 
 function currentTargetPublished(layout: RuntimeLayout, intent: RestoreIntent): boolean {
   assertRuntimeLayout(layout);
-  if (!existsSync(layout.databasePath)) return false;
+  if (!pathEntryExistsNoFollow(layout.databasePath)) return false;
   const current = inspectMemberAt(layout.databasePath, BACKUP_DATABASE_FILE);
   const published = samePrimaryMember(current, intent.stageIdentity);
   assertRuntimeLayout(layout);
@@ -1025,8 +1009,8 @@ function retainExpectedCurrent(
     assertOwnedRuntimeDirectory(layout, retainedDirectory);
     const primaryPath = memberPath(layout, fileName);
     const retainedPath = retainedMemberPath(layout, intent.restoreId, fileName);
-    const primaryExists = existsSync(primaryPath);
-    const retainedExists = existsSync(retainedPath);
+    const primaryExists = pathEntryExistsNoFollow(primaryPath);
+    const retainedExists = pathEntryExistsNoFollow(retainedPath);
     const expected = expectedByName.get(fileName);
     if (expected === undefined) {
       if (retainedExists || (primaryExists && !(fileName === BACKUP_DATABASE_FILE && published))) {
@@ -1057,8 +1041,8 @@ function retainExpectedCurrent(
     assertRuntimeLayout(layout);
     assertOwnedRuntimeDirectory(layout, retainedDirectory);
     if (
-      !existsSync(primaryPath) ||
-      existsSync(retainedPath) ||
+      !pathEntryExistsNoFollow(primaryPath) ||
+      pathEntryExistsNoFollow(retainedPath) ||
       !samePrimaryMember(inspectMemberAt(primaryPath, fileName), expected)
     ) {
       throw persistenceFailure("RESTORE_BLOCKED", "Restore topology changed immediately before retention", {
@@ -1068,7 +1052,7 @@ function retainExpectedCurrent(
     renameSync(primaryPath, retainedPath);
     assertRuntimeLayout(layout);
     assertOwnedRuntimeDirectory(layout, retainedDirectory);
-    if (existsSync(primaryPath)) {
+    if (pathEntryExistsNoFollow(primaryPath)) {
       throw persistenceFailure("RESTORE_BLOCKED", "Primary member remained after retention", { fileName });
     }
     if (!samePrimaryMember(inspectMemberAt(retainedPath, fileName), expected)) {
@@ -1129,7 +1113,7 @@ async function continueRestore(
   const stagePath = path.join(layout.restoreStagingRoot, `${intent.restoreId}.sqlite3`);
   let published = currentTargetPublished(layout, intent);
   if (!published) {
-    if (!existsSync(stagePath) || !samePrimaryMember(stageMember(stagePath), intent.stageIdentity)) {
+    if (!pathEntryExistsNoFollow(stagePath) || !samePrimaryMember(stageMember(stagePath), intent.stageIdentity)) {
       throw persistenceFailure("RESTORE_BLOCKED", "Restore stage identity is absent or changed");
     }
     retainExpectedCurrent(layout, intent, hooks);
@@ -1143,18 +1127,18 @@ async function continueRestore(
     hooks.beforeTargetPublish?.();
     token.assertHeld();
     assertRetainedDirectory(layout, intent);
-    if (!existsSync(stagePath) || !samePrimaryMember(stageMember(stagePath), intent.stageIdentity)) {
+    if (!pathEntryExistsNoFollow(stagePath) || !samePrimaryMember(stageMember(stagePath), intent.stageIdentity)) {
       throw persistenceFailure("RESTORE_BLOCKED", "Restore stage changed immediately before publication");
     }
-    if (existsSync(layout.databasePath)) {
+    if (pathEntryExistsNoFollow(layout.databasePath)) {
       throw persistenceFailure("RESTORE_BLOCKED", "Primary database path was repopulated before publication");
     }
     renameSync(stagePath, layout.databasePath);
     token.assertHeld();
     assertRetainedDirectory(layout, intent);
     if (
-      existsSync(stagePath) ||
-      !existsSync(layout.databasePath) ||
+      pathEntryExistsNoFollow(stagePath) ||
+      !pathEntryExistsNoFollow(layout.databasePath) ||
       !samePrimaryMember(inspectMemberAt(layout.databasePath, BACKUP_DATABASE_FILE), intent.stageIdentity)
     ) {
       throw persistenceFailure("RESTORE_BLOCKED", "Restore target failed terminal publication readback");
@@ -1169,7 +1153,7 @@ async function continueRestore(
   } else {
     retainExpectedCurrent(layout, intent, hooks);
     assertCompleteRetainedDirectory(layout, intent);
-    if (existsSync(stagePath)) {
+    if (pathEntryExistsNoFollow(stagePath)) {
       throw persistenceFailure("RESTORE_BLOCKED", "Restore stage and published target both exist");
     }
   }
@@ -1233,7 +1217,7 @@ async function stageRestoreTarget(
   const source = openReadOnlyDatabase(sourcePath);
   const stagePath = path.join(layout.restoreStagingRoot, `${restoreId}.sqlite3`);
   try {
-    if (existsSync(stagePath)) {
+    if (pathEntryExistsNoFollow(stagePath)) {
       throw persistenceFailure("RESTORE_CONFLICT", "Restore stage already exists");
     }
     await cloneDatabase(
@@ -1306,7 +1290,7 @@ async function restoreBackupWithHooks(
     try {
       intentIdentity = writeExclusiveFile(layout.restoreIntentPath, intentBytes);
     } catch (error) {
-      if (existsSync(layout.restoreIntentPath)) {
+      if (pathEntryExistsNoFollow(layout.restoreIntentPath)) {
         throw persistenceFailure(
           "RESTORE_RECOVERY_REQUIRED",
           "Restore intent publication left durable state requiring explicit recovery",

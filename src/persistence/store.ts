@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import type { DomainMutation, DomainSnapshot } from "../domain.ts";
 import {
   createBackupUnderLock,
@@ -38,7 +37,13 @@ import {
   type RuntimeLayout,
   withLifecycleLock,
 } from "./runtime.ts";
-import { enforcePrivateRegularFile, exactRecord, inspectRegularFile, isNonemptyString } from "./values.ts";
+import {
+  enforcePrivateRegularFile,
+  exactRecord,
+  inspectRegularFile,
+  isNonemptyString,
+  pathEntryExistsNoFollow,
+} from "./values.ts";
 
 export interface OpenPersistenceOptions {
   readonly applicationVersion: string;
@@ -49,14 +54,14 @@ type StoreState = "open" | "database_closed" | "closed";
 function enforcePrivatePrimaryFiles(layout: RuntimeLayout): void {
   assertRuntimeLayout(layout);
   for (const filePath of [layout.databasePath, `${layout.databasePath}-wal`, `${layout.databasePath}-shm`]) {
-    if (existsSync(filePath)) enforcePrivateRegularFile(filePath);
+    if (pathEntryExistsNoFollow(filePath)) enforcePrivateRegularFile(filePath);
   }
   assertRuntimeLayout(layout);
 }
 
 function inspectBeforeWritableOpen(layout: RuntimeLayout): number | null {
   assertRuntimeLayout(layout);
-  if (!existsSync(layout.databasePath)) return null;
+  if (!pathEntryExistsNoFollow(layout.databasePath)) return null;
   const identity = inspectRegularFile(layout.databasePath);
   if (identity.size === 0) {
     throw persistenceFailure("MIGRATION_HISTORY_MISMATCH", "Existing primary database is empty and cannot be replaced");

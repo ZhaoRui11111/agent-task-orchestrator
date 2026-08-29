@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { openPersistence } from "../src/index.ts";
 import {
+  assertNewSqliteMemberBindingForTesting,
   checkpointWal,
   openPrimaryDatabase,
   openReadOnlyDatabase,
@@ -26,42 +35,83 @@ import {
 
 test("read-only setup failure closes the constructed SQLite handle", () => {
   const fixture = createPersistenceFixture("concurrency-readonly-close");
-  const malformedPath = path.join(fixture.layout.restoreStagingRoot, "malformed.sqlite3");
-  const movedPath = `${malformedPath}.moved`;
+  const malformedDirectory = path.join(fixture.layout.restoreStagingRoot, "malformed");
+  const movedDirectory = `${malformedDirectory}.moved`;
+  const malformedPath = path.join(malformedDirectory, "state.sqlite3");
   try {
+    mkdirSync(malformedDirectory);
     writeFileSync(malformedPath, "not a sqlite database");
     assert.throws(
       () => openReadOnlyDatabase(malformedPath),
       (error) => expectPersistenceError(error, "SQLITE_OPEN_FAILED"),
     );
-    renameSync(malformedPath, movedPath);
-    renameSync(movedPath, malformedPath);
+    renameSync(malformedDirectory, movedDirectory);
+    renameSync(movedDirectory, malformedDirectory);
   } finally {
     cleanupPersistenceFixture(fixture);
   }
 });
 
-test("SQLite open rejects an unsafe pre-existing sidecar before issuing a connection", async () => {
-  const fixture = createPersistenceFixture("concurrency-sidecar-preflight");
-  let store;
+test("SQLite open rejects unsafe and dangling sidecars before issuing a connection", async () => {
+  for (const boundary of ["directory", "dangling"]) {
+    const fixture = createPersistenceFixture(`concurrency-sidecar-${boundary}`);
+    let store;
+    let movedMarkerDirectory;
+    try {
+      store = await openPersistence(fixture.layout, { applicationVersion: "sidecar" });
+      store.initialize(emptySnapshot());
+      await store.close();
+      store = undefined;
+      const primaryBefore = readFileSync(fixture.layout.databasePath);
+      const unsafeSidecar = `${fixture.layout.databasePath}-wal`;
+      const markerDirectory = boundary === "directory"
+        ? unsafeSidecar
+        : path.join(fixture.generation, "sidecar-target");
+      mkdirSync(markerDirectory);
+      writeFileSync(path.join(markerDirectory, "outside-marker"), "unchanged");
+      if (boundary === "dangling") {
+        symlinkSync(markerDirectory, unsafeSidecar, process.platform === "win32" ? "junction" : "dir");
+        movedMarkerDirectory = `${markerDirectory}.moved`;
+        renameSync(markerDirectory, movedMarkerDirectory);
+      }
+      await assert.rejects(
+        openPersistence(fixture.layout, { applicationVersion: "blocked" }),
+        (error) => expectPersistenceError(error, "PATH_IDENTITY_CHANGED"),
+      );
+      assert.deepEqual(readFileSync(fixture.layout.databasePath), primaryBefore);
+      const preservedMarker = boundary === "directory"
+        ? path.join(markerDirectory, "outside-marker")
+        : path.join(movedMarkerDirectory, "outside-marker");
+      assert.equal(readFileSync(preservedMarker, "utf8"), "unchanged");
+      assert.deepEqual(readdirSync(fixture.layout.connectionsRoot), []);
+    } finally {
+      if (store) await store.close();
+      if (movedMarkerDirectory && existsSync(movedMarkerDirectory)) {
+        renameSync(movedMarkerDirectory, path.join(fixture.generation, "sidecar-target"));
+      }
+      cleanupPersistenceFixture(fixture);
+    }
+  }
+});
+
+test("a sidecar first created during open is retained across terminal identity validation", () => {
+  const fixture = createPersistenceFixture("concurrency-new-sidecar-binding");
   try {
-    store = await openPersistence(fixture.layout, { applicationVersion: "sidecar" });
-    store.initialize(emptySnapshot());
-    await store.close();
-    store = undefined;
-    const primaryBefore = readFileSync(fixture.layout.databasePath);
-    const unsafeSidecar = `${fixture.layout.databasePath}-wal`;
-    mkdirSync(unsafeSidecar);
-    writeFileSync(path.join(unsafeSidecar, "outside-marker"), "unchanged");
-    await assert.rejects(
-      openPersistence(fixture.layout, { applicationVersion: "blocked" }),
+    writeFileSync(fixture.layout.databasePath, "main");
+    const sidecarPath = `${fixture.layout.databasePath}-wal`;
+    const original = Buffer.from("sidecar");
+    assert.throws(
+      () => assertNewSqliteMemberBindingForTesting(
+        fixture.layout.databasePath,
+        () => writeFileSync(sidecarPath, original),
+        () => {
+          renameSync(sidecarPath, `${sidecarPath}.owned`);
+          writeFileSync(sidecarPath, original);
+        },
+      ),
       (error) => expectPersistenceError(error, "PATH_IDENTITY_CHANGED"),
     );
-    assert.deepEqual(readFileSync(fixture.layout.databasePath), primaryBefore);
-    assert.equal(readFileSync(path.join(unsafeSidecar, "outside-marker"), "utf8"), "unchanged");
-    assert.deepEqual(readdirSync(fixture.layout.connectionsRoot), []);
   } finally {
-    if (store) await store.close();
     cleanupPersistenceFixture(fixture);
   }
 });
