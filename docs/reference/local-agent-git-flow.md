@@ -39,6 +39,10 @@ After bootstrap:
   not create sibling branches or worktrees for the same task.
 - `.worktrees/` is repository-local ignored storage. Coordinator state stays
   under the Git common directory and is not source content.
+- `.task-artifacts/` is the only coordinator-registered disposable source-tree
+  root. It is ignored, contains task-created scratch only, and is distinct from
+  task worktrees, coordinator state, dependency stores, build output, runtime
+  data, and user content.
 - Existing branches, worktrees, files, or directories are never adopted merely
   because their names match. Creation and later cleanup require an exact
   ownership receipt.
@@ -52,11 +56,39 @@ rejects nonregular or reparse nodes, and matches open-handle identity to the
 inspected contained path. Boundary escape, resource ambiguity, or identity
 drift fails closed.
 
+## Repository artifact policy
+
+The machine-readable opt-in is
+`.codex/harness-git-flow.json` at the exact integration-head Git tree. It has
+schema version `1` and registers exactly `.task-artifacts`. The coordinator
+reads that committed blob at `start` and stores its blob identity and normalized
+root inventory in the task. An absent manifest produces a null policy; a task
+started before this policy was committed never acquires it retroactively.
+
+For an opted-in task, every registered root must be safe, ignored, absent when
+the task starts, and free of tracked overlap. Before a passed gate, `ready`,
+integration, or push, the task needs a current-head `prune-artifacts` receipt.
+That explicit command accepts no caller-selected path. It revalidates the
+task-frozen manifest against the exact task head, the committed ignore policy,
+tracked overlap, repository/worktree topology, node classes, containment, and
+inventory before the first deletion. It removes only the frozen exact root,
+verifies root absence, and binds the receipt to the task head and manifest blob.
+Unsafe, nonregular, reparse-backed, identity-drifted, or ambiguous state fails
+closed with no claimed receipt.
+
+The repository's package and SQLite feasibility tools create unique
+creator-owned child generations beneath `.task-artifacts` and normally remove
+their own children. Coordinator pruning is still required for an opted-in task,
+even when the exact root is already absent, because the receipt proves the
+terminal observation. `node_modules`, `.pnpm-store`, `dist`, `.worktrees`, and
+runtime or personal data are not registered and are never inferred as
+prunable.
+
 ## Required lifecycle
 
 The normal lifecycle is:
 
-`trace/recover -> start -> develop -> reserve/optional refresh -> validate -> task result commit -> gate -> ready -> integrate -> separately authorized push -> cleanup`
+`trace/recover -> start -> develop -> reserve/optional refresh -> validate -> task result commit -> prune-artifacts when opted in -> gate -> ready -> integrate -> standing-authorized ordinary push -> separately authorized cleanup`
 
 1. Run `trace` before a lifecycle decision. If it reports a pending operation,
    run only `recover` with the fresh state token before continuing.
@@ -73,20 +105,30 @@ The normal lifecycle is:
    review; refresh does not grant approval.
 5. Run the real validations, create the reviewed task-result commit when the
    applicable plan and review order permits it, and record actual gate results
-   against that exact head. A failed gate leaves the task reserved and
+   only after any required artifact prune receipt binds that exact head. A
+   failed gate leaves the task reserved and
    editable. Fix the task, commit the new head, rerun the real gate, and replace
    the stale receipt.
-6. `ready` requires every frozen gate to have a current-head passed receipt and
+6. For a manifest-backed task, invoke `prune-artifacts` after the result commit
+   and before recording a passed gate. The command is idempotent when the root
+   is already absent; a later task-head change invalidates the old receipt.
+7. `ready` requires every frozen gate to have a current-head passed receipt and
    a clean task worktree. Receipt freshness is mechanical; the validation
    policy remains the owner of what must be tested.
-7. `integrate` performs only a fast-forward local transition on clean
+8. `integrate` performs only a fast-forward local transition on clean
    `master`. Merge commits, automatic rebase, reset, stash, and conflict
    synthesis are outside this workflow.
-8. `push` is an external write and always requires authorization distinct from
-   task readiness, local integration, and commit authorization. Use an ordinary
-   non-force push. A push failure preserves `merged_local` and the reservation
-   for observable retry; it is not disguised as rollback.
-9. Run `cleanup` only after a verified successful push receipt. Cleanup must
+9. This repository grants standing authorization to invoke `push` immediately
+   after exact-head readiness and FF-only local integration, unless a newer
+   user instruction revokes or narrows that grant. The transition remains
+   separate and observable, targets only the configured `origin/master`, and
+   uses an ordinary non-force push. A push failure preserves `merged_local` and
+   the reservation for ordinary retry or reporting; it is not disguised as
+   rollback. The standing grant does not authorize a pull request, release,
+   deployment, secret access, arbitrary network use, another repository, or
+   cleanup.
+10. Run `cleanup` only after a verified successful push receipt and separate
+   authorization for cleanup. Cleanup must
    find no tracked, untracked, or ignored material in the task worktree and may
    remove only resources created by this coordinator. Refusal is safer than
    force cleanup.
@@ -101,6 +143,12 @@ Every returned `state_sha256` is a single-use compare-and-swap token. A caller
 must obtain a fresh token after success, failure, or concurrent change. Stale
 tokens, revision drift, identity drift, or a missing reservation refuse the
 mutation.
+
+Coordinator state version `2` stores an immutable per-task artifact policy and
+an optional prune receipt in addition to the version `1` lifecycle facts. The
+repository manifest is source policy; coordinator state remains the sole
+durable lifecycle record. Neither file is inferred from the other after task
+start.
 
 Every state publication uses a same-directory exclusive temporary file, file
 `fsync`, atomic replacement, and exact canonical-byte readback. A Git-mutating
@@ -133,21 +181,21 @@ Do not:
 - develop in the integration checkout after bootstrap;
 - bypass coordinator state with direct branch/worktree lifecycle commands;
 - hand-write a passed gate without running and observing the real gate;
+- attach the current manifest to an older null-policy task, prune a
+  caller-selected path, or infer disposable roots that are absent from the
+  frozen policy;
 - use merge commits, force push, automatic rebase, stash, reset, clean, or
   force deletion to make state appear consistent;
-- treat an approved plan, ready task, passed validation, or local merge as push
-  authorization; or
+- treat an approved plan, ready task, passed validation, or local merge as a
+  push grant outside this repository's exact standing authorization; or
 - let this repository workflow become a hidden dependency of the public core,
   CLI, MCP surface, contribution process, or a future project adapter.
 
 ## Bootstrap and availability
 
-Coordinator initialization is permitted only when the repository root is the
-sole clean integration checkout on `master`, local `master` equals
-`origin/master`, repository identity is exact, coordinator state is absent,
-and `.worktrees` is either absent or an ordinary directory. If those facts or
-the necessary authorization are missing, state remains `ABSENT`.
-
-The current bootstrap work does not create a task worktree. Once its
-task-owned commit is pushed and the clean/synchronized preconditions hold, the
-coordinator can be initialized and traced as the final bootstrap verification.
+The coordinator was initialized by the completed bootstrap plan from a clean,
+synchronized `master` and later upgraded in place to state version `2` only
+with no pending operation or reservation. The committed artifact manifest
+affects only tasks started from a base containing that manifest. Public
+contributors still need no coordinator or maintainer skill to build, test, or
+submit an ordinary external branch and pull request.

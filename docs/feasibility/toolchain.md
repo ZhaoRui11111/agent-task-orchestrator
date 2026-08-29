@@ -15,6 +15,12 @@ disabled. A clean disposable install then consumed that cache with
 `--offline --frozen-lockfile`, and the packed consumer verified the package
 export, `ato` console entry, and uninstall boundary.
 
+The current package-smoke procedure creates its unique disposable consumer and
+pack generation beneath `.task-artifacts/`, while the reusable `.pnpm-store/`
+cache remains outside the coordinator-prunable policy. The tool removes only
+its creator-owned generation and never treats the store or build output as
+disposable coordinator material.
+
 On 2026-08-28 the post-A1 candidate `pnpm verify:offline` command exited `0`
 using a separately frozen offline compiler install, including lint, typecheck,
 build, 18 Node tests, documentation, dependency policy, the

@@ -122,7 +122,7 @@ try {
   mkdirSync(consumer);
   writeFileSync(
     path.join(consumer, "package.json"),
-    `${JSON.stringify({ name: "ep00b-package-consumer", private: true, type: "module" }, null, 2)}\n`,
+    `${JSON.stringify({ name: "ato-package-consumer", private: true, type: "module" }, null, 2)}\n`,
     "utf8",
   );
   pnpm(["add", "--offline", "--ignore-scripts", tgzPath], consumer, storeDir);

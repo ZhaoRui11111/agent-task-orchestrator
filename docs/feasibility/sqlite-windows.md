@@ -10,7 +10,7 @@ requirements remain owned by the
 
 `pnpm spike:sqlite` uses the SQLite library bundled with the frozen Node
 runtime on the local Windows filesystem. It creates one uniquely owned
-generation under the ignored `.ep00b-tmp/` boundary and checks:
+generation under the ignored `.task-artifacts/` boundary and checks:
 
 - foreign-key enforcement and integrity checking;
 - WAL mode, bounded busy behavior, and a concurrent snapshot reader/writer;
@@ -28,6 +28,11 @@ generation under the ignored `.ep00b-tmp/` boundary and checks:
 The script removes only its exact owned generation. Its JSON output excludes
 temporary paths, prompts, identifiers, and database contents. A mock or a run
 on another platform cannot satisfy the Windows evidence criterion.
+
+The original EP-00B terminal evidence predates the repository artifact
+manifest and truthfully records the historical `.ep00b-tmp/` location used by
+that commit. The current procedure uses `.task-artifacts/`; this rename does not
+turn the feasibility script into a production persistence implementation.
 
 ## Evidence status
 

@@ -19,6 +19,7 @@ successful narrow check does not waive another applicable route.
 | Adapter or external side effect | Shared adapter contract suite plus E2E on every platform/API combination for which support will be claimed |
 | CLI, MCP, or another public interface | Schema and negative-input tests plus application-service parity tests proving there is no second business-rule implementation |
 | Authorization, filesystem, secret, privacy, or other security boundary | Authorization tests and the negative-test obligations owned by the [threat model](../security/threat-model.md#negative-test-obligations) |
+| Repository task-artifact or prune policy | Exact manifest/schema/ignore/tracked-overlap tests, creator-root containment and Windows reparse negatives, then a fresh manifest-backed coordinator task proving head-bound prune receipt and root absence |
 | Compatibility or support claim | Migration/contract evidence and an exact environment record meeting the [versioning and compatibility contract](versioning-compatibility-contract.md#evidence-bound-support-claims) |
 | Cross-cutting or high risk | Every applicable targeted route followed by the full available repository gate |
 
@@ -85,4 +86,6 @@ a candidate. The committed Windows workflow is a CI skeleton only; hosted
 enforcement remains unverified until an actual run is observed. There is still
 no product runtime harness for persistence, dispatcher, adapters, scheduler,
 MCP, or a support matrix, so those routes remain not implemented and cannot be
-claimed as passing.
+claimed as passing. Repository task-artifact checks cover only maintainer
+workflow scratch and do not count as product persistence or destructive-action
+support.

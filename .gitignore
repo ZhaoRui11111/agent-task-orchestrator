@@ -42,8 +42,8 @@ dist/
 node_modules/
 /.pnpm-store/
 
-# EP-00B creator-owned validation generations
-/.ep00b-tmp/
+# Coordinator-registered, creator-owned task validation generations
+/.task-artifacts/
 
 # Coverage and test output
 .coverage

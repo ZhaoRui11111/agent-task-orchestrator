@@ -65,6 +65,13 @@ copying private contents into a committed contract.
 
 Local edits, commits, pushes, pull requests, merges, releases, deployments, and cleanup are separate actions. Authorization for one does not automatically authorize the next.
 
+The repository's one standing exception is owned by the
+[local agent Git workflow](local-agent-git-flow.md): a coordinator-managed
+maintainer task may perform the exact ordinary `origin/master` push described
+there after its gated FF-only integration. This is an explicit narrow grant,
+not an inference from commit or readiness, and it can be revoked by a newer
+user instruction. No adjacent action inherits it.
+
 Partial external success is recorded as actual state. Do not use reset, force, deletion, or rewritten history to pretend that a partially completed external transition rolled back atomically.
 
 ## Fail-closed rule

@@ -41,6 +41,14 @@ Task state, development plans, validation results, audit evidence, and authoriza
 
 Neither a ready task nor an approved plan automatically authorizes network access, secret access, push, pull-request creation, merge, release, deployment, or destructive cleanup. Check each external write against the user's explicit authorization and the applicable policy.
 
+For coordinator-managed maintainer tasks in this repository, the
+[local agent Git workflow](docs/reference/local-agent-git-flow.md) supplies a
+narrow standing authorization for the coordinator's ordinary non-force push
+after exact-head gates, `ready`, and FF-only local integration. That explicit
+repository grant is separate from commit authorization, can be revoked or
+narrowed by a newer user instruction, and does not authorize any adjacent
+external action.
+
 Fail closed when actor identity, repository identity, canonical path, state revision, receipt freshness, resource ownership, or permission is unclear.
 
 ## Validation
@@ -60,7 +68,9 @@ At the current scaffold stage, the minimum relevant checks include:
 ## Git and external actions
 
 - A commit includes only task-owned paths.
-- Permission to commit does not imply permission to push.
+- A commit does not by itself imply permission to push; use only a current
+  explicit user grant or the narrow standing grant in the local Git-flow
+  contract.
 - Permission to push does not imply permission to open a pull request, merge, release, or deploy.
 - Never use reset, force push, or force cleanup to disguise partial external success or unknown state.
 - Do not rewrite historical evidence merely to remove a current finding.
@@ -78,9 +88,12 @@ Use the installed `harness-git-flow` automation as the sole coordinator-state
 writer. Begin decisions with `trace`, honor single-use CAS tokens, recover
 pending intent before another mutation, reserve integration for the final
 review sequence, bind gate receipts to the exact task head, and use FF-only
-local integration. Push remains a separately authorized ordinary operation,
-and cleanup is allowed only after a verified push and an ownership-safe empty
-inventory.
+local integration. A task that froze the repository artifact manifest at
+`start` must obtain a current-head `prune-artifacts` receipt for the exact
+`.task-artifacts` root before passed gates or readiness. After integration,
+invoke the standing-authorized ordinary push unless the current user has
+revoked it. Cleanup remains a separate action and is allowed only after a
+verified push and an ownership-safe empty inventory.
 
 ExecPlan lifecycle and Git-flow lifecycle are independent. A branch refresh or
 base advance does not decide whether an ExecPlan approval or material review

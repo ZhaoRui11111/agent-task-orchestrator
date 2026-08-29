@@ -28,6 +28,17 @@ ignored. Dependency resolution and the advisory query use only
 changing that registry is an authorization and dependency-policy change, not a
 local convenience override.
 
+Creator-owned package and SQLite validation generations live only beneath the
+ignored `.task-artifacts/` root registered by the
+[local agent Git workflow](local-agent-git-flow.md). Each tool creates a unique
+direct child, validates root and child identity without following links, and
+removes only that owned child. Cleanup atomically moves the receipt-bound child
+to a unique same-root quarantine, verifies the moved identity, and revalidates
+every inventoried member before a same-parent rename-and-delete boundary;
+identity drift fails closed with replacement content preserved. `.pnpm-store/`,
+`node_modules/`, `dist/`, runtime data, and user data remain outside the
+registered disposable-root policy.
+
 ## Module and distribution boundary
 
 The package is private by default and uses Node ESM with TypeScript
@@ -92,4 +103,6 @@ Runtime databases, WAL or SHM files, logs, backups, package archives,
 repository-local dependency stores, installed dependencies, prompts, personal
 paths, thread or execution identifiers, credentials, and temporary spike
 artifacts must not enter the committed inventory. Feasibility records contain
-only sanitized environment dimensions and reproducible procedures.
+only sanitized environment dimensions and reproducible procedures. A
+coordinator artifact-prune receipt is repository-development evidence; it is
+not product-runtime persistence, backup, or deletion authority.
