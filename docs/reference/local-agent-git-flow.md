@@ -73,8 +73,23 @@ task-frozen manifest against the exact task head, the committed ignore policy,
 tracked overlap, repository/worktree topology, node classes, containment, and
 inventory before the first deletion. It removes only the frozen exact root,
 verifies root absence, and binds the receipt to the task head and manifest blob.
-Unsafe, nonregular, reparse-backed, identity-drifted, or ambiguous state fails
-closed with no claimed receipt.
+It may unlink an inventoried symlink or reparse alias inside that root without
+traversing or deleting the alias target, followed by regular files and real
+directories bottom-up. An unsafe node, unanchored or escaping alias,
+identity-drifted ancestor, tracked overlap, or ambiguous inventory fails closed
+before deletion. A permission, identity, concurrency, or interruption failure
+after deletion begins publishes no receipt but may leave a truthful partial
+namespace contraction; no receipt does not mean rollback. A later invocation
+re-inventories only the remaining exclusive namespace and idempotently retries
+the same frozen-root command. Root absence plus the head/blob-bound receipt is
+the only terminal proof.
+
+This repository grants standing authorization for that exact pathless
+`prune-artifacts` invocation after the task result commit, including when safe
+nonempty `.task-artifacts` scratch exists, unless a newer user instruction
+revokes or narrows the grant. It does not authorize a caller path, another
+manifest root, traversal or deletion of an alias target, coordinator `cleanup`,
+or any external repository or adjacent action.
 
 The repository's package and SQLite feasibility tools create unique
 creator-owned child generations beneath `.task-artifacts` and normally remove
@@ -84,11 +99,34 @@ terminal observation. `node_modules`, `.pnpm-store`, `dist`, `.worktrees`, and
 runtime or personal data are not registered and are never inferred as
 prunable.
 
+Both public Node test commands run through the repository test runner. It takes
+a path-based metadata snapshot of the artifact tree, invokes native
+`node --test` discovery without a shell, and checks baseline equality only
+after the child process succeeds. A successful command that adds, removes, or
+replaces an artifact member fails while preserving the observed tree. A failed
+child process keeps its own exit status and may leave diagnostic scratch until
+evidence is recorded and the final explicit coordinator prune runs.
+
+This wrapper is an observation-only hygiene assertion for a test process whose
+mutating work, including surviving child processes, is quiescent before the
+terminal snapshot. It rejects a symlink, junction, reparse, or nonregular node
+that is present during either snapshot, but path-based Node APIs do not give it
+the coordinator's anchored no-follow guarantee against concurrent Windows path
+replacement. The runner deletes nothing, publishes no security or prune
+receipt, and never turns test success into prune authorization. Coordinator
+prune independently revalidates and anchors its own frozen inventory before it
+may unlink an in-root alias without traversing the target.
+
+The wrapper stamps its own child before native discovery. `NODE_TEST_CONTEXT`
+suppresses the runner entry only when that owner marker is also present; a
+direct invocation that merely inherits or fabricates the Node context fails
+closed instead of reporting a zero-test success.
+
 ## Required lifecycle
 
 The normal lifecycle is:
 
-`trace/recover -> start -> develop -> reserve/optional refresh -> validate -> task result commit -> prune-artifacts when opted in -> gate -> ready -> integrate -> standing-authorized ordinary push -> separately authorized cleanup`
+`trace/recover -> start -> develop -> reserve/optional refresh -> validate -> task result commit -> standing-authorized prune-artifacts when opted in -> gate -> ready -> integrate -> standing-authorized ordinary push -> separately authorized cleanup`
 
 1. Run `trace` before a lifecycle decision. If it reports a pending operation,
    run only `recover` with the fresh state token before continuing.
@@ -109,9 +147,12 @@ The normal lifecycle is:
    failed gate leaves the task reserved and
    editable. Fix the task, commit the new head, rerun the real gate, and replace
    the stale receipt.
-6. For a manifest-backed task, invoke `prune-artifacts` after the result commit
-   and before recording a passed gate. The command is idempotent when the root
-   is already absent; a later task-head change invalidates the old receipt.
+6. For a manifest-backed task, invoke the standing-authorized
+   `prune-artifacts` after the result commit and before recording a passed gate.
+   The command is idempotent when the root is already absent. If it stops after
+   partial contraction, preserve that actual state, obtain a fresh trace token,
+   and retry only the same frozen-root command; do not infer rollback from a
+   missing receipt. A later task-head change invalidates the old receipt.
 7. `ready` requires every frozen gate to have a current-head passed receipt and
    a clean task worktree. Receipt freshness is mechanical; the validation
    policy remains the owner of what must be tested.

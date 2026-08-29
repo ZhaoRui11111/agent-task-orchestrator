@@ -46,12 +46,15 @@ Task state, development plans, validation results, audit evidence, and authoriza
 Neither a ready task nor an approved plan automatically authorizes network access, secret access, push, pull-request creation, merge, release, deployment, or destructive cleanup. Check each external write against the user's explicit authorization and the applicable policy.
 
 For coordinator-managed maintainer tasks in this repository, the
-[local agent Git workflow](docs/reference/local-agent-git-flow.md) supplies a
-narrow standing authorization for the coordinator's ordinary non-force push
-after exact-head gates, `ready`, and FF-only local integration. That explicit
-repository grant is separate from commit authorization, can be revoked or
-narrowed by a newer user instruction, and does not authorize any adjacent
-external action.
+[local agent Git workflow](docs/reference/local-agent-git-flow.md) owns two
+narrow standing grants. After the result commit, the coordinator may invoke
+its pathless, task-frozen `prune-artifacts` transition, including for nonempty
+`.task-artifacts` scratch, only under every identity, containment, ignore,
+tracked-overlap, inventory, head, and manifest condition defined there. After
+exact-head gates, `ready`, and FF-only local integration, it may invoke the
+ordinary non-force push to `origin/master`. A newer user instruction may
+revoke or narrow either grant. Neither grant authorizes coordinator `cleanup`,
+and no adjacent external action inherits either grant.
 
 Fail closed when actor identity, repository identity, canonical path, state revision, receipt freshness, resource ownership, or permission is unclear.
 
@@ -94,10 +97,13 @@ pending intent before another mutation, reserve integration for the final
 review sequence, bind gate receipts to the exact task head, and use FF-only
 local integration. A task that froze the repository artifact manifest at
 `start` must obtain a current-head `prune-artifacts` receipt for the exact
-`.task-artifacts` root before passed gates or readiness. After integration,
-invoke the standing-authorized ordinary push unless the current user has
-revoked it. Cleanup remains a separate action and is allowed only after a
-verified push and an ownership-safe empty inventory.
+`.task-artifacts` root before passed gates or readiness. Invoke the
+standing-authorized prune explicitly after the result commit; its no-intent
+partial-contraction and retry semantics are owned by the workflow contract and
+must not be described as rollback. After integration, invoke the
+standing-authorized ordinary push unless the current user has revoked it.
+Cleanup remains a separate action and is allowed only after a verified push,
+separate current authorization, and an ownership-safe empty inventory.
 
 ExecPlan lifecycle and Git-flow lifecycle are independent. A branch refresh or
 base advance does not decide whether an ExecPlan approval or material review

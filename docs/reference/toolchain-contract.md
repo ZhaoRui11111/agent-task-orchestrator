@@ -40,6 +40,26 @@ identity drift fails closed with replacement content preserved. `.pnpm-store/`,
 `node_modules/`, `dist/`, runtime data, and user data remain outside the
 registered disposable-root policy.
 
+The two Node test scripts share `scripts/test-runner.mjs`. Before spawning
+native `node --test` discovery directly without a shell, the runner captures a
+path-based metadata snapshot of the `.task-artifacts` root and recursively
+inventoried regular members. It performs a terminal equality check only when
+the child test process succeeds. Addition, removal, replacement, identity
+drift, or a statically observed reparse node makes the overall command fail
+without deleting anything. A failed child process retains its own failure and
+may leave diagnostics for the final explicit coordinator prune; a later
+successful command must add no further residue but need not erase that prior
+baseline.
+
+The assertion assumes the test process and any child that could mutate the
+tree are quiescent before the terminal observation. It is not handle-bound
+against concurrent Windows path replacement and is neither a security boundary
+nor a prune receipt. Those guarantees remain solely with the coordinator's
+independent frozen-inventory validation and anchored deletion transition.
+The wrapper-owned child marker distinguishes its native test-loader child from
+an ambient `NODE_TEST_CONTEXT`; a direct runner with an unowned context exits
+nonzero rather than silently bypassing the suite.
+
 ## Module and distribution boundary
 
 The package is private by default and uses Node ESM with TypeScript
@@ -75,8 +95,8 @@ The following package scripts are the public local entry points:
 | `pnpm lint` | Repository hygiene, frozen configuration, source-boundary, and diff checks |
 | `pnpm typecheck` | Strict TypeScript checking without output |
 | `pnpm build` | Produce the ESM package and declarations |
-| `pnpm test` | Run the Node test suite, including real local feasibility contracts |
-| `pnpm test:persistence` | Run the targeted migration, repository, concurrency, path-security, backup, and restore suite |
+| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including real local feasibility contracts |
+| `pnpm test:persistence` | Run the targeted migration, repository, concurrency, path-security, backup, and restore suite through the same artifact-baseline gate |
 | `pnpm docs:check` | Resolve exact-case repository-relative Markdown links and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |
 | `pnpm package:smoke` | Pack and consume the declared package boundary offline |

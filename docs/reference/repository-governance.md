@@ -46,7 +46,7 @@ governance condition rather than permission to choose either copy.
 
 Task state, a development plan, a validation result, an audit record, and user authorization answer different questions. None substitutes for another.
 
-In particular, readiness or plan approval does not imply permission for network access, secret access, push, pull-request creation, merge, release, deployment, or destructive cleanup.
+In particular, readiness or plan approval does not imply permission for network access, secret access, push, pull-request creation, merge, release, deployment, artifact pruning, or destructive cleanup.
 
 The runtime grant model and runtime pre-mutation checks are defined only by the
 [authorization contract](authorization-contract.md). Repository-development
@@ -65,14 +65,21 @@ copying private contents into a committed contract.
 
 Local edits, commits, pushes, pull requests, merges, releases, deployments, and cleanup are separate actions. Authorization for one does not automatically authorize the next.
 
-The repository's one standing exception is owned by the
-[local agent Git workflow](local-agent-git-flow.md): a coordinator-managed
-maintainer task may perform the exact ordinary `origin/master` push described
-there after its gated FF-only integration. This is an explicit narrow grant,
-not an inference from commit or readiness, and it can be revoked by a newer
-user instruction. No adjacent action inherits it.
+The repository's two standing exceptions are owned by the
+[local agent Git workflow](local-agent-git-flow.md). A coordinator-managed
+maintainer task may invoke the exact manifest-bound, pathless
+`prune-artifacts` transition described there after its result commit,
+including for nonempty task scratch, and may perform the exact ordinary
+`origin/master` push after gated FF-only integration. These are explicit,
+narrow, independently revocable grants, not inferences from task state, plan,
+commit, or validation. Neither grant authorizes coordinator `cleanup`, and no
+adjacent action inherits either grant.
 
-Partial external success is recorded as actual state. Do not use reset, force, deletion, or rewritten history to pretend that a partially completed external transition rolled back atomically.
+Partial external success is recorded as actual state. A mid-prune stop may
+leave part of the exclusive artifact namespace removed without a receipt; the
+same frozen-root operation is re-inventoried and retried rather than described
+as rollback. Do not use reset, force, unrelated deletion, or rewritten history
+to pretend that a partially completed transition rolled back atomically.
 
 ## Fail-closed rule
 
