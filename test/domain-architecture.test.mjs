@@ -7,21 +7,32 @@ import { repoRoot } from "../scripts/repo-utils.mjs";
 
 const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "DOMAIN_ERROR_CODES",
+  "PERSISTENCE_ERROR_CODES",
+  "PersistenceError",
+  "RUNTIME_DIRECTORY_NAME",
+  "RUNTIME_ENVIRONMENT_VARIABLE",
   "TASK_STATES",
   "TASK_TRANSITIONS",
   "WAITING_REASONS",
   "addTaskDependency",
   "createDomainSnapshot",
   "createTask",
+  "currentSchemaVersion",
   "evaluateTaskEligibility",
   "evaluateWaitingContinuation",
   "getScaffoldStatus",
+  "inspectPrimaryIdentity",
+  "openPersistence",
+  "prepareRuntimeLayout",
+  "recoverInterruptedRestore",
   "removeTaskDependency",
+  "restoreBackup",
   "setTaskParent",
   "setTaskSupersession",
   "transitionTask",
   "updateTaskBody",
   "updateTaskWaiting",
+  "verifyBackupGeneration",
 ]);
 
 function baseInput() {
@@ -45,12 +56,14 @@ function baseInput() {
   };
 }
 
-test("the package exposes only the intended Domain Core and truthful status runtime surface", () => {
+test("the package exposes only the intended Domain Core and persistence-foundation runtime surface", () => {
   assert.deepEqual(Object.keys(packageSurface).sort(), [...EXPECTED_RUNTIME_EXPORTS].sort());
   assert.deepEqual(packageSurface.getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "domain-core",
+    phase: "persistence-foundation",
     domainCoreImplemented: true,
+    persistenceFoundationImplemented: true,
+    applicationServiceImplemented: false,
     productRuntimeImplemented: false,
     supportedAdapters: [],
   });

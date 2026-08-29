@@ -1,9 +1,11 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
+  EXPECTED_PRODUCTION_SOURCE_FILES,
   gitInventory,
   invariant,
   packagePolicyFailures,
+  productionBoundaryFailures,
   repoRoot,
   repositoryInventoryFailures,
   run,
@@ -74,17 +76,11 @@ if (tsconfig.compilerOptions?.module !== "NodeNext" || tsconfig.compilerOptions?
 if (tsconfig.compilerOptions?.rewriteRelativeImportExtensions !== true) {
   failures.push("TypeScript source/package relative-extension parity drifted");
 }
-for (const relative of inventory.filter((item) => item.startsWith("src/") && item.endsWith(".ts"))) {
-  const source = readFileSync(path.join(repoRoot, relative), "utf8");
-  if (/node:sqlite|codex|openai|@openai|scripts\//iu.test(source)) {
-    failures.push(`${relative}: product scaffold depends on feasibility/vendor code`);
-  }
-}
-
-const expectedSource = ["src/cli.ts", "src/domain.ts", "src/index.ts"];
-if (JSON.stringify(inventory.filter((item) => item.startsWith("src/")).sort()) !== JSON.stringify(expectedSource)) {
-  failures.push("production source inventory drifted");
-}
+failures.push(
+  ...productionBoundaryFailures(inventory, (relative) =>
+    readFileSync(path.join(repoRoot, relative), "utf8"),
+  ),
+);
 
 const diffCheck = run("git", ["diff", "--check"]);
 const stagedDiffCheck = run("git", ["diff", "--cached", "--check"]);
@@ -94,4 +90,8 @@ if (failures.length > 0) {
   throw new Error(`lint failed:\n${failures.join("\n")}`);
 }
 
-console.log(JSON.stringify({ status: "passed", files: inventory.length, sourceFiles: expectedSource.length }));
+console.log(JSON.stringify({
+  status: "passed",
+  files: inventory.length,
+  sourceFiles: EXPECTED_PRODUCTION_SOURCE_FILES.length,
+}));

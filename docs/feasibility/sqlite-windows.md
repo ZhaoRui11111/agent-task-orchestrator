@@ -1,8 +1,9 @@
 # Windows SQLite feasibility record
 
-This is non-normative EP-00B spike evidence. It does not introduce the future
-runtime schema or claim a supported persistence implementation. Those future
-requirements remain owned by the
+This is non-normative historical EP-00B spike evidence. It did not introduce a
+runtime schema and still does not prove support. The EP-01B production
+persistence foundation and its separate validation do not retroactively turn
+this spike into implementation evidence. Current requirements remain owned by the
 [persistence contract](../reference/persistence-contract.md) and
 [reliability protocol](../reference/reliability-protocol.md).
 
@@ -43,6 +44,6 @@ stress loop belongs to the pre-A1 implementation and is retained only as
 historical evidence, not as closure evidence for the repaired candidate. The
 exact observations are in the
 [EP-00B evidence log](../plans/evidence/EP-00B/validation-evidence.md). This is
-real feasibility evidence, but it is not evidence of a product schema,
-production lifecycle, release, or supported platform. The terminal task-head
-receipt remains a separate post-commit gate.
+real feasibility evidence, but by itself it is not evidence of the current
+product schema, production lifecycle, release, or supported platform. The
+terminal task-head receipt remains a separate post-commit gate.

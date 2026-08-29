@@ -2,448 +2,326 @@
 
 ## Status and authority
 
-This file is the sole normative owner of the planned SQLite persistence model,
-connection and transaction policy, authoritative storage ingress, migration and
-backup mechanics, corruption and downgrade handling, and runtime data location.
-No database, migration runner, repository implementation, or validated Windows
-behavior exists yet.
+This file is the sole normative owner of the implemented SQLite persistence
+foundation: runtime-root selection, physical schema allocation, connection and
+transaction policy, authoritative Domain Core storage ingress, migration
+identity, backup publication, restore recovery, and incompatible/corrupt-state
+handling.
 
-Domain values referenced here are defined by the
-[domain contract](domain-contract.md). Durable operation semantics are defined
-by the [reliability protocol](reliability-protocol.md); this file owns how those
-records are stored, not what an external result means.
+The current implementation is deliberately narrower than an application
+runtime. It stores Project/Task Domain Core snapshots and exposes trusted
+storage primitives; it does not authorize a mutation, select or invoke a
+Domain command, register a Project, provide a product CLI, or implement an
+execution, workspace, scheduler, intent/effect, claim, lease, fence, gate,
+completion, adapter, MCP, or dispatcher record. Those records receive physical
+schema only in the later ExecPlan that owns their behavior.
 
-## Runtime location
+Domain values are owned by the [domain contract](domain-contract.md). Future
+external-effect semantics remain owned by the
+[reliability protocol](reliability-protocol.md). This contract owns storage,
+not permission or the meaning of an external result.
 
-Runtime data MUST be outside the source checkout and outside every registered
-Project root by default.
+## Staged schema allocation
 
-- On Windows, the default runtime root is the operating-system local application
-  data directory plus `agent-task-orchestrator`.
-- `TASK_ORCHESTRATOR_DATA_DIR` may override the root only with an absolute,
-  canonicalizable, non-filesystem-root path.
-- The process rejects a root that is the source checkout, lies below a
-  registered Project, contains an unresolved path component, or aliases either
-  through a link or reparse point.
-- The primary database is `<runtime-root>/state.sqlite3`; backups, logs, and
-  diagnostic bundles use distinct child directories. None is source material or
-  eligible for Git staging.
-- Directory creation uses user-only permissions when the host supports them and
-  fails closed when the resolved target changes during creation.
+SQLite schema allocation is additive and phase-scoped. A migration may add
+only records required by its approved implementation phase. A planned field or
+table in another contract is not a reservation, and migration `0001` is not a
+synonym for the eventual complete product schema.
 
-The completion/workspace owner defines safety for managed workspaces; these
-rules apply to the persistence runtime root only.
+EP-01B ships exactly these immutable migrations:
 
-## SQLite logical schema
+| Version and file | Current physical allocation |
+| --- | --- |
+| `1`, `0001-persistence-metadata.sql` | `schema_metadata` and `migration_history` only |
+| `2`, `0002-phase1-task-storage.sql` | `projects`, `tasks`, `task_dependencies`, and their indexes only |
 
-The initial physical migration MUST implement the following logical records.
-Identifiers are opaque non-empty `TEXT`; timestamps are UTC epoch milliseconds
-stored as `INTEGER`; booleans are constrained `INTEGER` values `0` or `1`;
-version and revision counters are positive `INTEGER`; structured payloads are
-canonical UTF-8 JSON `TEXT` with an explicitly named schema version. Nullable
-fields below are marked `?`; every other field is non-null.
+Later Phase 1 plans append migrations for their own approved records. Phase 2
+or Phase 3 execution, workspace, scheduling, intent/effect, claim/lease/fence,
+gate, completion, adapter, MCP, and dispatcher records are not allocated by
+these migrations and are not current persistence capabilities.
 
-| Table | Primary/unique identity | Required fields |
-| --- | --- | --- |
-| `schema_metadata` | singleton key `1` | `current_version`, `minimum_reader_version`, `last_migration_id`, `updated_at` |
-| `migration_history` | `version`; unique `migration_id` | `checksum`, `application_version`, `applied_at` |
-| `projects` | `project_id`; unique `canonical_root` and unique `repository_identity` | `canonical_root`, `repository_identity`, `enabled`, `execution_backend_ref`, `execution_backend_contract_version`, `workspace_backend_ref`, `workspace_backend_contract_version`, `scheduler_backend_ref`, `scheduler_backend_contract_version`, `project_policy_ref`, `project_policy_contract_version`, `completion_backend_ref`, `completion_backend_contract_version`, `config_revision`, `revision`, `created_at`, `updated_at` |
-| `schedules` | `schedule_id`; unique `registration_identity` when non-null | `project_id?`, `scope_kind`, `scope_id`, `scheduler_actor_id`, `scheduler_ref`, `scheduler_contract_version`, `expression`, `timezone`, `dispatcher_target_identity`, `config_revision`, `registration_identity?`, `enabled`, `revision`, `created_at`, `updated_at` |
-| `tasks` | `task_id`; unique (`project_id`, `task_id`) | `project_id`, `parent_id?`, `supersedes_task_id?`, `state`, `title`, `body`, `waiting_reason?`, `waiting_phase?`, `required_action?`, `last_error_code?`, `last_error_summary?`, `retryable?`, `retry_count?`, `retry_after?`, `waiting_execution_id?`, `workspace_revision?`, `backend_thread_id?`, `waiting_task_revision?`, `revision`, `created_at`, `updated_at`, `terminal_at?` |
-| `task_dependencies` | (`task_id`, `depends_on_task_id`) | `created_at`; both Task references are foreign keys and a self-edge is rejected |
-| `executions` | `execution_id`; unique (`task_id`, `attempt_number`) and unique `idempotency_key` | `task_id`, `run_id`, `attempt_number`, `idempotency_key`, `backend_ref`, `backend_contract_version`, `backend_thread_id?`, `phase`, `status`, `semantic_input_revision`, `authorization_decision_ref`, `policy_ref`, `policy_version`, `policy_revision`, `workspace_id?`, `claim_owner?`, `lease_expires_at?`, `lease_revision`, `fencing_token`, `created_at`, `updated_at`, `terminal_at?` |
-| `workspaces` | `workspace_id`; unique (`execution_id`, `generation`) and unique (`canonical_path`, `generation`) | `project_id`, `task_id`, `execution_id`, `run_id`, `creator_operation_id`, `fencing_token`, `adapter_ref`, `adapter_contract_version`, `trusted_workspace_root_identity`, `canonical_path`, `generation`, `repository_identity`, `git_common_directory_identity`, `worktree_registration_identity`, `branch_ref?`, `base_oid`, `head_oid`, `policy_ref`, `policy_version`, `policy_revision`, `creation_intent_id`, `creation_receipt_id`, `ownership_receipt_schema_version`, `ownership_receipt_json`, `inventory_schema_version`, `inventory_json`, `lifecycle`, `revision`, `created_at`, `updated_at` |
-| `authorization_decisions` | `decision_id`; unique non-null (`decision_kind`, `query_id`) | `decision_kind`, `query_id?`, `correlation_id`, `actor_id`, `delegated_by_actor_id?`, `action`, `scope_kind`, `scope_id`, `resource_kind`, `resource_id`, `expected_resource_revision`, `grant_id?`, `grant_revision?`, `grant_expires_at?`, `domain_evidence_ref?`, `ownership_receipt_ref?`, `policy_binding_kind`, `policy_ref?`, `policy_version?`, `policy_revision?`, `policy_receipt_ref?`, `external_authority_status`, `result`, `reason_code`, `decided_at`, `valid_until`, `consumed_at?`, `consumer_kind?`, `consumer_id?` |
-| `adapter_query_receipts` | `query_receipt_id`; unique (`query_id`, `observation_number`) | `query_id`, `query_kind`, `authorization_decision_ref`, `correlation_id`, `contract_id`, `adapter_ref`, `adapter_version`, `observed_endpoint_version?`, `operation_name`, `subject_resource_identity_json`, `input_identity_json`, `outcome`, `reason_code`, `observation_number`, `evidence_ref`, `observed_at`, `valid_until?`, `payload_schema_version`, `payload_json` |
-| `operation_intents` | `intent_id`; unique `semantic_key` and unique `idempotency_key` | `semantic_key`, `idempotency_key`, `operation_kind`, `task_id?`, `expected_task_revision?`, `execution_id?`, `execution_attempt_number?`, `resource_kind`, `resource_id`, `expected_resource_revision`, `semantic_input_identity`, `authorization_decision_ref`, `authorization_binding_revision`, `policy_binding_kind`, `policy_ref?`, `policy_version?`, `policy_revision?`, `adapter_ref`, `adapter_contract_version`, `workspace_id?`, `workspace_generation?`, `repository_identity?`, `head_oid?`, `state`, `retry_count`, `retry_after?`, `created_at`, `updated_at` |
-| `operation_receipts` | `receipt_id`; unique (`intent_id`, `observation_number`) | `intent_id`, `observation_number`, `correlation_id`, `adapter_ref`, `adapter_contract_version`, `observed_endpoint_version?`, `outcome`, `reason_code`, `pre_identity_json`, `post_identity_json`, `verification_verdict`, `evidence_ref`, `observed_at`, `payload_schema_version`, `payload_json` |
-| `gate_receipts` | `gate_receipt_id`; unique complete gate identity defined below | `task_id`, `task_revision`, `execution_id`, `fencing_token`, `workspace_id`, `workspace_generation`, `workspace_revision`, `repository_identity`, `head_oid`, `policy_ref`, `policy_version`, `policy_revision`, `gate_id`, `gate_version`, `gate_input_identity`, `completion_adapter_ref`, `completion_adapter_version`, `tool_environment_identity`, `verdict`, `evidence_ref`, `started_at`, `completed_at`, `valid_until?` |
-| `integration_reservations` | `reservation_id` | `project_id`, `repository_identity`, `target_ref`, `expected_target_oid`, `source_workspace_id`, `source_workspace_generation`, `source_head_oid`, `owner_execution_id`, `owner_operation_id`, `lease_owner`, `lease_revision`, `fencing_token`, `expires_at`, `policy_ref`, `policy_version`, `policy_revision`, `authorization_decision_ref`, `intent_id`, `current_observation_ref?`, `status`, `revision`, `created_at`, `updated_at`, `terminal_at?` |
-| `authorization_bootstrap` | singleton key `1` | `bootstrap_actor_id`, `os_principal_identity`, `runtime_root_identity`, `created_at`, `expires_at`, `consumed_at?`, `initial_grant_ids_json?`, `revision` |
-| `authorization_grants` | `grant_id` | `grant_revision`, `actor_id`, `delegated_by_actor_id?`, `action`, `scope_kind`, `scope_id`, `resource_revision`, `issued_by`, `issued_at`, `expires_at`, `constraints_schema_version`, `constraints_json`, `correlation_id`, `revoked_at?` |
-| `audit_events` | monotonic `sequence`; unique `event_id` | `event_type`, `actor_id`, `action`, `aggregate_kind`, `aggregate_id`, `before_revision?`, `after_revision?`, `correlation_id`, `payload_schema_version`, `payload_json`, `occurred_at` |
-| `scheduled_dispatches` | `scheduled_dispatch_id`; unique (`schedule_id`, `schedule_config_revision`, `scheduled_for`) and unique `canonical_run_id` | `schedule_id`, `schedule_config_revision`, `scheduled_for`, `canonical_run_id`, `created_at` |
-| `scheduler_trigger_observations` | `trigger_observation_id` | `trigger_kind`, `correlation_id`, `scheduler_ref`, `scheduler_contract_version`, `registration_identity?`, `derived_actor_id`, `trigger_id?`, `schedule_id?`, `schedule_config_revision?`, `scheduled_for?`, `observed_delivery_at`, `scheduled_dispatch_id?`, `canonical_run_id?`, `attachment_role`, `disposition`, `authorization_decision_ref?`, `reason_code`, `payload_schema_version`, `redacted_payload_json` |
-| `dispatcher_runs` | `run_id` | `trigger_kind`, `correlation_id`, `authorization_decision_ref`, `status`, `worker_id?`, `owner_revision`, `revision`, `heartbeat_at?`, `reconciliation_summary_json?`, `candidate_snapshot_revision?`, `candidate_expected_count?`, `candidate_snapshot_at?`, `fanout_summary_json?`, `created_at`, `started_at?`, `finished_at?` |
-| `dispatcher_candidate_outcomes` | `candidate_outcome_id`; unique (`run_id`, `candidate_ordinal`) and unique (`run_id`, `task_id`) | `run_id`, `candidate_snapshot_revision`, `candidate_ordinal`, `task_id`, `candidate_task_revision`, `lifecycle`, `outcome?`, `correlation_id`, `reason_code?`, `execution_id?`, `intent_id?`, `revision`, `created_at`, `terminal_at?` |
+### Migration metadata
 
-Foreign keys from schedules, Tasks, executions, workspaces, authorization
-decisions, query receipts, intents, operation receipts, gates, reservations,
-scheduled dispatches, trigger observations, runs, and candidate outcomes to
-their owning records are mandatory. Every `authorization_decision_ref` resolves
-to a decision of the operation-appropriate kind, and every ProjectPolicy
-receipt reference resolves to a `project_policy` query receipt. `audit_events`
-is append-only during normal runtime: application code has no update or delete
-operation for it.
+`schema_metadata` has the singleton key `1` and exactly these durable fields:
 
-The gate-receipt unique constraint contains every column in the authoritative
-freshness identity: (`task_id`, `task_revision`, `execution_id`, `fencing_token`,
-`workspace_id`, `workspace_generation`, `workspace_revision`,
-`repository_identity`, `head_oid`, `policy_ref`, `policy_version`,
-`policy_revision`, `gate_id`, `gate_version`, `gate_input_identity`,
-`completion_adapter_ref`, `completion_adapter_version`,
-`tool_environment_identity`). The
-[completion/workspace owner](completion-workspace-contract.md#gate-identity-and-freshness)
-defines the tuple's meaning; this constraint ensures distinct authoritative
-identities cannot collide in storage.
+- `schema_version`: the current positive migration version;
+- `domain_initialized`: constrained `0`/`1` marker owned by the one-time
+  Domain snapshot initializer, so an intentionally empty initialized snapshot
+  is distinguishable from an uninitialized store;
+- `registry_identity`: uppercase SHA-256 of the ordered applied registry
+  prefix;
+- `schema_fingerprint`: uppercase SHA-256 of the canonical live
+  `sqlite_schema` inventory for that prefix; and
+- `updated_at`: the non-empty UTC timestamp written by the migration owner.
 
-Physical indexes MUST cover foreign-key columns, domain eligibility reads,
-lease expiry, unfinished intents, run heartbeat, receipt lookup by bound
-identity, reservation lookup by Project/repository/target ref, the exact
-scheduled-dispatch tuple, and trigger observations by scheduled dispatch,
-canonical run, and external trigger ID. Candidate membership indexes cover
-run/snapshot/lifecycle, run/ordinal, and run/Task; the latter two keys are also
-unique.
+`migration_history` is keyed by positive `version`, has a unique non-empty
+`migration_id`, and stores `checksum_sha256`, canonical UTC `applied_at`, and
+the non-empty `application_version`. The metadata `updated_at` must equal the
+last applied history timestamp. History contains exactly one contiguous row per
+applied registry member. It is not inferred from table shape.
 
-An operation intent has exactly one policy-binding shape. A Project-bound intent
-uses `policy_binding_kind='project_policy'` and requires all three policy
-identity fields. Proven system scope uses
-`policy_binding_kind='system_not_applicable'` and requires all three to be null.
-Both shapes require the final authorization-decision reference, and the
-semantic key contains the binding kind plus every applicable policy identity;
-a null Project policy is never interpreted as an omitted check.
+### Phase 1 Domain Core storage
 
-The operation-intent columns represent every applicable member of the semantic
-tuple owned by the
-[reliability protocol](reliability-protocol.md#operation-semantic-identity-and-policy-binding).
-Task-, execution-, and workspace-specific columns are all null only when that
-owner says the operation is independent of that identity; otherwise the whole
-applicable set is non-null and must reproduce the stored canonical
-`semantic_key`. A digest alone is never accepted as the tuple.
+`projects` stores only:
 
-The current authorization-decision reference is not a semantic-key member. The
-initial allow is bound at revision `1`; when the same semantic operation needs a
-fresh allow before a retry or finalization, a CAS may replace only that pointer
-and increment `authorization_binding_revision`. The new decision must name the
-same intent as consumer and match the complete semantic tuple and policy
-binding. All prior decision rows and audit events remain immutable, so refresh
-does not erase which authority covered an earlier attempt.
+- `project_id`: opaque non-empty `TEXT` primary key; and
+- `enabled`: constrained `INTEGER` boolean `0` or `1`.
 
-An authorization decision has one of the three exact shapes owned by the
-[authorization contract](authorization-contract.md#decision-record). A
-`read|preliminary_policy_query` allow requires a query ID and may be consumed
-only by that query. A `final_mutation` allow has no query ID and may be consumed
-only by its exact domain mutation or intent. Deny/defer rows have no consumer.
-An allow requires a complete current grant identity; `grant_missing` and other
-pre-grant denials require all three grant columns to be null, while a denial
-against an observed stale, revoked, or mismatched grant records all three.
-Final-mutation decisions use the same Project-policy versus
-`system_not_applicable` conditional shape as intents; a Project-bound allow
-requires its policy-receipt reference, while a denial may omit the missing or
-invalid receipt and records the reason. Preliminary policy-query decisions are
-Project-bound to action `policy.evaluate`, bind the configured policy identity,
-and carry no policy-receipt reference. Read decisions instead require
-`policy_binding_kind='read_not_applicable'` with all policy fields null. That
-binding is invalid for a preliminary or final mutation decision.
+This row is the minimum Project value required to reconstruct the implemented
+Domain Core. Canonical root, repository identity, adapter configuration,
+authorization, policy, and lifecycle fields belong to EP-01C or later and are
+not silently represented here.
 
-`adapter_query_receipts` stores only read/inspection and ProjectPolicy receipts;
-it is never an operation receipt or mutating intent. `query_kind='read'` binds a
-read decision and `query_kind='project_policy'` binds a preliminary-policy
-decision. Its exact typed payload must pass the current adapter receipt schema
-before insertion, and its identity columns must agree with that payload.
+`tasks` stores the complete current Domain Core Task shape:
 
-Exact enum meanings remain with their semantic owners. The physical migration
-MUST constrain known enum values or use a versioned decode that rejects unknown
-values; silently coercing an unknown value is prohibited.
+- identity and scalar fields: `task_id`, `project_id`, `state`, `revision`,
+  `body`, `parent_id`, and `supersedes_task_id`;
+- waiting fields: `waiting_reason`, `waiting_phase`,
+  `waiting_required_action`, `waiting_last_error_code`,
+  `waiting_last_error_summary`, `waiting_retryable`, `waiting_retry_count`,
+  `waiting_retry_after`, `waiting_execution_id`,
+  `waiting_workspace_revision`, `waiting_backend_thread_id`, and
+  `waiting_task_revision`;
+- completion fields: `completion_decision_id` and
+  `completion_accepted_task_revision`; and
+- cancellation fields: `cancellation_event`, `cancellation_reason`,
+  `cancellation_verification_id`, and
+  `cancellation_accepted_task_revision`.
 
-The `tasks` waiting columns are physically nullable because they are absent in
-every non-waiting state. A table constraint enforces this exact conditional
-shape:
+Identifiers are opaque non-empty `TEXT`, revisions are positive safe SQLite
+`INTEGER` values, booleans are `0` or `1`, and the known state and cancellation
+enums are constrained. Waiting fields are present only for `waiting` Tasks;
+completion fields only for `completed` Tasks; cancellation fields only for
+`cancelled` Tasks. The repository reconstructs the complete graph through the
+Domain Core, which remains authoritative for cross-row invariants such as
+same-Project parents and acyclic relationships.
 
-- when `state='waiting'`, `waiting_reason`, `waiting_phase`, `required_action`,
-  `last_error_code`, `retryable`, `retry_count`, and `waiting_task_revision` are
-  non-null, `waiting_task_revision=revision`, and the retry fields are in their
-  valid numeric/boolean ranges;
-- `last_error_summary`, `retry_after`, `waiting_execution_id`,
-  `workspace_revision`, and `backend_thread_id` remain nullable while waiting
-  and are populated only when that identity/fact exists; and
-- when state is not `waiting`, every waiting column is null.
+`task_dependencies` is keyed by (`task_id`, `dependency_id`), rejects a
+self-edge, and has deferred foreign keys to both Tasks. Foreign keys from Tasks
+to Projects, parents, and superseded Tasks are also deferred so one atomic
+snapshot mutation can insert a valid multi-row graph before commit. Indexes
+cover Project, parent, supersession, and reverse-dependency lookup.
 
-This represents, without strengthening, the nullable metadata owned by the
-[domain waiting envelope](domain-contract.md#waiting-taxonomy).
-
-A schedule has exactly one scope shape: `scope_kind='system'` requires a null
-Project ID and the canonical system scope ID; `scope_kind='project'` requires a
-matching non-null Project ID and exact Project scope ID. Its registered
-scheduler actor and adapter/config identities are immutable for one config
-revision. Registration identity is null before a verified registration receipt
-and thereafter changes only through a separately authorized lifecycle intent;
-trigger ingress rejects a registration/config/actor mismatch.
-
-A committed workspace row represents a complete ownership receipt, not an
-unverified directory. Its explicit identity columns must reproduce the
-versioned ownership receipt and inventory JSON; their Project/Task/execution/run,
-creator operation, fence, repository/common-directory, registration, path,
-generation, HEAD, policy, intent, and receipt references must all resolve.
-Partial or ambiguous creates remain operation intents/receipts until recovery
-proves a complete row or records a terminal failure.
-
-A partial unique index permits at most one current integration reservation for
-(`project_id`, `repository_identity`, `target_ref`) where status is `active` or
-`ambiguous`. Acquisition cannot insert around an ambiguous row. Reservation
-status meaning and target-ref exclusivity are owned by the
-[completion/workspace contract](completion-workspace-contract.md#integration-reservation).
-
-The unique `scheduled_dispatches` tuple is the persisted scheduled
-deduplication identity. Every delivered trigger, including a duplicate or a
-sanitized rejected/malformed delivery, has a separate
-`scheduler_trigger_observations` row; attached scheduled observations reference
-the tuple row and its one `canonical_run_id`. The
-[scheduler contract](scheduler-contract.md#trigger-and-run-identity) owns the
-delivery semantics.
-
-Trigger-observation constraints require `accepted` or `authorization_denied`
-to carry an authorization-decision reference. Only `accepted` may use
-`attachment_role=canonical|duplicate`; either role requires a canonical run
-reference, and a scheduled attached observation also requires its
-scheduled-dispatch reference. `authorization_denied`, malformed, and
-stale-config deliveries use role `none` with no run/dispatch reference; raw
-unbounded payload is never stored.
-
-Every observation has an actor derived by trusted ingress. A scheduled
-observation additionally requires its registered scheduler identity, schedule
-ID/config revision, and scheduled instant whenever the bounded inner payload
-validated; malformed inner fields may be null but the authenticated outer
-registration and derived actor remain present. A manual observation has no
-scheduler registration or scheduled tuple and derives its human/service actor
-from the manual ingress. No payload field may assert either actor identity.
-
-Every dispatcher run carries its final `dispatch.run` allow decision. A `starting`
-run may have no worker or start time yet; worker, heartbeat, phase summaries,
-start, and finish fields become non-null only at the lifecycle phases that own
-them. `owner_revision` is the run-worker fencing epoch: assigning or replacing
-`worker_id` increments it, and a former worker cannot write through an older
-epoch. `revision` is the CAS revision for run lifecycle, sealed-snapshot, and
-summary mutations. Both revisions begin at `1`; heartbeat renewal matches the
-current worker and owner revision without granting a new ownership epoch.
-
-Candidate-outcome values and their meaning are owned by the
-[reliability fan-out contract](reliability-protocol.md#observable-fan-out).
-The rows first represent the durable finite candidate snapshot membership and
-only then its outcomes. A sealed snapshot has one immutable positive
-`candidate_snapshot_revision`, non-negative `candidate_expected_count`, and
-snapshot time on the run. It has exactly that many rows carrying the same
-snapshot revision, distinct Task IDs, and distinct contiguous zero-based
-ordinals. Count zero is represented by sealed run metadata and no member rows.
-Before sealing, all three run snapshot fields are null and no member row exists;
-sealing writes them once, and neither the metadata nor membership may later be
-replaced, appended, removed, or reordered.
-
-A member is created as `lifecycle='pending'` with null outcome, reason,
-execution, intent, and terminal time. Its run, snapshot, ordinal, Task, candidate
-Task revision, correlation ID, and creation time are immutable. Its only
-lifecycle transition is a revision-CAS to `terminal`, which requires exactly one
-finite owner-defined outcome, a reason code, terminal time, and only the
-execution/intent identities applicable to that outcome. A summary JSON is never
-the membership owner or the only copy of results.
-
-Physical constraints also enforce at most one nonterminal claim-holding
-execution per Task; reliability remains the semantic owner of what makes that
-claim valid.
+All current tables use SQLite `STRICT` mode. There is no durable title,
+timestamp, audit event, execution, workspace, scheduler, authorization,
+adapter, policy, lease, fence, gate, or intent/receipt field in schema version
+2.
 
 ## Writer and reader closure
 
-Adapters, CLI, MCP, and schedulers never open SQLite directly. All access goes
-through the planned persistence repositories and transaction coordinator.
-
 | Records | Only writer | Readers |
 | --- | --- | --- |
-| `schema_metadata`, `migration_history` | Migration runner | Startup compatibility check, doctor, backup/restore |
-| `projects`, `schedules`, `tasks`, `task_dependencies` | Application transaction coordinator through typed repositories | Application queries, scheduler ingress, dispatcher eligibility query, diagnostics |
-| `executions`, `operation_intents`, `operation_receipts` | Dispatcher/application transaction coordinator through typed repositories | Reconciler, application queries, diagnostics |
-| `workspaces`, `gate_receipts` | Application transaction coordinator after verifying adapter receipts | Dispatcher, completion flow, diagnostics |
-| `integration_reservations` | Integration application service through the transaction coordinator | Authorization evaluator, reconciler, completion flow, diagnostics |
-| `authorization_bootstrap`, `authorization_grants` | Authorization bootstrap/application service through its repository | Preliminary/final authorization evaluators, doctor with restricted fields |
-| `authorization_decisions`, `adapter_query_receipts` | Authorization/application transaction coordinator through typed repositories | Authorization evaluator, application services, reconciler, diagnostics with restricted fields |
-| `scheduled_dispatches`, `scheduler_trigger_observations`, `dispatcher_runs`, `dispatcher_candidate_outcomes` | Scheduler ingress/dispatcher application transaction coordinator | Dispatcher candidate worker, crash reconciler, scheduler queries, diagnostics |
-| `audit_events` | The same transaction that accepts the audited mutation | Audit query and redacted diagnostics |
+| `schema_metadata.schema_version`, registry identity/fingerprint, `updated_at`, and `migration_history` | `src/persistence/migrations.ts` | startup compatibility, backup/restore verification, future doctor surface |
+| `schema_metadata.domain_initialized` one-time `0` to `1` transition | `src/persistence/repository.ts` inside the initial snapshot transaction | startup compatibility, repository decoder, backup/restore verification |
+| `projects`, `tasks`, `task_dependencies` | `src/persistence/repository.ts` inside a `PersistenceStore` transaction | the same repository decoder, backup verification, later application services |
+| backup generation and manifest | `src/persistence/backup.ts` under the lifecycle lock | the same verifier and later user surfaces |
+| lifecycle lock and connection receipts | `src/persistence/runtime.ts` | persistence lifecycle operations only |
+| restore intent, retained generation, and restore receipt | `src/persistence/backup.ts` under the lifecycle lock | explicit recovery and later doctor/user surfaces |
 
-An adapter returns a receipt; it does not become a second database writer.
-Future changes MUST update this closure when adding a table or reader, rather
-than introducing direct SQL or a parallel schema validator.
+No product surface opens SQLite or writes these paths directly. An adapter,
+CLI, MCP server, scheduler, or Agent output cannot become a second writer.
+Future schema additions update this closure in the migration and ExecPlan that
+introduces their implementation.
 
-## Authoritative ingress and decode
+## Runtime root and path ownership
 
-- The repository responsible for a row decodes its SQLite storage classes and
-  versioned JSON exactly once, rejects missing/unknown/invalid fields, and then
-  invokes the owning domain or protocol constructor.
-- A successful decode returns a typed value plus the schema version and row
-  revision needed for later CAS. Trusted downstream code reuses that value; it
-  does not reparse the JSON or reinterpret enum strings.
-- External adapter payloads are not trusted rows. Their receipt schema is first
-  validated by the adapter-contract ingress, then persisted in canonical form;
-  reads still pass through this repository decode.
-- Decode failure is an integrity error. It cannot be converted to a default
-  value, skipped row, empty collection, or successful terminal result.
-- There is one migration registry and one repository mapping per table. Test
-  fixtures use those owners instead of hand-maintained duplicate DDL.
+Runtime data is outside the source checkout and every supplied Project root.
 
-## Connection policy
+- An explicit root takes precedence. Otherwise
+  `TASK_ORCHESTRATOR_DATA_DIR` selects an untrusted candidate. On Windows only,
+  the default is the operating-system local application-data directory plus
+  `agent-task-orchestrator`; another platform has no default in this phase.
+- The candidate must be absolute, non-root, lexically traversal-free, and
+  non-overlapping in either direction with the canonical source checkout or
+  any supplied Project root.
+- Every existing or created ancestor and target is a real directory, not a
+  symlink, junction, or reparse alias. Creation validates parent identity
+  before and after the mutation. A resolved alias or identity change fails
+  closed.
+- The issued runtime layout owns all descendant names: `state.sqlite3`,
+  `backups`, `connections`, `restore`, the lifecycle lock, staging roots,
+  retained roots, and receipts. Callers cannot supply those descendant paths.
+- Every issued directory identity is retained in process and revalidated
+  before and after protected use. Each dynamic backup or retained directory
+  also has an identity receipt that is checked after awaits, failpoint hooks,
+  and every rename. SQLite targets are reserved as exclusive, no-follow,
+  private empty files before SQLite can write sensitive bytes; terminal
+  readback must retain the same file object and content binding. Newly created
+  directories and regular files use user-only permissions on hosts where
+  POSIX mode enforcement is meaningful. Windows mode observation is not an ACL
+  or platform-support claim.
+- Before any SQLite open, the owner no-follow inspects the complete present
+  main/WAL/SHM set, rejects unsafe node or permission state, and binds every
+  present object across the open. Newly created sidecars are checked before
+  the connection is issued. Backup publication repeats exact stage inventory,
+  object, and content checks immediately before the same-parent rename.
 
-Every opened connection MUST establish and verify:
+The primary database and its WAL/SHM members, backups, restore material, and
+receipts are runtime data. They must not enter Git, a package, logs, or source
+evidence.
+
+## Lifecycle coordination and connections
+
+Migration, backup publication, restore/recovery, primary identity inspection,
+and connection-receipt creation or release use one short-lived exclusive
+`lifecycle.lock`. The owner binds the lock to its no-follow regular-file
+identity before and after work. Contention, a crash residue, substitution, or
+loss of identity is a typed failure; there is no stale-lock deletion API.
+
+Each open `PersistenceStore` has an exact UUID connection receipt containing
+its receipt-format version, application version, process ID, receipt ID, and
+open time.
+The store verifies the issued connections-directory identity and the receipt
+object/content before every operation, and releases only that exact receipt
+after closing SQLite. Creation and release revalidate the parent immediately
+before and after mutation. Unknown, corrupt, substituted, active, or
+crash-stale receipts block first initialization, migration, primary-identity
+inspection, and restore. Multiple receipts may coexist only after the database
+is already at the current schema; this is observation, not a claim that another
+process is healthy.
+
+Every writable connection establishes and verifies:
 
 - `foreign_keys=ON`;
-- `journal_mode=WAL` for the primary writable database;
+- `journal_mode=WAL` for the primary database;
 - `synchronous=FULL`;
 - `read_uncommitted=OFF`; and
 - `busy_timeout=5000` milliseconds.
 
-Failure to obtain or verify these settings prevents mutation. Writers use short
-`BEGIN IMMEDIATE` transactions and never wait indefinitely; exhausted busy
-handling returns a typed busy failure to the reliability owner. Readers use a
-bounded snapshot transaction and MUST NOT hold it across an adapter call,
-filesystem operation, user interaction, or other external effect. WAL
-checkpointing is explicit and cannot truncate a WAL still needed by a reader.
+Standalone backup and preflight readers open read-only. Published backup files
+are normalized to `journal_mode=DELETE` before verification.
 
-## Transaction boundaries
+## Transaction and repository boundary
 
-- A domain command, its aggregate revision update, related edge changes, and
-  audit event commit atomically in one transaction.
-- A read or preliminary-policy allow is inserted and marked consumed for exactly
-  one bounded adapter query. Its validated query receipt commits separately and
-  references that decision. A final Project-bound decision transaction reads
-  the current policy receipt; stale, missing, differently bound, or invalid
-  evidence yields no final allow.
-- A final mutation decision and a direct domain mutation commit atomically. For
-  an external effect, the final allow and complete `pending` intent insert
-  atomically, with the intent referencing that decision; a denial may append
-  sanitized attempt evidence but creates neither intent nor external effect.
-- Initial authorization bootstrap uses one `BEGIN IMMEDIATE` transaction that
-  verifies the singleton is current and unconsumed and no grant exists, inserts
-  the fixed initial grants, appends their audit events, records their IDs, and
-  marks the singleton consumed. Constraint or identity conflict rolls back the
-  complete bootstrap operation.
-- Claim creation, the active-execution constraint, lease/fencing increment,
-  expected Task revision check, and claim audit event commit atomically.
-- An operation intent commits before its external effect. External work occurs
-  with no database transaction held. Receipt observation commits separately.
-  Verified finalization and its domain/audit changes form a final transaction.
-- Lease renewal and integration-reservation renewal are isolated CAS
-  transactions.
-- Integration-reservation acquisition uses one `BEGIN IMMEDIATE` transaction:
-  inspect the exact Project/repository/target-ref key, reject an `active` or
-  `ambiguous` row, compare target/policy revisions, allocate the next fence,
-  insert the sole current row, and append its audit event. Acquisition never
-  converts an expired lease as a shortcut; reconciliation must already have
-  CAS-transitioned the prior row to terminal `expired` or `released`. The
-  partial unique index is the final concurrent-writer guard; a conflict creates
-  no second reservation. Release, expiry, and takeover are revision/fence CAS
-  writes.
-- Scheduled-trigger ingress uses one `BEGIN IMMEDIATE` transaction after typed
-  ingress and the applicable final `dispatch.run` decision. On allow for a
-  schema-valid, current-config scheduled tuple it first reads the unique
-  `scheduled_dispatches` key. If absent, it allocates both IDs, inserts exactly
-  one `starting` canonical `dispatcher_runs` row bound to the allow decision,
-  then inserts the tuple row referencing that run. If present, it reuses the
-  stored canonical run. It inserts that allowed delivery's observation with
-  `attachment_role=canonical|duplicate` before commit. A duplicate race reads
-  the unique winner and attaches its observation; it cannot create another run.
-  Denial inserts only a sanitized `authorization_denied`, role-`none`
-  observation with the decision reference and creates no tuple or run. A manual
-  allow atomically creates its own starting run and canonical observation
-  without a scheduled tuple; manual denial creates only the unattached
-  observation. Malformed or stale-config delivery likewise stores a sanitized
-  unattached observation and no run.
-- Run-worker assignment and stale-worker takeover CAS-match `run_id`, status,
-  current worker, `owner_revision`, `revision`, and heartbeat condition. A
-  successful assignment installs the new worker, increments `owner_revision`
-  and `revision`, and thereby fences every prior candidate writer.
-- After reconciliation and before any candidate claim or candidate-bound
-  external action, a dispatcher sweep uses one `BEGIN IMMEDIATE` transaction.
-  It matches the run's
-  current worker/owner revision and expected run revision, reads the complete
-  finite domain-eligible set from that same database snapshot, inserts every
-  member as `pending` with its immutable Task revision and contiguous ordinal,
-  stores the new snapshot revision, exact expected count, and snapshot time,
-  moves the run to `sweeping`, and increments the run revision. All membership
-  rows and sealing metadata commit or none do; no candidate work may begin from
-  an uncommitted or unsealed in-memory list.
-- Each member resolution CAS-matches the sealed snapshot identity, current run
-  worker and owner revision, immutable member identity, `lifecycle='pending'`,
-  and candidate-row revision. A successful claim and its `claimed` terminal
-  member transition share the claim transaction. Every non-claim outcome and
-  any accompanying domain/audit mutation likewise commit atomically. The CAS
-  permits exactly one `pending` to `terminal` transition and rejects a stale
-  run owner before candidate mutation or external action.
-- Fan-out summary publication is a run-revision/owner-revision CAS transaction.
-  It requires the stored expected count to equal both total and distinct Task
-  counts; distinct ordinals must be exactly the contiguous range from zero to
-  expected count minus one when the count is positive, while zero requires no
-  row; every row must match the sealed snapshot revision and be terminal. Only
-  then is the summary derived from those rows and committed with the terminal
-  run status. A failed completeness check leaves the summary null and cannot
-  claim run success.
-- Migration application and migration-history insertion share one transaction
-  per migration.
+Readers use a synchronous SQLite snapshot transaction. Writers use short
+synchronous `BEGIN IMMEDIATE` transactions. A callback that returns a Promise
+is rejected and rolled back so no database transaction spans awaited work,
+user interaction, filesystem work, or an external effect. Busy exhaustion is
+a typed result. Checkpoint results are explicit; a `TRUNCATE` checkpoint does
+not claim success while an active reader still needs WAL frames.
 
-The semantic ordering and recovery outcomes of the multi-transaction external
-flow are owned by the [reliability protocol](reliability-protocol.md).
+The sole repository decoder reads all Projects, Tasks, and dependency edges,
+checks SQLite storage classes, and invokes `createDomainSnapshot`. Missing,
+unknown, impossible, or corrupt state is a typed failure: no default, skipped
+row, empty replacement, or partial success is returned.
+
+The store provides two narrow write primitives:
+
+- one-time `initialize`, accepted only while Project and Task storage is empty;
+  and
+- `commit(expectedSnapshot, mutation)`, accepted only for a complete trusted
+  Domain Core mutation whose Project list is unchanged, changed Task IDs are
+  exact/sorted/unique, no Task is deleted, each new Task starts at revision `1`,
+  and every changed Task advances its exact prior revision by one.
+
+`commit` compares the complete persisted snapshot to `expectedSnapshot`,
+writes every changed Task and edge in one transaction, and compares terminal
+readback with the mutation snapshot. It does not choose a Domain command,
+authorize a mutation, or expose direct SQL. Project registration and
+authorization belong to EP-01C.
 
 ## Migration identity and atomicity
 
-Migration files use immutable names `NNNN-short-name.sql`, where `NNNN` is a
-strictly increasing four-digit schema version. `migration_id` is the complete
-file stem. `checksum` is uppercase SHA-256 over the exact committed file bytes.
-An already recorded migration ID, version, or checksum mismatch blocks startup
-before application writes.
+Migration files use immutable names `NNNN-short-name.sql`. `NNNN` is the
+strictly increasing four-digit version, `migration_id` is the registry's
+non-empty semantic ID, and `checksum_sha256` is uppercase SHA-256 of the exact
+committed UTF-8 file bytes. One lazily loaded registry is used by source,
+tests, build, and the packed `migrations/` inventory.
 
-The migration runner performs this sequence under exclusive migration
-coordination:
+Before writable open, an existing database is inspected read-only. The runner
+rejects an absent/incomplete metadata owner, unknown or newer version,
+non-contiguous/missing/reordered history, ID or checksum mismatch, registry
+identity mismatch, live schema-fingerprint mismatch, failed integrity/FK
+check, or bad Domain decode. It never initializes a replacement over an
+existing empty, corrupt, or incompatible database.
 
-1. open with the verified connection policy and read the complete applied
-   history;
-2. reject an unknown, missing, reordered, or checksum-mismatched migration;
-3. create and verify the required pre-upgrade backup;
-4. apply each unapplied migration and insert its history row in the same SQLite
-   transaction;
-5. run `foreign_key_check` and the migration's declared postconditions before
-   commit; and
-6. update the singleton metadata only in the transaction that establishes that
-   version.
+Fresh version `0` initialization applies the registry without a pre-upgrade
+backup because no prior database state exists. An existing recognized earlier
+prefix must have zero connection receipts and a verified pre-upgrade backup
+before the next migration starts. Each migration's SQL, history insert,
+metadata/fingerprint update, `user_version`, integrity checks, and declared
+postcondition establish one SQLite transaction. Failure or interruption leaves
+that migration wholly absent or wholly committed; restart begins at the first
+absent registry member.
 
-A process interruption leaves a migration wholly absent or wholly committed.
-On restart, the runner re-reads history and resumes at the first absent version;
-it never marks a failed migration as applied. A migration requiring a
-non-transactional database rewrite must stage a new database and use the
-publication protocol rather than weakening this atomicity rule.
+Released migration bytes are never edited, reordered, or skipped. Later plans
+append new files and must test every shipped earlier prefix they claim to
+upgrade.
 
-## Backup before upgrade
+## Backup generations
 
-Every upgrade that could write a database first creates a backup with SQLite's
-online backup API; copying the live main file is not sufficient in WAL mode.
-The backup is written to a private generation and is not published until a
-separate connection verifies:
+Backup uses Node's SQLite online backup API; it never copies a live WAL-mode
+main file. The owner allocates an unguessable private stage and publishes the
+whole two-member directory by same-parent rename only after all checks pass.
+The published inventory is exactly `state.sqlite3` and `manifest.json`.
 
-- it opens read-only;
-- `quick_check` succeeds;
-- `foreign_key_check` returns no row;
-- schema metadata and every migration checksum match the source pre-upgrade
-  state; and
-- a manifest binds database identity, schema version, source application
-  version, byte length, creation time, and inventory entry.
+Manifest schema version `1` binds:
 
-Publication and interrupted-reader safety use the private-stage, inventory, and
-atomic/CAS rules in the
-[reliability protocol](reliability-protocol.md#private-staging-and-publication).
-Upgrade does not begin unless the published backup can be reopened and its
-manifest revalidated.
+- generation ID and `manual` or `pre_upgrade` kind;
+- database filename, byte length, and uppercase SHA-256;
+- source schema version, registry identity, schema fingerprint, and complete
+  migration history; and
+- source application version and creation time.
 
-## Corruption, incompatible versions, and recovery
+Verification rejects any extra/missing/reparse member, changed byte, malformed
+manifest, incompatible history/schema, integrity/FK failure, or Domain decode
+failure. It binds the generation directory, manifest, and database identities,
+hashes the database, reopens that same object read-only, and repeats exact
+identity/content/inventory readback before issuing the generation. A generation
+is immutable by contract and is reverified at every use; filesystem write
+permission alone is not proof of validity.
 
-- A failed SQLite integrity check, impossible row shape, broken foreign key,
-  migration-history mismatch, or unverifiable manifest puts the database into a
-  read-only diagnostic condition. Normal writes and automatic repair stop.
-- Doctor may inspect and report redacted facts but MUST NOT edit pages, delete
-  rows, disable constraints, or fabricate migration history.
-- Recovery restores a verified backup into a new private database, validates it
-  through the same ingress, and publishes it with an expected-current-database
-  CAS. The corrupt source remains untouched until separately authorized
-  retention or cleanup.
-- A runtime whose maximum reader version is lower than the database version
-  refuses to open it for mutation. There are no reverse migrations.
-- Downgrade is performed only by restoring a compatible pre-upgrade backup, as
-  required by the
-  [versioning and compatibility contract](versioning-compatibility-contract.md#downgrade-by-restore).
-- If no verified backup exists, the system reports a blocked recovery. It does
-  not claim data recovery, continue with a partially decoded database, or
-  initialize a replacement over the same path.
+## Restore and explicit recovery
+
+Restore is a lower-level persistence mechanism, not a product CLI command. It
+requires the store to be closed, zero connection receipts, a verified backup
+generation ID, `acknowledgeDataLoss: true`, a non-empty application version,
+and an exact expected-current raw primary file-set identity. The raw identity
+binds the present main/WAL/SHM member names, no-follow file identities, modes,
+lengths, and SHA-256 values. A stale or caller-fabricated identity fails before
+protected mutation.
+
+The owner clones and verifies the selected generation into an exclusively
+reserved restore stage, creates a private retained generation, and writes one
+identity-bound restore intent before moving primary bytes. The intent binds
+the retained directory identity as well as the backup, expected primary set,
+and stage. It then:
+
+1. moves every exact prior primary member into the retained generation without
+   overwriting or deleting it;
+2. publishes the verified staged database at `state.sqlite3`;
+3. performs schema, integrity, history, and typed readback on the published
+   target;
+4. writes one immutable restore receipt binding the backup, prior identity,
+   target checksum/schema, retained generation identity, application version,
+   and time;
+   and
+5. removes only the exact owned intent.
+
+There is no automatic reverse migration, overwrite of retained bytes, or
+cleanup API. Once the intent exists, failure returns
+`RESTORE_RECOVERY_REQUIRED`; normal open remains blocked. Explicit recovery
+revalidates the backup, intent, stage/published identity, and the complete
+partition of prior members between primary and retained paths. It completes a
+recognized pre-publication, post-publication, or post-receipt state. Missing,
+duplicated, mixed, substituted, or unknown topology remains
+`RESTORE_BLOCKED` for a later doctor/user decision.
+
+The current failpoint evidence covers process interruption at these logical
+boundaries. It is not a power-loss durability, hardware recovery, backup
+retention, or supported-platform claim.
+
+## Corruption, incompatible versions, and non-claims
+
+Integrity, FK, schema/history/checksum, storage-class, Domain-shape, backup, or
+path-identity failure stops normal access. The foundation does not edit pages,
+delete rows, disable constraints, fabricate history, silently retry an
+external effect, or initialize a replacement at the same path. A database
+newer than the binary is refused. In-place downgrade does not exist; only the
+separately acknowledged verified-backup mechanism can publish older data.
+
+EP-01B proves a local persistence foundation on the observed development host.
+It does not establish a release, Windows support, a running/completed execution
+loop, Manual/Codex/Git/Scheduler adapter, claim/completion protocol, application
+service, authorization experience, product CLI, `backup`/`restore`/`doctor`
+user surface, MCP server, plugin, deployment, or external Project operation.

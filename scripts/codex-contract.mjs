@@ -1,6 +1,11 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { gitInventory, invariant, repoRoot } from "./repo-utils.mjs";
+import {
+  EXPECTED_PRODUCTION_SOURCE_FILES,
+  gitInventory,
+  invariant,
+  repoRoot,
+} from "./repo-utils.mjs";
 import { validateCodexEvidence } from "./codex-contract-lib.mjs";
 
 const evidencePath = path.join(repoRoot, "docs", "feasibility", "codex-stable-public-contract.json");
@@ -9,7 +14,7 @@ const result = validateCodexEvidence(record);
 
 const productionFiles = gitInventory().filter((item) => item.startsWith("src/"));
 invariant(
-  JSON.stringify(productionFiles) === JSON.stringify(["src/cli.ts", "src/domain.ts", "src/index.ts"]),
+  JSON.stringify(productionFiles) === JSON.stringify(EXPECTED_PRODUCTION_SOURCE_FILES),
   "unexpected production source inventory",
 );
 for (const relative of productionFiles) {

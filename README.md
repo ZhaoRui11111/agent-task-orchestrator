@@ -7,12 +7,15 @@ This is an independent community project. It is not made, sponsored, or endorsed
 ## Current status
 
 The repository contains a governance and architecture-contract baseline, a
-minimal executable TypeScript/Node toolchain and feasibility harness, and a
-pure in-memory Domain Core for Project/Task rules. It still has no application
-service, executable orchestrator, product CLI, MCP server, plugin, runtime
-database schema, dispatcher, scheduler, supported adapter, supported release,
-or validated product platform integration. The current `ato` console entry
-reports capability status only.
+minimal executable TypeScript/Node toolchain and feasibility harness, a pure
+in-memory Domain Core for Project/Task rules, and a narrow local SQLite
+persistence foundation. That foundation owns a safe runtime root, staged
+schema, migrations, exact Project/Task snapshot storage, and verified
+backup/restore recovery primitives. It still has no application service,
+executable orchestrator, product CLI, ProjectRegistry/authorization
+experience, MCP server, plugin, dispatcher, scheduler, execution backend,
+supported adapter, supported release, or validated product platform
+integration. The current `ato` console entry reports capability status only.
 
 Unimplemented planned capabilities are not current capabilities. Design
 proposals and roadmaps must remain clearly labeled until their implementations
@@ -53,7 +56,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the public contribution workflow and 
 The frozen versions, package boundary, local commands, CI skeleton, and
 dependency maintenance rules are owned by the
 [toolchain contract](docs/reference/toolchain-contract.md); executable Domain
-Core behavior is owned by the [domain contract](docs/reference/domain-contract.md).
+Core behavior is owned by the [domain contract](docs/reference/domain-contract.md),
+and the implemented storage boundary by the
+[persistence contract](docs/reference/persistence-contract.md).
 With the exact toolchain installed, the local repository gate is:
 
 ```powershell
@@ -81,7 +86,10 @@ implemented worktree or completion adapters.
 
 ## Data boundary
 
-Future runtime databases, task prompts, project paths, execution or thread identifiers, worktrees, logs, backups, credentials, and other user data belong in a user data directory. They must not be committed to this source repository.
+Runtime databases, Task bodies, Project paths, execution or thread identifiers,
+worktrees, logs, backups, credentials, and other user data belong below the
+validated user-data root or their separately owned external location. They
+must not be committed to this source repository.
 
 ## License and attribution
 

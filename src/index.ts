@@ -1,15 +1,19 @@
 export interface ScaffoldStatus {
   readonly packageName: "agent-task-orchestrator";
-  readonly phase: "domain-core";
+  readonly phase: "persistence-foundation";
   readonly domainCoreImplemented: true;
+  readonly persistenceFoundationImplemented: true;
+  readonly applicationServiceImplemented: false;
   readonly productRuntimeImplemented: false;
   readonly supportedAdapters: readonly [];
 }
 
 const STATUS: ScaffoldStatus = Object.freeze({
   packageName: "agent-task-orchestrator",
-  phase: "domain-core",
+  phase: "persistence-foundation",
   domainCoreImplemented: true,
+  persistenceFoundationImplemented: true,
+  applicationServiceImplemented: false,
   productRuntimeImplemented: false,
   supportedAdapters: Object.freeze([] as const),
 });
@@ -19,3 +23,4 @@ export function getScaffoldStatus(): ScaffoldStatus {
 }
 
 export * from "./domain.ts";
+export * from "./persistence/index.ts";

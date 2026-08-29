@@ -4,9 +4,12 @@
 
 This file is the sole owner of security assets, actors, trust boundaries, abuse
 cases, mitigations, residual risks, negative-test obligations, and explicit
-security non-claims for the planned local-first orchestrator. The repository has
-no runtime, MCP server, adapter, scheduler, database, workspace control, or
-implemented security control today.
+security non-claims for the planned local-first orchestrator. The repository
+now implements only the persistence-foundation subset: a validated runtime
+root, identity-bound lifecycle/connection files, strict typed SQLite ingress,
+staged migrations, and verified backup/restore recovery. It still has no
+application runtime, authorization service, MCP server, adapter, scheduler,
+workspace control, external-effect protocol, or supported security boundary.
 
 The model assumes one local operator and treats repository content, Task text,
 prompts, adapter responses, tool output, filesystem entries, Git metadata, MCP
@@ -60,7 +63,7 @@ into a support claim.
 
 | ID | Abuse case | Required mitigation | Residual risk |
 | --- | --- | --- | --- |
-| T1 | Traversal, symlink/junction/reparse substitution, case/normalization ambiguity, or path-swap race escapes a managed root or targets user data. | Use the contained, handle-backed, regular-file, no-follow, ownership, inventory, and cleanup-refusal rules in the [completion/workspace contract](../reference/completion-workspace-contract.md). Reject the operation when the platform cannot prove them. | A privileged or same-user attacker able to mutate handles/process memory can exceed application-level containment. |
+| T1 | Traversal, symlink/junction/reparse substitution, case/normalization ambiguity, or path-swap race escapes a managed root or targets user data. | For the implemented runtime root, use the absolute/non-root/non-overlap, no-follow identity, owner-derived descendant, inventory, and refusal rules in the [persistence contract](../reference/persistence-contract.md#runtime-root-and-path-ownership). Future managed workspaces use the stronger rules in the [completion/workspace contract](../reference/completion-workspace-contract.md). Reject the operation when the applicable owner cannot prove the path. | Same-user replacement between checks, platform reparse semantics, privileged mutation, and process-memory compromise can exceed application-level containment; no Windows ACL or platform-support claim is made. |
 | T2 | Prompt, Task, repository, issue, tool output, or adapter response injects instructions to reveal data, broaden scope, or perform a tool/external mutation. | Treat content as data; route every structured command through schema ingress and the [authorization envelope](../reference/authorization-contract.md); expose only narrow versioned ports; never treat model text as a grant, receipt, or policy decision. | A chosen execution backend may still produce unsafe suggestions or modify files inside its already authorized workspace. |
 | T3 | A timeout/crash causes duplicate, fabricated, or destructively rolled-back external mutation. | Persist semantic intent before effects; independently observe and verify receipts; fence stale workers; CAS finalization; retain actual partial success and ambiguity under the [reliability protocol](../reference/reliability-protocol.md). | Some external systems cannot provide authoritative inspection or idempotency; those operations remain ambiguous and need human resolution. |
 | T4 | Secrets are stored in Tasks, database rows, prompts, receipts, command lines, logs, diagnostics, or error bodies. | Apply the [privacy and logging contract](privacy-and-logging.md): external credential references, least disclosure, secret-value omission, fail-closed redaction, and separately authorized backend disclosure. | A secret deliberately included in source/prompt content may reach the configured backend; best-effort pattern detection cannot find every secret. |
@@ -75,6 +78,11 @@ into a support claim.
 
 Future implementation cannot close the security route until automated tests
 produce binary evidence for every applicable row:
+
+EP-01B supplies current evidence only for the runtime-root and SQLite portions
+of N1 and N5. The other rows, and workspace/external-effect portions of those
+two rows, remain future obligations; passing persistence tests cannot satisfy
+them.
 
 | ID | Required negative test | Passing outcome |
 | --- | --- | --- |

@@ -17,8 +17,14 @@ All notable changes to this project will be documented in this file.
   hierarchy, dependency, eligibility, waiting-continuation, revision,
   structured-error, and structured-event behavior plus deterministic unit and
   seeded state-machine evidence.
+- Added the zero-production-dependency SQLite persistence foundation with a
+  validated runtime root, staged immutable migrations for metadata and exact
+  Domain Core Project/Task storage, typed repository CAS/readback, bounded
+  WAL transactions, verified online backup generations, and explicit
+  identity-bound restore recovery.
 
 These entries do not announce a release or supported runtime. The executable
-material is limited to the development package, feasibility harness, and pure
-in-memory Domain Core; application, persistence, dispatcher, adapter,
+material is limited to the development package, feasibility harness, pure
+in-memory Domain Core, and narrow local persistence foundation; application,
+authorization, product CLI, execution/completion, dispatcher, adapter,
 scheduler, MCP, and orchestration runtime behavior remain unimplemented.

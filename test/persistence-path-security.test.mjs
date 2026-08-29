@@ -1,0 +1,297 @@
+import assert from "node:assert/strict";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  renameSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import path from "node:path";
+import test from "node:test";
+import {
+  openPersistence,
+  prepareRuntimeLayout,
+  restoreBackup,
+  verifyBackupGeneration,
+} from "../src/index.ts";
+import { assertRuntimeLayout, selectConfiguredRuntimeRoot } from "../src/persistence/runtime.ts";
+import {
+  cleanupPersistenceFixture,
+  createPersistenceFixture,
+  expectPersistenceError,
+} from "./persistence-test-helpers.mjs";
+import { createOwnedGeneration, removeOwnedGeneration } from "../scripts/repo-utils.mjs";
+
+test("Windows default and environment override only select a candidate later subjected to full validation", () => {
+  assert.equal(
+    selectConfiguredRuntimeRoot(null, { LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local" }, "win32"),
+    path.join("C:\\Users\\test\\AppData\\Local", "agent-task-orchestrator"),
+  );
+  assert.equal(
+    selectConfiguredRuntimeRoot(
+      null,
+      { LOCALAPPDATA: "C:\\ignored", TASK_ORCHESTRATOR_DATA_DIR: "D:\\chosen" },
+      "win32",
+    ),
+    "D:\\chosen",
+  );
+  assert.equal(
+    selectConfiguredRuntimeRoot("E:\\explicit", { TASK_ORCHESTRATOR_DATA_DIR: "D:\\ignored" }, "win32"),
+    "E:\\explicit",
+  );
+  assert.throws(
+    () => selectConfiguredRuntimeRoot(null, {}, "linux"),
+    (error) => expectPersistenceError(error, "UNSAFE_RUNTIME_ROOT"),
+  );
+});
+
+test("null runtime root uses the validated Windows local application-data child", () => {
+  const generation = createOwnedGeneration("path-default-root");
+  const sourceCheckoutRoot = path.join(generation, "source");
+  const projectRoot = path.join(generation, "project");
+  const localData = path.join(generation, "local-data");
+  mkdirSync(sourceCheckoutRoot);
+  mkdirSync(projectRoot);
+  mkdirSync(localData);
+  const previousOverride = process.env.TASK_ORCHESTRATOR_DATA_DIR;
+  const previousLocalData = process.env.LOCALAPPDATA;
+  try {
+    delete process.env.TASK_ORCHESTRATOR_DATA_DIR;
+    process.env.LOCALAPPDATA = localData;
+    const layout = prepareRuntimeLayout({ runtimeRoot: null, sourceCheckoutRoot, projectRoots: [projectRoot] });
+    assert.equal(layout.root, path.join(localData, "agent-task-orchestrator"));
+    assert.equal(layout.privatePermissionsEnforced, process.platform !== "win32");
+  } finally {
+    if (previousOverride === undefined) delete process.env.TASK_ORCHESTRATOR_DATA_DIR;
+    else process.env.TASK_ORCHESTRATOR_DATA_DIR = previousOverride;
+    if (previousLocalData === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = previousLocalData;
+    removeOwnedGeneration(generation);
+  }
+});
+
+test("runtime permissions are enforced where meaningful and explicitly unavailable on Windows", async () => {
+  const fixture = createPersistenceFixture("path-private-permissions");
+  let store;
+  try {
+    assert.equal(fixture.layout.privatePermissionsEnforced, process.platform !== "win32");
+    if (process.platform === "win32") return;
+
+    for (const directory of [
+      fixture.layout.root,
+      fixture.layout.backupsRoot,
+      fixture.layout.backupStagingRoot,
+      fixture.layout.backupGenerationsRoot,
+      fixture.layout.connectionsRoot,
+      fixture.layout.restoreRoot,
+      fixture.layout.restoreStagingRoot,
+      fixture.layout.restoreRetainedRoot,
+      fixture.layout.restoreReceiptsRoot,
+    ]) {
+      assert.equal(lstatSync(directory).mode & 0o077, 0, directory);
+    }
+    store = await openPersistence(fixture.layout, { applicationVersion: "permissions" });
+    store.initialize({ projects: [{ id: "project", enabled: true }], tasks: [] });
+    const backup = await store.createBackup();
+    for (const filePath of [
+      fixture.layout.databasePath,
+      `${fixture.layout.databasePath}-wal`,
+      `${fixture.layout.databasePath}-shm`,
+      path.join(fixture.layout.backupGenerationsRoot, backup.generationId, "state.sqlite3"),
+      path.join(fixture.layout.backupGenerationsRoot, backup.generationId, "manifest.json"),
+    ]) {
+      if (existsSync(filePath)) assert.equal(lstatSync(filePath).mode & 0o077, 0, filePath);
+    }
+
+    const unsafeRoot = path.join(fixture.generation, "existing-open-runtime");
+    mkdirSync(unsafeRoot, { mode: 0o755 });
+    chmodSync(unsafeRoot, 0o755);
+    assert.throws(
+      () =>
+        prepareRuntimeLayout({
+          runtimeRoot: unsafeRoot,
+          sourceCheckoutRoot: fixture.sourceCheckoutRoot,
+          projectRoots: [fixture.projectRoot],
+        }),
+      (error) => expectPersistenceError(error, "UNSAFE_RUNTIME_ROOT"),
+    );
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("untrusted runtime root rejects relative, root, traversal, non-directory, and protected overlaps", () => {
+  const generation = createOwnedGeneration("path-negatives");
+  const sourceCheckoutRoot = path.join(generation, "source");
+  const projectRoot = path.join(generation, "project");
+  mkdirSync(sourceCheckoutRoot);
+  mkdirSync(projectRoot);
+  const filePath = path.join(generation, "file");
+  writeFileSync(filePath, "not a directory");
+  const requests = [
+    "relative-runtime",
+    "\\drive-relative-runtime",
+    "\\\\server\\share\\runtime",
+    path.parse(generation).root,
+    `${generation}${path.sep}candidate${path.sep}..${path.sep}runtime`,
+    filePath,
+    sourceCheckoutRoot,
+    path.join(sourceCheckoutRoot, "child"),
+    projectRoot,
+    path.join(projectRoot, "child"),
+    generation,
+  ];
+  try {
+    for (const runtimeRoot of requests) {
+      assert.throws(
+        () => prepareRuntimeLayout({ runtimeRoot, sourceCheckoutRoot, projectRoots: [projectRoot] }),
+        (error) => expectPersistenceError(error, "UNSAFE_RUNTIME_ROOT"),
+        runtimeRoot,
+      );
+    }
+    assert.throws(
+      () =>
+        prepareRuntimeLayout({
+          runtimeRoot: path.join(generation, "valid"),
+          sourceCheckoutRoot,
+          projectRoots: [projectRoot],
+          backupPath: path.join(generation, "caller-selected"),
+        }),
+      (error) => expectPersistenceError(error, "INVALID_INPUT"),
+    );
+  } finally {
+    removeOwnedGeneration(generation);
+  }
+});
+
+test("symlink, junction, and reparse ancestors or targets are refused", () => {
+  const generation = createOwnedGeneration("path-reparse");
+  const sourceCheckoutRoot = path.join(generation, "source");
+  const projectRoot = path.join(generation, "project");
+  const target = path.join(generation, "target");
+  const targetLink = path.join(generation, "target-link");
+  const ancestorLink = path.join(generation, "ancestor-link");
+  mkdirSync(sourceCheckoutRoot);
+  mkdirSync(projectRoot);
+  mkdirSync(target);
+  symlinkSync(target, targetLink, process.platform === "win32" ? "junction" : "dir");
+  symlinkSync(target, ancestorLink, process.platform === "win32" ? "junction" : "dir");
+  try {
+    for (const runtimeRoot of [targetLink, path.join(ancestorLink, "child")]) {
+      assert.throws(
+        () => prepareRuntimeLayout({ runtimeRoot, sourceCheckoutRoot, projectRoots: [projectRoot] }),
+        (error) => expectPersistenceError(error, "UNSAFE_RUNTIME_ROOT"),
+      );
+    }
+  } finally {
+    removeOwnedGeneration(generation);
+  }
+});
+
+test("every issued runtime directory identity is revalidated before later use", () => {
+  const fixture = createPersistenceFixture("path-identity-swap");
+  try {
+    const owned = `${fixture.layout.connectionsRoot}.owned`;
+    renameSync(fixture.layout.connectionsRoot, owned);
+    mkdirSync(fixture.layout.connectionsRoot);
+    assert.throws(
+      () => assertRuntimeLayout(fixture.layout),
+      (error) => expectPersistenceError(error, "PATH_IDENTITY_CHANGED"),
+    );
+  } finally {
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("unknown connection and backup inventory members fail closed", async () => {
+  const receiptFixture = createPersistenceFixture("path-receipt-inventory");
+  try {
+    writeFileSync(path.join(receiptFixture.layout.connectionsRoot, "unknown"), "unknown");
+    await assert.rejects(
+      openPersistence(receiptFixture.layout, { applicationVersion: "inventory" }),
+      (error) => expectPersistenceError(error, "ACTIVE_CONNECTIONS"),
+    );
+  } finally {
+    cleanupPersistenceFixture(receiptFixture);
+  }
+
+  const backupFixture = createPersistenceFixture("path-backup-inventory");
+  let store;
+  try {
+    store = await openPersistence(backupFixture.layout, { applicationVersion: "inventory" });
+    const backup = await store.createBackup();
+    writeFileSync(
+      path.join(backupFixture.layout.backupGenerationsRoot, backup.generationId, "unexpected"),
+      "unexpected",
+    );
+    assert.throws(
+      () => verifyBackupGeneration(backupFixture.layout, backup.generationId),
+      (error) => expectPersistenceError(error, "BACKUP_INVALID"),
+    );
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(backupFixture);
+  }
+});
+
+test("restore ingress accepts an identity, never caller-selected descendant paths", async () => {
+  const fixture = createPersistenceFixture("path-restore-ingress");
+  try {
+    await assert.rejects(
+      restoreBackup(fixture.layout, {
+        generationId: "00000000-0000-4000-8000-000000000000",
+        expectedCurrent: { schemaVersion: 1, members: [], identitySha256: "0".repeat(64) },
+        acknowledgeDataLoss: true,
+        applicationVersion: "test",
+        restorePath: path.join(fixture.generation, "caller-selected"),
+      }),
+      (error) => expectPersistenceError(error, "INVALID_INPUT"),
+    );
+  } finally {
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("persistence ingress rejects accessors, exceptional proxies, and noncanonical objects", async () => {
+  const fixture = createPersistenceFixture("path-ingress-shapes");
+  try {
+    let getterCalls = 0;
+    const accessorRequest = {};
+    Object.defineProperties(accessorRequest, {
+      runtimeRoot: {
+        enumerable: true,
+        get() {
+          getterCalls += 1;
+          throw new Error("must not run");
+        },
+      },
+      sourceCheckoutRoot: { enumerable: true, value: fixture.sourceCheckoutRoot },
+      projectRoots: { enumerable: true, value: [fixture.projectRoot] },
+    });
+    assert.throws(
+      () => prepareRuntimeLayout(accessorRequest),
+      (error) => expectPersistenceError(error, "INVALID_INPUT"),
+    );
+    assert.equal(getterCalls, 0);
+
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    await assert.rejects(
+      openPersistence(fixture.layout, revoked.proxy),
+      (error) => expectPersistenceError(error, "INVALID_INPUT"),
+    );
+
+    class NoncanonicalRequest {
+      applicationVersion = "test";
+    }
+    await assert.rejects(
+      openPersistence(fixture.layout, new NoncanonicalRequest()),
+      (error) => expectPersistenceError(error, "INVALID_INPUT"),
+    );
+  } finally {
+    cleanupPersistenceFixture(fixture);
+  }
+});

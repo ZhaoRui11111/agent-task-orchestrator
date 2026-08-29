@@ -18,11 +18,41 @@ export const repoRoot = realpathSync(fileURLToPath(new URL("..", import.meta.url
 export const taskArtifactsRoot = path.join(repoRoot, ".task-artifacts");
 const ownedGenerationReceipts = new Map();
 
+export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
+  "src/cli.ts",
+  "src/domain.ts",
+  "src/index.ts",
+  "src/node-builtins.d.ts",
+  "src/persistence/backup.ts",
+  "src/persistence/database.ts",
+  "src/persistence/errors.ts",
+  "src/persistence/index.ts",
+  "src/persistence/migrations.ts",
+  "src/persistence/repository.ts",
+  "src/persistence/runtime.ts",
+  "src/persistence/store.ts",
+  "src/persistence/values.ts",
+]);
+
+export const EXPECTED_MIGRATION_FILES = Object.freeze([
+  "migrations/0001-persistence-metadata.sql",
+  "migrations/0002-phase1-task-storage.sql",
+]);
+
+const ALLOWED_PERSISTENCE_BUILTINS = new Set([
+  "node:crypto",
+  "node:fs",
+  "node:path",
+  "node:sqlite",
+  "node:url",
+]);
+
 export const EXPECTED_PACKAGE_SCRIPTS = Object.freeze({
   build: "tsc -p tsconfig.json",
   lint: "node scripts/lint.mjs",
   typecheck: "tsc -p tsconfig.json --noEmit",
   test: "node --test",
+  "test:persistence": "node --test test/persistence-*.test.mjs",
   "docs:check": "node scripts/docs-check.mjs",
   "dependency:check": "node scripts/dependency-security.mjs",
   "dependency:audit": "pnpm audit --prod --audit-level high --registry=https://registry.npmjs.org/",
@@ -69,6 +99,39 @@ export function invariant(condition, message) {
   if (!condition) {
     throw new Error(message);
   }
+}
+
+export function productionBoundaryFailures(inventory, readSource) {
+  const failures = [];
+  const productionFiles = inventory.filter((item) => item.startsWith("src/")).sort();
+  if (JSON.stringify(productionFiles) !== JSON.stringify(EXPECTED_PRODUCTION_SOURCE_FILES)) {
+    failures.push("production source inventory drifted");
+  }
+  const migrationFiles = inventory.filter((item) => item.startsWith("migrations/")).sort();
+  if (JSON.stringify(migrationFiles) !== JSON.stringify(EXPECTED_MIGRATION_FILES)) {
+    failures.push("production migration inventory drifted");
+  }
+
+  for (const relative of productionFiles.filter((item) => item.endsWith(".ts"))) {
+    const source = readSource(relative);
+    if (/codex|openai|@openai|scripts\//iu.test(source)) {
+      failures.push(`${relative}: production source depends on feasibility/vendor code`);
+    }
+    if (relative.endsWith(".d.ts")) continue;
+    const builtins = [
+      ...source.matchAll(/\bfrom\s+["'](node:[^"']+)["']/gu),
+      ...source.matchAll(/\bimport\s*["'](node:[^"']+)["']/gu),
+      ...source.matchAll(/\bimport\s*\(\s*["'](node:[^"']+)["']\s*\)/gu),
+    ].map((match) => match[1]);
+    for (const builtin of builtins) {
+      if (!relative.startsWith("src/persistence/")) {
+        failures.push(`${relative}: Node built-in escaped the persistence owner boundary`);
+      } else if (!ALLOWED_PERSISTENCE_BUILTINS.has(builtin)) {
+        failures.push(`${relative}: undeclared persistence built-in ${builtin}`);
+      }
+    }
+  }
+  return failures;
 }
 
 function normalizedObject(value) {

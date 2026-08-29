@@ -87,6 +87,44 @@ const expectedEntries = [
   "package/dist/index.d.ts.map",
   "package/dist/index.js",
   "package/dist/index.js.map",
+  "package/dist/persistence/backup.d.ts",
+  "package/dist/persistence/backup.d.ts.map",
+  "package/dist/persistence/backup.js",
+  "package/dist/persistence/backup.js.map",
+  "package/dist/persistence/database.d.ts",
+  "package/dist/persistence/database.d.ts.map",
+  "package/dist/persistence/database.js",
+  "package/dist/persistence/database.js.map",
+  "package/dist/persistence/errors.d.ts",
+  "package/dist/persistence/errors.d.ts.map",
+  "package/dist/persistence/errors.js",
+  "package/dist/persistence/errors.js.map",
+  "package/dist/persistence/index.d.ts",
+  "package/dist/persistence/index.d.ts.map",
+  "package/dist/persistence/index.js",
+  "package/dist/persistence/index.js.map",
+  "package/dist/persistence/migrations.d.ts",
+  "package/dist/persistence/migrations.d.ts.map",
+  "package/dist/persistence/migrations.js",
+  "package/dist/persistence/migrations.js.map",
+  "package/dist/persistence/repository.d.ts",
+  "package/dist/persistence/repository.d.ts.map",
+  "package/dist/persistence/repository.js",
+  "package/dist/persistence/repository.js.map",
+  "package/dist/persistence/runtime.d.ts",
+  "package/dist/persistence/runtime.d.ts.map",
+  "package/dist/persistence/runtime.js",
+  "package/dist/persistence/runtime.js.map",
+  "package/dist/persistence/store.d.ts",
+  "package/dist/persistence/store.d.ts.map",
+  "package/dist/persistence/store.js",
+  "package/dist/persistence/store.js.map",
+  "package/dist/persistence/values.d.ts",
+  "package/dist/persistence/values.d.ts.map",
+  "package/dist/persistence/values.js",
+  "package/dist/persistence/values.js.map",
+  "package/migrations/0001-persistence-metadata.sql",
+  "package/migrations/0002-phase1-task-storage.sql",
   "package/package.json",
 ].sort();
 
@@ -127,24 +165,117 @@ try {
   );
   pnpm(["add", "--offline", "--ignore-scripts", tgzPath], consumer, storeDir);
 
+  writeFileSync(
+    path.join(consumer, "index.ts"),
+    `import {
+  currentSchemaVersion,
+  getScaffoldStatus,
+  type OpenPersistenceOptions,
+  type RuntimeRootRequest,
+} from "agent-task-orchestrator";
+
+const options: OpenPersistenceOptions = { applicationVersion: "package-smoke" };
+const request: RuntimeRootRequest = {
+  runtimeRoot: "C:/package-smoke/runtime",
+  sourceCheckoutRoot: "C:/package-smoke/checkout",
+  projectRoots: ["C:/package-smoke/project"],
+};
+void options;
+void request;
+void currentSchemaVersion();
+void getScaffoldStatus();
+`,
+    "utf8",
+  );
+  writeFileSync(
+    path.join(consumer, "tsconfig.json"),
+    `${JSON.stringify(
+      {
+        compilerOptions: {
+          target: "ES2024",
+          module: "NodeNext",
+          moduleResolution: "NodeNext",
+          lib: ["ES2024", "DOM"],
+          strict: true,
+          noEmit: true,
+          skipLibCheck: false,
+        },
+        files: ["index.ts"],
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  const consumerTypecheck = spawnSync(
+    process.execPath,
+    [path.join(frozenInstall, "node_modules", "typescript", "bin", "tsc"), "-p", "tsconfig.json"],
+    { cwd: consumer, encoding: "utf8", windowsHide: true },
+  );
+  invariant(
+    consumerTypecheck.status === 0,
+    `packed declaration consumer failed: ${consumerTypecheck.stderr || consumerTypecheck.stdout}`,
+  );
+
+  const runtimeRoot = path.join(generation, "runtime");
+  const checkoutRoot = path.join(generation, "checkout");
+  const projectRoot = path.join(generation, "project");
+  mkdirSync(checkoutRoot);
+  mkdirSync(projectRoot);
+
   const importResult = spawnSync(
     process.execPath,
     [
       "--input-type=module",
       "--eval",
-      "import('agent-task-orchestrator').then((m) => console.log(JSON.stringify({status:m.getScaffoldStatus(),states:m.TASK_STATES,snapshot:m.createDomainSnapshot({projects:[],tasks:[]}).ok})))",
+      `import("agent-task-orchestrator").then(async (m) => {
+        const layout = m.prepareRuntimeLayout({
+          runtimeRoot: process.env.ATO_SMOKE_RUNTIME,
+          sourceCheckoutRoot: process.env.ATO_SMOKE_CHECKOUT,
+          projectRoots: [process.env.ATO_SMOKE_PROJECT],
+        });
+        const snapshot = m.createDomainSnapshot({ projects: [], tasks: [] });
+        if (!snapshot.ok) throw new Error("empty Domain snapshot was rejected");
+        const store = await m.openPersistence(layout, { applicationVersion: "package-smoke" });
+        store.initialize(snapshot.value);
+        const readback = store.read();
+        const backup = await store.createBackup();
+        const verified = m.verifyBackupGeneration(layout, backup.generationId);
+        await store.close();
+        console.log(JSON.stringify({
+          status: m.getScaffoldStatus(),
+          states: m.TASK_STATES,
+          snapshot: readback.projects.length === 0 && readback.tasks.length === 0,
+          schema: m.currentSchemaVersion(),
+          backup: verified.generationId === backup.generationId,
+        }));
+      }).catch((error) => { console.error(error); process.exitCode = 1; })`,
     ],
-    { cwd: consumer, encoding: "utf8", windowsHide: true },
+    {
+      cwd: consumer,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        ATO_SMOKE_RUNTIME: runtimeRoot,
+        ATO_SMOKE_CHECKOUT: checkoutRoot,
+        ATO_SMOKE_PROJECT: projectRoot,
+      },
+      windowsHide: true,
+    },
   );
   invariant(importResult.status === 0, `package export failed: ${importResult.stderr}`);
   const imported = JSON.parse(importResult.stdout.trim());
   invariant(
-    imported.status.phase === "domain-core" &&
+    imported.status.phase === "persistence-foundation" &&
       imported.status.domainCoreImplemented === true &&
+      imported.status.persistenceFoundationImplemented === true &&
+      imported.status.applicationServiceImplemented === false &&
       imported.status.productRuntimeImplemented === false &&
       JSON.stringify(imported.states) === JSON.stringify(["idea", "ready", "running", "waiting", "completed", "cancelled"]) &&
-      imported.snapshot === true,
-    "package export Domain Core or capability status drifted",
+      imported.snapshot === true &&
+      imported.schema === 2 &&
+      imported.backup === true,
+    "package export Domain Core, persistence registry, or capability status drifted",
   );
 
   const cliResult = pnpm(["exec", "ato"], consumer);
@@ -158,7 +289,9 @@ try {
       packageManager: `pnpm@${packageManagerVersion}`,
       frozenInstall: "typescript@5.9.3",
       packedFiles: entries.length,
+      consumerTypes: "passed",
       export: "passed",
+      persistence: "passed",
       console: "passed",
       uninstall: "passed",
     }),

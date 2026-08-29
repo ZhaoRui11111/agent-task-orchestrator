@@ -2,9 +2,10 @@
 
 This file is the sole normative owner of the repository's current executable
 toolchain, package boundary, and repeatable validation entry points. It does
-not define the Domain Core's behavior, a product runtime, persistence schema,
-adapter, or support promise. Domain behavior is owned only by the
-[domain contract](domain-contract.md).
+not define the Domain Core's behavior, persistence semantics, a product
+runtime, adapter, or support promise. Domain and persistence behavior are owned
+by the [domain contract](domain-contract.md) and
+[persistence contract](persistence-contract.md), respectively.
 
 ## Frozen toolchain
 
@@ -47,15 +48,23 @@ and source maps. The normal library entry is the package root export, and the
 normal console entry is the `ato` package binary. A package smoke test must
 first reproduce the frozen dependency install in an empty disposable project
 and generation-local store, then pack the declared distribution, install it
-into a disposable consumer without registry access, import the library entry,
-and invoke the console entry.
+into a disposable consumer without registry access, typecheck the public
+declarations without undeclared Node type dependencies, import the library
+entry, exercise a fresh persistence open/read/backup, and invoke the console
+entry.
 
-The package-root library export exposes a truthful capability status and the
-pure TypeScript Domain Core. The `ato` console remains only the matching status
-projection; it is not a product CLI. Production source remains limited to
-`src/index.ts`, `src/domain.ts`, and `src/cli.ts`. It must not acquire
-application, persistence, dispatcher, port, adapter, scheduler, MCP, or
-orchestrator behavior as part of this boundary.
+The package-root library export exposes a truthful capability status, the pure
+TypeScript Domain Core, and the narrow persistence foundation. The packed
+inventory includes the immutable SQL files under `migrations/`, and the
+compiled migration registry consumes those same bytes. The `ato` console
+remains only the matching status projection; it is not a product CLI.
+
+Production source is limited to `src/index.ts`, `src/domain.ts`, `src/cli.ts`,
+the narrow built-in declarations in `src/node-builtins.d.ts`, and
+`src/persistence/`. `node:sqlite` is confined to the persistence owner. The
+package has no production dependency and must not acquire an application
+service, dispatcher, port, adapter, scheduler, MCP, product CLI, or executable
+orchestrator as part of this boundary.
 
 ## Validation entry points
 
@@ -67,6 +76,7 @@ The following package scripts are the public local entry points:
 | `pnpm typecheck` | Strict TypeScript checking without output |
 | `pnpm build` | Produce the ESM package and declarations |
 | `pnpm test` | Run the Node test suite, including real local feasibility contracts |
+| `pnpm test:persistence` | Run the targeted migration, repository, concurrency, path-security, backup, and restore suite |
 | `pnpm docs:check` | Resolve exact-case repository-relative Markdown links and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |
 | `pnpm package:smoke` | Pack and consume the declared package boundary offline |

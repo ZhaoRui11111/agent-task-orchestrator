@@ -4,13 +4,21 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { getScaffoldStatus } from "../src/index.ts";
-import { gitInventory, repoRoot } from "../scripts/repo-utils.mjs";
+import {
+  EXPECTED_MIGRATION_FILES,
+  EXPECTED_PRODUCTION_SOURCE_FILES,
+  gitInventory,
+  productionBoundaryFailures,
+  repoRoot,
+} from "../scripts/repo-utils.mjs";
 
-test("package status exposes Domain Core without overstating the product runtime", () => {
+test("package status exposes the persistence foundation without overstating the product runtime", () => {
   assert.deepEqual(getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "domain-core",
+    phase: "persistence-foundation",
     domainCoreImplemented: true,
+    persistenceFoundationImplemented: true,
+    applicationServiceImplemented: false,
     productRuntimeImplemented: false,
     supportedAdapters: [],
   });
@@ -35,9 +43,24 @@ test("package metadata exposes only the normal export and console boundary", () 
   assert.deepEqual(Object.keys(packageJson.exports), ["."]);
   assert.deepEqual(Object.keys(packageJson.bin), ["ato"]);
   assert.equal(packageJson.dependencies, undefined);
-  assert.deepEqual(gitInventory().filter((item) => item.startsWith("src/")), [
-    "src/cli.ts",
-    "src/domain.ts",
-    "src/index.ts",
-  ]);
+  const inventory = gitInventory();
+  assert.deepEqual(inventory.filter((item) => item.startsWith("src/")), EXPECTED_PRODUCTION_SOURCE_FILES);
+  assert.deepEqual(inventory.filter((item) => item.startsWith("migrations/")), EXPECTED_MIGRATION_FILES);
+  assert.deepEqual(
+    productionBoundaryFailures(inventory, (relative) => readFileSync(path.join(repoRoot, relative), "utf8")),
+    [],
+  );
+  assert.match(
+    productionBoundaryFailures(
+      inventory.filter((item) => item !== EXPECTED_MIGRATION_FILES[1]),
+      (relative) => readFileSync(path.join(repoRoot, relative), "utf8"),
+    ).join("\n"),
+    /migration inventory drifted/u,
+  );
+  assert.match(
+    productionBoundaryFailures(inventory, (relative) =>
+      relative === "src/domain.ts" ? 'import "node:fs";\n' : readFileSync(path.join(repoRoot, relative), "utf8"),
+    ).join("\n"),
+    /built-in escaped the persistence owner boundary/u,
+  );
 });

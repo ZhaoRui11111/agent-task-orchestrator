@@ -2,11 +2,12 @@
 
 ## Status and authority
 
-This file is the sole normative owner of planned schema, public API, and adapter
+This file is the sole normative owner of schema, planned public API, and adapter
 versioning; forward migration and downgrade-by-restore policy; and the evidence
-required for a platform or external API support claim. The project has no
-released product, database schema, public runtime API, adapter, supported
-platform, or supported external API today.
+required for a platform or external API support claim. The project now has an
+internal staged SQLite schema at version `2` and a package-root persistence
+foundation, but it still has no released product, versioned product API,
+adapter, supported platform, or supported external API.
 
 The [v0.1 matrix](../compatibility/v0.1.md) records evidence only. It cannot
 create or change this policy.
@@ -16,8 +17,12 @@ create or change this policy.
 - Product releases use Semantic Versioning `MAJOR.MINOR.PATCH`. Before `1.0.0`,
   product-level public surfaces may evolve, subject to the explicit migration
   notes and versioned wire contracts below.
-- SQLite schema versions are strictly increasing positive integers. Exact
-  migration identity, checksum, and mechanics are owned by the
+- SQLite schema versions are strictly increasing non-negative integers, where
+  `0` means a genuinely fresh database with no application table and shipped
+  versions begin at `1`. The current target is `2`: version `1` owns migration
+  metadata/history and version `2` owns only Phase 1 Domain Core
+  Project/Task/dependency storage. Exact migration identity, checksum, staged
+  allocation, and mechanics are owned by the
   [persistence contract](persistence-contract.md#migration-identity-and-atomicity).
 - Each CLI/MCP or other machine-readable public request and response carries
   `ato.api/vN`, where `N` is a positive major contract version.
@@ -66,6 +71,14 @@ persisted receipts.
 
 - A runtime may mutate a database only when it recognizes the current schema
   and has a contiguous verified forward-migration chain to its target schema.
+- Physical allocation is staged by approved implementation phase. A future
+  contract or roadmap does not reserve a table or column; the plan that
+  implements that owner appends a migration. Versions `1` and `2` are not
+  rewritten to pre-allocate execution, intent/effect, workspace, scheduler,
+  authorization, gate, completion, adapter, MCP, or dispatcher records.
+- The current migration matrix proves fresh `0` to `2` and shipped prefix `1`
+  to `2`. Adding version `3` or later requires tests from every earlier prefix
+  for which compatibility will be claimed.
 - Every released schema in the v0.1 series MUST have a tested forward path to
   the latest v0.1 schema before that release can claim upgrade compatibility.
 - A future v0.2 release must test upgrade from the latest published v0.1 schema;

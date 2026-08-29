@@ -78,14 +78,17 @@ A clean unstaged check cannot substitute for that staged-inventory result.
 
 The repository contains an executable toolchain and feasibility harness whose
 current entry points are owned by the
-[toolchain contract](toolchain-contract.md), plus targeted Domain Core unit,
-seeded property/state-machine, and dependency-direction tests. Local lint,
-typecheck, build, Node tests, documentation, dependency-shape,
-package-consumption, SQLite, and Codex boundary checks can be executed against
-a candidate. The committed Windows workflow is a CI skeleton only; hosted
-enforcement remains unverified until an actual run is observed. There is still
-no product runtime harness for persistence, dispatcher, adapters, scheduler,
-MCP, or a support matrix, so those routes remain not implemented and cannot be
-claimed as passing. Repository task-artifact checks cover only maintainer
-workflow scratch and do not count as product persistence or destructive-action
-support.
+[toolchain contract](toolchain-contract.md), targeted Domain Core unit/seeded
+state-machine/dependency-direction tests, and targeted persistence tests for
+the current schema, migrations, exact repository mapping, concurrent
+reader/writer behavior, runtime-root negatives, backup, restore, and failpoint
+recovery. Local lint, typecheck, build, Node tests, documentation,
+dependency-shape, package-consumption, SQLite, and Codex boundary checks can be
+executed against a candidate when the frozen local dependency is installed.
+The committed Windows workflow is a CI skeleton only; hosted enforcement
+remains unverified until an actual run is observed. There is still no product
+runtime harness for application services, authorization, dispatcher, adapters,
+scheduler, MCP, or a support matrix, so those routes remain unimplemented and
+cannot be claimed as passing. Repository task-artifact checks cover only
+maintainer workflow scratch and do not count as product persistence or
+destructive-action support.
