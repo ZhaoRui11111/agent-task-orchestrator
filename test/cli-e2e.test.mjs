@@ -6,7 +6,9 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { trustedApplicationDataRoot } from "../src/persistence/local-ingress.ts";
+import { openPersistence } from "../src/index.ts";
+import { readApplicationStateForOwner } from "../src/persistence/application-repository.ts";
+import { loadLocalRuntime, trustedApplicationDataRoot } from "../src/persistence/local-ingress.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceCli = path.join(repoRoot, "src", "cli.ts");
@@ -26,7 +28,7 @@ function invoke(entry, home, args) {
   assert.equal(result.stderr, "");
   assert.match(result.stdout, /\n$/u);
   assert.equal(result.stdout.indexOf("\n"), result.stdout.length - 1);
-  return { status: result.status, body: JSON.parse(result.stdout) };
+  return { status: result.status, raw: result.stdout, body: JSON.parse(result.stdout) };
 }
 
 function cleanupTrustedRuntime(runtimeRoot) {
@@ -134,14 +136,47 @@ test("source CLI completes the local Phase 1 init, Project, Task, backup, restor
       "--format", "json", "task", "mark-ready", "--project-id", "project",
       "--expected-project-resource-revision", "1", "--task-id", "before-backup", "--expected-task-revision", "6",
     ]).status, 0);
+    const maximumCancellationReason = "é".repeat(2048);
+    assert.equal(new TextEncoder().encode(maximumCancellationReason).byteLength, 4096);
     const cancelled = invoke(sourceCli, home, [
       "--format", "json", "task", "cancel", "--project-id", "project",
       "--expected-project-resource-revision", "1", "--task-id", "before-backup", "--expected-task-revision", "7",
-      "--reason", "private cancellation reason",
+      "--reason", maximumCancellationReason,
     ]);
     assert.equal(cancelled.status, 0);
     assert.equal(cancelled.body.result.status, "cancelled");
-    assert.equal(JSON.stringify(cancelled.body).includes("private cancellation reason"), false);
+    assert.equal(cancelled.raw.includes(maximumCancellationReason), false);
+
+    const humanCancelled = spawnSync(process.execPath, [
+      sourceCli, "--runtime-root", home, "task", "cancel", "--project-id", "project",
+      "--expected-project-resource-revision", "1", "--task-id", "dependency", "--expected-task-revision", "1",
+      "--reason", maximumCancellationReason,
+    ], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      env: process.env,
+      windowsHide: true,
+    });
+    assert.ifError(humanCancelled.error);
+    assert.equal(humanCancelled.status, 0);
+    assert.equal(humanCancelled.stderr, "");
+    assert.match(humanCancelled.stdout, /^OK task\.cancel /u);
+    assert.equal(humanCancelled.stdout.includes(maximumCancellationReason), false);
+
+    const reopenedSelection = loadLocalRuntime(home, repoRoot);
+    const reopenedStore = await openPersistence(reopenedSelection.layout, { applicationVersion: "cli-e2e-readback" });
+    try {
+      const state = readApplicationStateForOwner(reopenedStore);
+      assert.equal(state.domain.tasks.find((task) => task.id === "before-backup").cancellation.reason, maximumCancellationReason);
+      assert.equal(state.domain.tasks.find((task) => task.id === "dependency").cancellation.reason, maximumCancellationReason);
+      assert.equal(
+        JSON.stringify({ requests: state.requests, decisions: state.decisions, audit: state.audit })
+          .includes(maximumCancellationReason),
+        false,
+      );
+    } finally {
+      await reopenedStore.close();
+    }
 
     const policy = invoke(sourceCli, home, [
       "--format", "json", "authorization", "evaluate", "--project-id", "project",

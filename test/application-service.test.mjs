@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, renameSync } from "node:fs";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
   AUTHORIZATION_ACTIONS,
@@ -69,6 +70,147 @@ function createApplicationTask(service, projectId, taskId, body = taskId) {
     supersedesTaskId: null,
   });
 }
+
+function cancellationCommand(reason, taskId = "task") {
+  return {
+    kind: "task.cancel",
+    projectId: "project",
+    expectedProjectResourceRevision: 1,
+    taskId,
+    expectedTaskRevision: 1,
+    reason,
+  };
+}
+
+test("task.cancel rejects every malformed reason before trusted ingress or state access", () => {
+  const maximum = "é".repeat(2048);
+  assert.equal(new TextEncoder().encode(maximum).byteLength, 4096);
+  const invalidReasons = [
+    "",
+    `${maximum}x`,
+    "control\u001freason",
+    "format\u200dreason",
+    "e\u0301",
+    "surrogate\ud800reason",
+  ];
+  let ingressCalls = 0;
+  let storeReads = 0;
+  const inaccessibleStore = new Proxy({}, {
+    get() {
+      storeReads += 1;
+      throw new Error("Invalid command reached persistence");
+    },
+  });
+  const service = createApplicationService(inaccessibleStore, {
+    currentActor() {
+      ingressCalls += 1;
+      return { actorId: "actor", principal: TEST_PRINCIPAL_SHA256 };
+    },
+    now() {
+      ingressCalls += 1;
+      return "2026-08-29T12:00:00.000Z";
+    },
+    nextId(kind) {
+      ingressCalls += 1;
+      return `${kind}-invalid-reason`;
+    },
+    confirmHighRisk() {
+      ingressCalls += 1;
+      return true;
+    },
+  });
+
+  for (const reason of invalidReasons) {
+    const rejected = service.execute(cancellationCommand(reason));
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, "INVALID_INPUT");
+    assert.equal(rejected.requestId, null);
+    assert.equal(rejected.correlationId, null);
+  }
+  assert.equal(ingressCalls, 0);
+  assert.equal(storeReads, 0);
+});
+
+test("task.cancel accepts the exact UTF-8 boundary and preserves historical noncanonical readback", async () => {
+  const fixture = createPersistenceFixture("application-cancel-text-boundary");
+  const maximum = "é".repeat(2048);
+  const historicalReason = "legacy-e\u0301";
+  let store;
+  try {
+    assert.equal(maximum.length > 256, true);
+    assert.equal(new TextEncoder().encode(maximum).byteLength, 4096);
+    assert.notEqual(historicalReason.normalize("NFC"), historicalReason);
+    store = await openPersistence(fixture.layout, { applicationVersion: "cancel-text-boundary" });
+    const service = createApplicationService(store, ingress());
+    assert.equal(service.bootstrap({
+      kind: "authorization.bootstrap",
+      expiresAt: "2026-09-20T12:00:00.000Z",
+    }).ok, true);
+    assert.equal(service.execute({ kind: "project.register", projectId: "project", root: fixture.projectRoot }).ok, true);
+    assert.equal(createApplicationTask(service, "project", "boundary-task").ok, true);
+    assert.equal(createApplicationTask(service, "project", "historical-task").ok, true);
+    assert.equal(createApplicationTask(service, "project", "new-invalid-task").ok, true);
+
+    const boundaryCancellation = service.execute(cancellationCommand(maximum, "boundary-task"));
+    assert.equal(boundaryCancellation.ok, true);
+    const historicalSeed = service.execute(cancellationCommand("legacy canonical reason", "historical-task"));
+    assert.equal(historicalSeed.ok, true);
+    let state = readApplicationStateForOwner(store);
+    assert.equal(state.domain.tasks.find((task) => task.id === "boundary-task").cancellation.reason, maximum);
+    assert.equal(JSON.stringify({ requests: state.requests, decisions: state.decisions, audit: state.audit }).includes(maximum), false);
+    await store.close();
+    store = undefined;
+
+    const database = new DatabaseSync(fixture.layout.databasePath);
+    try {
+      const changed = database.prepare(
+        "UPDATE tasks SET cancellation_reason = ? WHERE task_id = ? AND cancellation_event = 'cancel'",
+      ).run(historicalReason, "historical-task");
+      assert.equal(changed.changes, 1);
+    } finally {
+      database.close();
+    }
+
+    store = await openPersistence(fixture.layout, { applicationVersion: "cancel-text-boundary-reopen" });
+    state = readApplicationStateForOwner(store);
+    const boundaryReadback = state.domain.tasks.find((task) => task.id === "boundary-task").cancellation.reason;
+    const historicalReadback = state.domain.tasks.find((task) => task.id === "historical-task").cancellation.reason;
+    assert.equal(boundaryReadback, maximum);
+    assert.equal(historicalReadback, historicalReason);
+    assert.equal(Buffer.from(historicalReadback).equals(Buffer.from(historicalReason)), true);
+
+    let ingressCalls = 0;
+    const rejectingService = createApplicationService(store, {
+      currentActor() {
+        ingressCalls += 1;
+        return { actorId: "local-actor", principal: TEST_PRINCIPAL_SHA256 };
+      },
+      now() {
+        ingressCalls += 1;
+        return "2026-08-29T12:00:00.000Z";
+      },
+      nextId(kind) {
+        ingressCalls += 1;
+        return `${kind}-historical-reason`;
+      },
+      confirmHighRisk() {
+        ingressCalls += 1;
+        return true;
+      },
+    });
+    const beforeRejectedCommand = state;
+    const rejected = rejectingService.execute(cancellationCommand(historicalReason, "new-invalid-task"));
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.code, "INVALID_INPUT");
+    assert.equal(rejected.requestId, null);
+    assert.equal(rejected.correlationId, null);
+    assert.equal(ingressCalls, 0);
+    assert.deepEqual(readApplicationStateForOwner(store), beforeRejectedCommand);
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
 
 test("trusted bootstrap and authorized Project/Task commands share one durable application owner", async () => {
   const fixture = createPersistenceFixture("application-service");

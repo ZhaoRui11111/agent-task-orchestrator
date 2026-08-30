@@ -8,6 +8,7 @@ import {
 } from "./authorization.ts";
 import {
   createApplicationService,
+  isCanonicalCancellationReason,
   type ApplicationCommand,
   type ApplicationFailure,
   type ApplicationResult,
@@ -217,7 +218,7 @@ function validateOptions(spec: CommandSpec, options: Readonly<Record<string, str
   const body = options.body;
   if (body !== undefined && (!safeToken(body) || bytes(body) < 1 || bytes(body) > 16_384)) return "CLI_INVALID_INPUT";
   const reason = options.reason;
-  if (reason !== undefined && (!safeToken(reason) || bytes(reason) < 1 || bytes(reason) > 4096)) return "CLI_INVALID_INPUT";
+  if (reason !== undefined && !isCanonicalCancellationReason(reason)) return "CLI_INVALID_INPUT";
   const limit = options.limit;
   if (limit !== undefined) {
     if (!DECIMAL.test(limit) || String(Number(limit)) !== limit || !Number.isSafeInteger(Number(limit))) return "CLI_INVALID_INPUT";

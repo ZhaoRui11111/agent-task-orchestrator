@@ -191,6 +191,16 @@ replay it. Missing, false, or throwing confirmation denies the operation.
 
 ## Application decision sequence
 
+The application owner first parses the complete typed command envelope before
+using any trusted ingress provider or reading Application state. For
+`task.cancel`, it applies the exact CLI-owned cancellation-reason predicate: a
+well-formed NFC string with no Unicode `Cc`/`Cf` code point and 1 through 4,096
+encoded UTF-8 bytes. Malformed typed input returns `INVALID_INPUT` with null
+request and correlation identities and creates no request, decision, audit,
+Domain, registry, grant, or persistence mutation. This is a new-command ingress
+rule only: the Domain/persistence snapshot reader keeps its historical non-empty
+reason rule and neither normalizes, rewrites, nor rejects an existing reason.
+
 For every accepted typed command or exact inspection query, the application
 owner keeps trusted interaction and filesystem inspection outside the SQLite
 writer transaction. It performs a read-only preflight, then opens one short

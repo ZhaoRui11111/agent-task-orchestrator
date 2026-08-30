@@ -235,6 +235,35 @@ function nonempty(value: unknown, maximum = 16_384): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maximum && !value.includes("\0");
 }
 
+const FORBIDDEN_CANCELLATION_REASON_TEXT = /[\p{Cc}\p{Cf}]/u;
+
+function wellFormedText(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function isCanonicalCancellationReason(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    !wellFormedText(value) ||
+    FORBIDDEN_CANCELLATION_REASON_TEXT.test(value) ||
+    value.normalize("NFC") !== value
+  ) {
+    return false;
+  }
+  const encodedBytes = new TextEncoder().encode(value).byteLength;
+  return encodedBytes >= 1 && encodedBytes <= 4096;
+}
+
 function revision(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
@@ -435,7 +464,7 @@ function parseCommand(value: unknown): ApplicationCommand | null {
     return null;
   }
   if (kind === "task.cancel") {
-    return nonempty(record.reason, 256)
+    return isCanonicalCancellationReason(record.reason)
       ? Object.freeze({ kind, projectId: record.projectId, expectedProjectResourceRevision: record.expectedProjectResourceRevision, taskId: record.taskId, expectedTaskRevision: record.expectedTaskRevision, reason: record.reason })
       : null;
   }
@@ -1190,8 +1219,9 @@ function createApplicationServiceInternal(
 
   const execute = (value: ApplicationCommand): ApplicationResult<unknown> => {
     const command = parseCommand(value);
+    if (command === null) return failed("INVALID_INPUT", "Command or trusted ingress is invalid");
     let identity = operationIdentity(ingress);
-    if (command === null || identity === null) return failed("INVALID_INPUT", "Command or trusted ingress is invalid");
+    if (identity === null) return failed("INVALID_INPUT", "Command or trusted ingress is invalid");
 
     const preflightState = readApplicationStateForOwner(store);
     if (preflightState.bootstrap === null) {

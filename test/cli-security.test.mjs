@@ -49,6 +49,36 @@ function cleanupTrustedRuntime(runtimeRoot) {
   rmSync(runtimeRoot, { recursive: true, force: true });
 }
 
+function cancelArguments(reason) {
+  return [
+    "task", "cancel", "--project-id", "project", "--expected-project-resource-revision", "1",
+    "--task-id", "task", "--expected-task-revision", "1", "--reason", reason,
+  ];
+}
+
+test("task.cancel parser uses the exact shared Unicode and UTF-8 byte predicate", () => {
+  const maximum = "é".repeat(2048);
+  assert.equal(maximum.length > 256, true);
+  assert.equal(new TextEncoder().encode(maximum).byteLength, 4096);
+  for (const reason of ["x", maximum]) {
+    const parsed = parseCliArguments(cancelArguments(reason), NOW);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.command.options.reason, reason);
+  }
+  for (const reason of [
+    "",
+    `${maximum}x`,
+    "control\u001freason",
+    "format\u200dreason",
+    "e\u0301",
+    "surrogate\ud800reason",
+  ]) {
+    const parsed = parseCliArguments(cancelArguments(reason), NOW);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.code, "CLI_INVALID_INPUT");
+  }
+});
+
 test("strict ingress rejects control, format, normalization, size, revision, timestamp, UUID, and path attacks", () => {
   const invalidTokens = ["bad\u0000id", "bad\u001fid", "bad\u007fid", "bad\u0085id", "bad\u202eid", "bad\u200did", "bad\ud800id", "e\u0301"];
   for (const value of invalidTokens) {
@@ -97,6 +127,11 @@ test("parser failures do not select or create a runtime and never reflect inject
     assert.equal(failure.status, 2);
     assert.equal(failure.body.error.code, "CLI_INVALID_INPUT");
     assert.equal(failure.raw.includes(injected), false);
+    const oversizedReason = `${"é".repeat(2048)}x`;
+    const invalidCancellation = invoke(home, ["--format", "json", ...cancelArguments(oversizedReason)]);
+    assert.equal(invalidCancellation.status, 2);
+    assert.equal(invalidCancellation.body.error.code, "CLI_INVALID_INPUT");
+    assert.equal(invalidCancellation.raw.includes(oversizedReason), false);
     assert.equal(existsSync(home), false);
   } finally {
     cleanupTrustedRuntime(home);
