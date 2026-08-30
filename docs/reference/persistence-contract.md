@@ -202,7 +202,16 @@ Runtime data is outside the source checkout and every supplied Project root.
   unconditional alias rejection.
 - The issued runtime layout owns all descendant names: `state.sqlite3`,
   `backups`, `connections`, `restore`, the lifecycle lock, staging roots,
-  retained roots, and receipts. Callers cannot supply those descendant paths.
+  retained roots, and receipts. One Runtime-owned topology derivation supplies
+  creation, existing-layout inspection, and Doctor's lexical required-directory
+  projection; the Doctor projection performs no filesystem operation. Callers
+  cannot supply those descendant paths.
+- The Runtime owner also exposes one internal closed mapping for the live
+  primary SQLite member family: `state.sqlite3`, `state.sqlite3-wal`, and
+  `state.sqlite3-shm`. Store and backup/restore consume that mapping rather than
+  rebuilding a live path from the runtime root. Backup still owns its distinct
+  generation, stage, manifest, restore-intent, retained-generation, and receipt
+  protocol member paths and inventories.
 - Every issued directory identity is retained in process and revalidated
   before and after protected use. Each dynamic backup or retained directory
   also has an identity receipt that is checked after awaits, failpoint hooks,
@@ -336,6 +345,14 @@ then reconstructs the entry's declared line ending, verifies the frozen
 checksum, and publishes that canonical SQL to every consumer. Source, tests,
 build, and the packed `migrations/` inventory all use this registry; there is
 no fallback identity.
+
+The registry length is also the sole current schema-target projection.
+Application status reports the migration evidence carried by its open store,
+and Doctor reports the `SchemaEvidence` it actually inspected after comparing
+it with that target. Explicit released database-reader thresholds and the
+independent schema versions of manifests, intents, receipts, locks, connection
+receipts, and other persisted JSON are compatibility identities, not aliases
+for the mutable current target.
 
 `.gitattributes` records one explicit historical checkout line ending for each
 shipped migration. That checkout policy is a reproducibility guard, not an

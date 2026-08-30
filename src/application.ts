@@ -920,7 +920,7 @@ function domainMutation(command: ApplicationCommand, state: ApplicationState): D
     : failed("DOMAIN_REJECTED", "Domain Core rejected the command", null, { domainCode: result.error.code });
 }
 
-function outputFor(command: ApplicationCommand, state: ApplicationState): unknown {
+function outputFor(command: ApplicationCommand, state: ApplicationState, schemaVersion: number): unknown {
   switch (command.kind) {
     case "authorization.grant.issue":
       return state.grants.at(-1) ?? null;
@@ -941,7 +941,7 @@ function outputFor(command: ApplicationCommand, state: ApplicationState): unknow
     case "runtime.status":
       return Object.freeze({
         initialized: true,
-        schemaVersion: 4,
+        schemaVersion,
         projectCount: state.projects.length,
         taskCount: state.domain.tasks.length,
         dependencyCount: state.domain.tasks.reduce((count, task) => count + task.dependencyIds.length, 0),
@@ -1638,7 +1638,7 @@ function createApplicationServiceInternal(
         if (grant === undefined) throw new TypeError("Grant terminal readback is absent");
         return succeeded(grant, identity);
       }
-      return succeeded(outputFor(command, readback), identity);
+      return succeeded(outputFor(command, readback, store.migration.schemaVersion), identity);
     });
   };
 

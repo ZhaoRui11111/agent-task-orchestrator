@@ -13,6 +13,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
   createApplicationService,
+  currentSchemaVersion,
   inspectPrimaryIdentity,
   inspectRuntimeDoctor,
   openPersistence,
@@ -30,6 +31,7 @@ import {
 } from "./persistence-test-helpers.mjs";
 
 const TEST_PRINCIPAL_SHA256 = "A".repeat(64);
+const CURRENT_SCHEMA_VERSION = currentSchemaVersion();
 
 function initialize(store) {
   const service = createApplicationService(store, {
@@ -154,7 +156,7 @@ test("doctor distinguishes schema-v4 Domain-only, pre-adoption, healthy, and act
     await domainStore.close();
     domainStore = undefined;
     assert.deepEqual(doctor(domainFixture), {
-      health: "not_initialized", initialized: false, schemaVersion: 4, activeUse: false,
+      health: "not_initialized", initialized: false, schemaVersion: CURRENT_SCHEMA_VERSION, activeUse: false,
       backupInventory: "valid", restoreState: "none",
     });
 
@@ -163,7 +165,7 @@ test("doctor distinguishes schema-v4 Domain-only, pre-adoption, healthy, and act
     await adoptionStore.close();
     adoptionStore = undefined;
     assert.deepEqual(doctor(adoptionFixture), {
-      health: "upgrade_required", initialized: true, schemaVersion: 4, activeUse: false,
+      health: "upgrade_required", initialized: true, schemaVersion: CURRENT_SCHEMA_VERSION, activeUse: false,
       backupInventory: "valid", restoreState: "none",
     });
 
@@ -176,7 +178,7 @@ test("doctor distinguishes schema-v4 Domain-only, pre-adoption, healthy, and act
     await healthyStore.close();
     healthyStore = undefined;
     assert.deepEqual(doctor(healthyFixture), {
-      health: "healthy", initialized: true, schemaVersion: 4, activeUse: false,
+      health: "healthy", initialized: true, schemaVersion: CURRENT_SCHEMA_VERSION, activeUse: false,
       backupInventory: "empty", restoreState: "none",
     });
   } finally {

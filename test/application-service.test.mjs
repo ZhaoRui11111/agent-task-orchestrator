@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   AUTHORIZATION_ACTIONS,
   createApplicationService,
+  currentSchemaVersion,
   inspectPrimaryIdentity,
   openPersistence,
   restoreBackup,
@@ -381,7 +382,8 @@ test("finite capability renewal is append-only, due-bounded, revocation-aware, a
     state = readApplicationStateForOwner(store);
     assert.equal(status.value.grantCount, state.grants.length);
     assert.equal(status.value.auditCount, state.audit.length);
-    assert.equal(status.value.schemaVersion, 4);
+    assert.equal(status.value.schemaVersion, store.migration.schemaVersion);
+    assert.equal(status.value.schemaVersion, currentSchemaVersion());
   } finally {
     if (store) await store.close();
     cleanupPersistenceFixture(fixture);

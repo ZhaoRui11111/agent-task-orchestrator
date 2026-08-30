@@ -37,9 +37,12 @@ import {
   createOwnedRuntimeDirectory,
   ensureNoConnectionReceipts,
   hasRestoreIntent,
+  PRIMARY_RUNTIME_MEMBER_NAMES,
+  primaryRuntimeMemberPath,
   type DirectoryIdentity,
   type LifecycleLockToken,
   type OwnedRuntimeDirectory,
+  type PrimaryRuntimeMemberName,
   type RuntimeLayout,
   sameDirectoryIdentity,
   withLifecycleLock,
@@ -67,12 +70,6 @@ import {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const BACKUP_DATABASE_FILE = "state.sqlite3" as const;
 const BACKUP_MANIFEST_FILE = "manifest.json" as const;
-const PRIMARY_MEMBER_NAMES = Object.freeze([
-  "state.sqlite3",
-  "state.sqlite3-wal",
-  "state.sqlite3-shm",
-] as const);
-
 export type BackupKind = "manual" | "pre_upgrade";
 
 export interface BackupManifestV1 {
@@ -117,7 +114,7 @@ export interface BackupGeneration {
 }
 
 export interface PrimaryFileMember {
-  readonly fileName: (typeof PRIMARY_MEMBER_NAMES)[number];
+  readonly fileName: PrimaryRuntimeMemberName;
   readonly dev: string;
   readonly ino: string;
   readonly mode: number;
@@ -658,7 +655,7 @@ export function inspectRestoreInventory(layout: RuntimeLayout): RestoreInventory
       const names = readdirSync(directory.path).sort();
       if (
         !names.includes(BACKUP_DATABASE_FILE) ||
-        names.some((name) => !PRIMARY_MEMBER_NAMES.includes(name as (typeof PRIMARY_MEMBER_NAMES)[number]))
+        names.some((name) => !PRIMARY_RUNTIME_MEMBER_NAMES.includes(name as PrimaryRuntimeMemberName))
       ) {
         return "ambiguous";
       }
@@ -939,12 +936,8 @@ export async function createBackupUnderLock(
   }
 }
 
-function memberPath(layout: RuntimeLayout, fileName: string): string {
-  return path.join(layout.root, fileName);
-}
-
-function inspectPrimaryMember(layout: RuntimeLayout, fileName: (typeof PRIMARY_MEMBER_NAMES)[number]): PrimaryFileMember {
-  const read = readRegularFile(memberPath(layout, fileName));
+function inspectPrimaryMember(layout: RuntimeLayout, fileName: PrimaryRuntimeMemberName): PrimaryFileMember {
+  const read = readRegularFile(primaryRuntimeMemberPath(layout, fileName));
   return Object.freeze({
     fileName,
     dev: read.identity.dev,
@@ -957,7 +950,9 @@ function inspectPrimaryMember(layout: RuntimeLayout, fileName: (typeof PRIMARY_M
 
 function capturePrimaryIdentity(layout: RuntimeLayout): PrimaryIdentity {
   assertRuntimeLayout(layout);
-  const members = PRIMARY_MEMBER_NAMES.filter((fileName) => pathEntryExistsNoFollow(memberPath(layout, fileName))).map(
+  const members = PRIMARY_RUNTIME_MEMBER_NAMES.filter((fileName) =>
+    pathEntryExistsNoFollow(primaryRuntimeMemberPath(layout, fileName))
+  ).map(
     (fileName) => inspectPrimaryMember(layout, fileName),
   );
   const identitySha256 = sha256(canonicalJson({ members, schemaVersion: 1 }));
@@ -979,7 +974,7 @@ function parsePrimaryMember(value: unknown, index: number): PrimaryFileMember {
     `primary identity member ${index}`,
   );
   if (
-    !PRIMARY_MEMBER_NAMES.includes(record.fileName as (typeof PRIMARY_MEMBER_NAMES)[number]) ||
+    !PRIMARY_RUNTIME_MEMBER_NAMES.includes(record.fileName as PrimaryRuntimeMemberName) ||
     !isNonemptyString(record.dev) ||
     !isNonemptyString(record.ino) ||
     typeof record.mode !== "number" ||
@@ -992,7 +987,7 @@ function parsePrimaryMember(value: unknown, index: number): PrimaryFileMember {
     throw persistenceFailure("INVALID_INPUT", "Primary identity member is invalid", { index });
   }
   return Object.freeze({
-    fileName: record.fileName as (typeof PRIMARY_MEMBER_NAMES)[number],
+    fileName: record.fileName as PrimaryRuntimeMemberName,
     dev: record.dev,
     ino: record.ino,
     mode: record.mode,
@@ -1011,7 +1006,7 @@ function parsePrimaryIdentity(value: unknown): PrimaryIdentity {
     !isSha256(record.identitySha256) ||
     new Set(expectedNames).size !== expectedNames.length ||
     canonicalJson(members.map((member) => member.fileName)) !==
-      canonicalJson(PRIMARY_MEMBER_NAMES.filter((name) => expectedNames.includes(name)))
+      canonicalJson(PRIMARY_RUNTIME_MEMBER_NAMES.filter((name) => expectedNames.includes(name)))
   ) {
     throw persistenceFailure("INVALID_INPUT", "Primary identity is not canonical");
   }
@@ -1289,7 +1284,7 @@ function retainedMemberPath(layout: RuntimeLayout, restoreId: string, fileName: 
   return path.join(layout.restoreRetainedRoot, restoreId, fileName);
 }
 
-function inspectMemberAt(filePath: string, fileName: (typeof PRIMARY_MEMBER_NAMES)[number]): PrimaryFileMember {
+function inspectMemberAt(filePath: string, fileName: PrimaryRuntimeMemberName): PrimaryFileMember {
   const read = readRegularFile(filePath);
   return Object.freeze({
     fileName,
@@ -1478,7 +1473,7 @@ function assertRetainedDirectory(layout: RuntimeLayout, intent: RestoreIntent): 
     assertOwnedRuntimeDirectory(layout, directory);
     const allowed = new Set(intent.expectedCurrent.members.map((member) => member.fileName));
     for (const name of readdirSync(directory.path)) {
-      if (!allowed.has(name as (typeof PRIMARY_MEMBER_NAMES)[number])) {
+      if (!allowed.has(name as PrimaryRuntimeMemberName)) {
         throw persistenceFailure("RESTORE_BLOCKED", "Restore retained inventory contains an unknown member");
       }
     }
@@ -1530,10 +1525,10 @@ function retainExpectedCurrent(
   const retainedDirectory = assertRetainedDirectory(layout, intent);
   const expectedByName = new Map(intent.expectedCurrent.members.map((member) => [member.fileName, member]));
   const published = currentTargetPublished(layout, intent);
-  for (const fileName of PRIMARY_MEMBER_NAMES) {
+  for (const fileName of PRIMARY_RUNTIME_MEMBER_NAMES) {
     assertRuntimeLayout(layout);
     assertOwnedRuntimeDirectory(layout, retainedDirectory);
-    const primaryPath = memberPath(layout, fileName);
+    const primaryPath = primaryRuntimeMemberPath(layout, fileName);
     const retainedPath = retainedMemberPath(layout, intent.restoreId, fileName);
     const primaryExists = pathEntryExistsNoFollow(primaryPath);
     const retainedExists = pathEntryExistsNoFollow(retainedPath);

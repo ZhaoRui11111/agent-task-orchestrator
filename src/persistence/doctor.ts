@@ -6,7 +6,11 @@ import { openDiagnosticDatabase, verifyDatabaseIntegrity } from "./database.ts";
 import { PersistenceError } from "./errors.ts";
 import { currentSchemaVersion, inspectSchemaEvidence } from "./migrations.ts";
 import { readDomainSnapshot } from "./repository.ts";
-import { inspectExistingRuntimeLayout, listConnectionReceiptNames } from "./runtime.ts";
+import {
+  inspectExistingRuntimeLayout,
+  listConnectionReceiptNames,
+  requiredRuntimeDirectoryPaths,
+} from "./runtime.ts";
 import {
   inspectRegularFile,
   pathEntryExistsNoFollow,
@@ -85,17 +89,7 @@ function inspectRuntimeDoctorInternal(
   backupInspection: "verify" | "defer",
 ): DoctorResult {
   if (absent(runtimeRoot)) return result("not_initialized", false, null, false, "empty", "none");
-  const requiredDirectories = [
-    runtimeRoot,
-    path.join(runtimeRoot, "backups"),
-    path.join(runtimeRoot, "backups", ".staging"),
-    path.join(runtimeRoot, "backups", "generations"),
-    path.join(runtimeRoot, "connections"),
-    path.join(runtimeRoot, "restore"),
-    path.join(runtimeRoot, "restore", "staging"),
-    path.join(runtimeRoot, "restore", "retained"),
-    path.join(runtimeRoot, "restore", "receipts"),
-  ];
+  const requiredDirectories = requiredRuntimeDirectoryPaths(runtimeRoot);
   if (requiredDirectories.some(unsafeDirectory)) {
     return result("runtime_unsafe", null, null, null, "not_checked", "not_checked");
   }
@@ -204,7 +198,9 @@ function inspectRuntimeDoctorInternal(
         const applicationEmpty = state.projects.length === 0 && state.identity === null && state.grants.length === 0 &&
           state.epochs.length === 0 && state.requests.length === 0 && state.decisions.length === 0 &&
           state.audit.length === 0 && state.lifecycle.length === 0;
-        if (!applicationEmpty) return result("state_corrupt", null, 4, false, backupInventory, restoreState);
+        if (!applicationEmpty) {
+          return result("state_corrupt", null, evidence.schemaVersion, false, backupInventory, restoreState);
+        }
         health = "not_initialized";
         initialized = false;
       } else if (state.bootstrap.vocabularyVersion === 3 && state.identity === null) {
@@ -215,7 +211,7 @@ function inspectRuntimeDoctorInternal(
         initialized = true;
       }
       if (backupInventory === "invalid") health = "backup_invalid";
-      return result(health, initialized, 4, false, backupInventory, restoreState);
+      return result(health, initialized, evidence.schemaVersion, false, backupInventory, restoreState);
     } finally {
       database.close();
     }

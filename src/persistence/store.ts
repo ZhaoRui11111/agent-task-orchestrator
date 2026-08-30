@@ -35,6 +35,8 @@ import {
   ensureNoConnectionReceipts,
   hasRestoreIntent,
   listConnectionReceiptNames,
+  PRIMARY_RUNTIME_MEMBER_NAMES,
+  primaryRuntimeMemberPath,
   releaseConnectionReceipt,
   type ConnectionReceipt,
   type RuntimeLayout,
@@ -57,7 +59,8 @@ const BACKUP_FOR_TESTING = Symbol("backup-for-testing");
 
 function enforcePrivatePrimaryFiles(layout: RuntimeLayout): void {
   assertRuntimeLayout(layout);
-  for (const filePath of [layout.databasePath, `${layout.databasePath}-wal`, `${layout.databasePath}-shm`]) {
+  for (const fileName of PRIMARY_RUNTIME_MEMBER_NAMES) {
+    const filePath = primaryRuntimeMemberPath(layout, fileName);
     if (pathEntryExistsNoFollow(filePath)) enforcePrivateRegularFile(filePath);
   }
   assertRuntimeLayout(layout);

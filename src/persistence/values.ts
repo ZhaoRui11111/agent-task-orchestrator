@@ -90,14 +90,6 @@ export function isCanonicalUtcTimestamp(value: unknown): value is string {
   return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
 }
 
-export function isSafePositiveInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-}
-
-export function isSafeNonnegativeInteger(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
-}
-
 function canonicalValue(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((item) => canonicalValue(item));
   if (typeof value === "object" && value !== null) {

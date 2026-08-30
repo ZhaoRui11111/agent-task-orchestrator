@@ -1567,10 +1567,6 @@ export function readApplicationStateForOwner(owner: object): ApplicationState {
   return readApplicationState(binding.database);
 }
 
-export function readApplicationStateSha256ForOwner(owner: object): string {
-  return applicationStateSha256(readApplicationStateForOwner(owner));
-}
-
 export function readDomainForOwner(owner: object): DomainSnapshot {
   return readApplicationStateForOwner(owner).domain;
 }
@@ -1591,8 +1587,4 @@ export function commitDomainForOwner(
   if (binding === undefined || !binding.database.isOpen) throw persistenceFailure("STORE_CLOSED", "Persistence store is unavailable");
   binding.assertOpen();
   return commitDomainMutation(binding.database, expected, mutation);
-}
-
-export function scopeColumns(scope: AuthorizationScope): readonly [string, string | null, number | null, number | null] {
-  return Object.freeze([scope.kind, scope.projectId, scope.resourceRevision, scope.configRevision]);
 }

@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import {
   lstatSync,
   mkdirSync,
-  readFileSync,
   readdirSync,
   realpathSync,
 } from "node:fs";
@@ -27,6 +26,12 @@ import {
 
 export const RUNTIME_ENVIRONMENT_VARIABLE = "TASK_ORCHESTRATOR_DATA_DIR" as const;
 export const RUNTIME_DIRECTORY_NAME = "agent-task-orchestrator" as const;
+export const PRIMARY_RUNTIME_MEMBER_NAMES = Object.freeze([
+  "state.sqlite3",
+  "state.sqlite3-wal",
+  "state.sqlite3-shm",
+] as const);
+export type PrimaryRuntimeMemberName = (typeof PRIMARY_RUNTIME_MEMBER_NAMES)[number];
 
 export interface RuntimeRootRequest {
   readonly runtimeRoot: string | null;
@@ -48,6 +53,18 @@ export interface RuntimeLayout {
   readonly restoreIntentPath: string;
   readonly lifecycleLockPath: string;
   readonly privatePermissionsEnforced: boolean;
+}
+
+interface RuntimeDirectoryTopology {
+  readonly root: string;
+  readonly backupsRoot: string;
+  readonly backupStagingRoot: string;
+  readonly backupGenerationsRoot: string;
+  readonly connectionsRoot: string;
+  readonly restoreRoot: string;
+  readonly restoreStagingRoot: string;
+  readonly restoreRetainedRoot: string;
+  readonly restoreReceiptsRoot: string;
 }
 
 export interface LifecycleLockToken {
@@ -229,6 +246,71 @@ function parseRuntimeRequest(value: unknown): RuntimeRootRequest {
   });
 }
 
+function materializeRuntimeDirectoryTopology(
+  root: string,
+  materialize: (candidate: string, label: string) => string,
+): RuntimeDirectoryTopology {
+  const backupsRoot = materialize(path.join(root, "backups"), "backups root");
+  const backupStagingRoot = materialize(path.join(backupsRoot, ".staging"), "backup staging root");
+  const backupGenerationsRoot = materialize(path.join(backupsRoot, "generations"), "backup generations root");
+  const connectionsRoot = materialize(path.join(root, "connections"), "connections root");
+  const restoreRoot = materialize(path.join(root, "restore"), "restore root");
+  const restoreStagingRoot = materialize(path.join(restoreRoot, "staging"), "restore staging root");
+  const restoreRetainedRoot = materialize(path.join(restoreRoot, "retained"), "restore retained root");
+  const restoreReceiptsRoot = materialize(path.join(restoreRoot, "receipts"), "restore receipts root");
+  return Object.freeze({
+    root,
+    backupsRoot,
+    backupStagingRoot,
+    backupGenerationsRoot,
+    connectionsRoot,
+    restoreRoot,
+    restoreStagingRoot,
+    restoreRetainedRoot,
+    restoreReceiptsRoot,
+  });
+}
+
+function runtimeDirectoryPaths(topology: RuntimeDirectoryTopology): readonly string[] {
+  return Object.freeze([
+    topology.root,
+    topology.backupsRoot,
+    topology.backupStagingRoot,
+    topology.backupGenerationsRoot,
+    topology.connectionsRoot,
+    topology.restoreRoot,
+    topology.restoreStagingRoot,
+    topology.restoreRetainedRoot,
+    topology.restoreReceiptsRoot,
+  ]);
+}
+
+export function requiredRuntimeDirectoryPaths(runtimeRoot: string): readonly string[] {
+  return runtimeDirectoryPaths(materializeRuntimeDirectoryTopology(runtimeRoot, (candidate) => candidate));
+}
+
+function issueRuntimeLayout(
+  topology: RuntimeDirectoryTopology,
+  privatePermissionsEnforced: boolean,
+): RuntimeLayout {
+  const layout = Object.freeze({
+    ...topology,
+    databasePath: path.join(topology.root, PRIMARY_RUNTIME_MEMBER_NAMES[0]),
+    restoreIntentPath: path.join(topology.restoreRoot, "intent.json"),
+    lifecycleLockPath: path.join(topology.root, "lifecycle.lock"),
+    privatePermissionsEnforced,
+  });
+  runtimeLayouts.set(
+    layout,
+    Object.freeze(
+      runtimeDirectoryPaths(topology).map((directory) =>
+        Object.freeze({ path: directory, identity: identityOfDirectory(directory) })
+      ),
+    ),
+  );
+  return layout;
+}
+
 export function selectConfiguredRuntimeRoot(
   explicitRoot: string | null,
   environment: Readonly<Record<string, string | undefined>> = process.env,
@@ -269,46 +351,11 @@ function prepareRuntimeLayoutInternal(value: unknown, trustedWindowsHome: string
     }
   }
 
-  const backupsRoot = createPrivateDirectoryTree(path.join(root, "backups"), process.platform);
-  const backupStagingRoot = createPrivateDirectoryTree(path.join(backupsRoot, ".staging"), process.platform);
-  const backupGenerationsRoot = createPrivateDirectoryTree(path.join(backupsRoot, "generations"), process.platform);
-  const connectionsRoot = createPrivateDirectoryTree(path.join(root, "connections"), process.platform);
-  const restoreRoot = createPrivateDirectoryTree(path.join(root, "restore"), process.platform);
-  const restoreStagingRoot = createPrivateDirectoryTree(path.join(restoreRoot, "staging"), process.platform);
-  const restoreRetainedRoot = createPrivateDirectoryTree(path.join(restoreRoot, "retained"), process.platform);
-  const restoreReceiptsRoot = createPrivateDirectoryTree(path.join(restoreRoot, "receipts"), process.platform);
-  const layout = Object.freeze({
+  const topology = materializeRuntimeDirectoryTopology(
     root,
-    databasePath: path.join(root, "state.sqlite3"),
-    backupsRoot,
-    backupStagingRoot,
-    backupGenerationsRoot,
-    connectionsRoot,
-    restoreRoot,
-    restoreStagingRoot,
-    restoreRetainedRoot,
-    restoreReceiptsRoot,
-    restoreIntentPath: path.join(restoreRoot, "intent.json"),
-    lifecycleLockPath: path.join(root, "lifecycle.lock"),
-    privatePermissionsEnforced: process.platform !== "win32",
-  });
-  runtimeLayouts.set(
-    layout,
-    Object.freeze(
-      [
-        root,
-        backupsRoot,
-        backupStagingRoot,
-        backupGenerationsRoot,
-        connectionsRoot,
-        restoreRoot,
-        restoreStagingRoot,
-        restoreRetainedRoot,
-        restoreReceiptsRoot,
-      ].map((directory) => Object.freeze({ path: directory, identity: identityOfDirectory(directory) })),
-    ),
+    (candidate) => createPrivateDirectoryTree(candidate, process.platform),
   );
-  return layout;
+  return issueRuntimeLayout(topology, process.platform !== "win32");
 }
 
 export function prepareRuntimeLayout(value: unknown): RuntimeLayout {
@@ -339,41 +386,8 @@ export function inspectExistingRuntimeLayout(value: unknown): RuntimeLayout {
       throw persistenceFailure("UNSAFE_RUNTIME_ROOT", "Resolved runtime root overlaps a protected root");
     }
   }
-  const backupsRoot = canonicalExistingRoot(path.join(root, "backups"), "backups root");
-  const backupStagingRoot = canonicalExistingRoot(path.join(backupsRoot, ".staging"), "backup staging root");
-  const backupGenerationsRoot = canonicalExistingRoot(path.join(backupsRoot, "generations"), "backup generations root");
-  const connectionsRoot = canonicalExistingRoot(path.join(root, "connections"), "connections root");
-  const restoreRoot = canonicalExistingRoot(path.join(root, "restore"), "restore root");
-  const restoreStagingRoot = canonicalExistingRoot(path.join(restoreRoot, "staging"), "restore staging root");
-  const restoreRetainedRoot = canonicalExistingRoot(path.join(restoreRoot, "retained"), "restore retained root");
-  const restoreReceiptsRoot = canonicalExistingRoot(path.join(restoreRoot, "receipts"), "restore receipts root");
-  const layout = Object.freeze({
-    root,
-    databasePath: path.join(root, "state.sqlite3"),
-    backupsRoot,
-    backupStagingRoot,
-    backupGenerationsRoot,
-    connectionsRoot,
-    restoreRoot,
-    restoreStagingRoot,
-    restoreRetainedRoot,
-    restoreReceiptsRoot,
-    restoreIntentPath: path.join(restoreRoot, "intent.json"),
-    lifecycleLockPath: path.join(root, "lifecycle.lock"),
-    privatePermissionsEnforced: process.platform !== "win32",
-  });
-  runtimeLayouts.set(layout, Object.freeze([
-    root,
-    backupsRoot,
-    backupStagingRoot,
-    backupGenerationsRoot,
-    connectionsRoot,
-    restoreRoot,
-    restoreStagingRoot,
-    restoreRetainedRoot,
-    restoreReceiptsRoot,
-  ].map((directory) => Object.freeze({ path: directory, identity: identityOfDirectory(directory) }))));
-  return layout;
+  const topology = materializeRuntimeDirectoryTopology(root, canonicalExistingRoot);
+  return issueRuntimeLayout(topology, process.platform !== "win32");
 }
 
 export function assertRuntimeLayout(value: RuntimeLayout): void {
@@ -395,6 +409,18 @@ export function assertRuntimeLayout(value: RuntimeLayout): void {
   } catch (error) {
     if (error instanceof Error && error.name === "PersistenceError") throw error;
     throw persistenceFailure("PATH_IDENTITY_CHANGED", "Runtime layout identity could not be revalidated", {}, error);
+  }
+}
+
+export function primaryRuntimeMemberPath(layout: RuntimeLayout, fileName: unknown): string {
+  assertRuntimeLayout(layout);
+  if (!PRIMARY_RUNTIME_MEMBER_NAMES.includes(fileName as PrimaryRuntimeMemberName)) {
+    throw persistenceFailure("INVALID_INPUT", "Runtime primary member name is invalid");
+  }
+  switch (fileName as PrimaryRuntimeMemberName) {
+    case "state.sqlite3": return layout.databasePath;
+    case "state.sqlite3-wal": return `${layout.databasePath}-wal`;
+    case "state.sqlite3-shm": return `${layout.databasePath}-shm`;
   }
 }
 
@@ -700,8 +726,4 @@ export function hasRestoreIntent(layout: RuntimeLayout): boolean {
   inspectRegularFile(layout.restoreIntentPath);
   assertRuntimeLayout(layout);
   return true;
-}
-
-export function readTextFileForDiagnostics(pathValue: string): string {
-  return decodeUtf8(readFileSync(pathValue), "diagnostic file");
 }

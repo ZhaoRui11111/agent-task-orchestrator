@@ -16,7 +16,13 @@ import {
   restoreBackup,
   verifyBackupGeneration,
 } from "../src/index.ts";
-import { assertRuntimeLayout, selectConfiguredRuntimeRoot } from "../src/persistence/runtime.ts";
+import {
+  assertRuntimeLayout,
+  PRIMARY_RUNTIME_MEMBER_NAMES,
+  primaryRuntimeMemberPath,
+  requiredRuntimeDirectoryPaths,
+  selectConfiguredRuntimeRoot,
+} from "../src/persistence/runtime.ts";
 import {
   cleanupPersistenceFixture,
   createAuthorizedTestBackup,
@@ -46,6 +52,61 @@ test("Windows default and environment override only select a candidate later sub
     () => selectConfiguredRuntimeRoot(null, {}, "linux"),
     (error) => expectPersistenceError(error, "UNSAFE_RUNTIME_ROOT"),
   );
+});
+
+test("the Runtime owner derives the fixed directory topology and closed live primary member paths", () => {
+  const generation = createOwnedGeneration("path-topology-owner");
+  const sourceCheckoutRoot = path.join(generation, "source");
+  const projectRoot = path.join(generation, "project");
+  const runtimeRoot = path.join(generation, "runtime");
+  mkdirSync(sourceCheckoutRoot);
+  mkdirSync(projectRoot);
+  try {
+    const expectedDirectories = [
+      runtimeRoot,
+      path.join(runtimeRoot, "backups"),
+      path.join(runtimeRoot, "backups", ".staging"),
+      path.join(runtimeRoot, "backups", "generations"),
+      path.join(runtimeRoot, "connections"),
+      path.join(runtimeRoot, "restore"),
+      path.join(runtimeRoot, "restore", "staging"),
+      path.join(runtimeRoot, "restore", "retained"),
+      path.join(runtimeRoot, "restore", "receipts"),
+    ];
+    const derived = requiredRuntimeDirectoryPaths(runtimeRoot);
+    assert.deepEqual(derived, expectedDirectories);
+    assert.equal(Object.isFrozen(derived), true);
+    assert.equal(existsSync(runtimeRoot), false);
+
+    const layout = prepareRuntimeLayout({ runtimeRoot, sourceCheckoutRoot, projectRoots: [projectRoot] });
+    assert.deepEqual(derived, [
+      layout.root,
+      layout.backupsRoot,
+      layout.backupStagingRoot,
+      layout.backupGenerationsRoot,
+      layout.connectionsRoot,
+      layout.restoreRoot,
+      layout.restoreStagingRoot,
+      layout.restoreRetainedRoot,
+      layout.restoreReceiptsRoot,
+    ]);
+    assert.deepEqual(PRIMARY_RUNTIME_MEMBER_NAMES, [
+      "state.sqlite3",
+      "state.sqlite3-wal",
+      "state.sqlite3-shm",
+    ]);
+    assert.equal(Object.isFrozen(PRIMARY_RUNTIME_MEMBER_NAMES), true);
+    assert.deepEqual(
+      PRIMARY_RUNTIME_MEMBER_NAMES.map((fileName) => primaryRuntimeMemberPath(layout, fileName)),
+      [layout.databasePath, `${layout.databasePath}-wal`, `${layout.databasePath}-shm`],
+    );
+    assert.throws(
+      () => primaryRuntimeMemberPath(layout, "manifest.json"),
+      (error) => expectPersistenceError(error, "INVALID_INPUT"),
+    );
+  } finally {
+    removeOwnedGeneration(generation);
+  }
 });
 
 test("null runtime root uses the validated Windows local application-data child", () => {
