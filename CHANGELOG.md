@@ -36,6 +36,11 @@ All notable changes to this project will be documented in this file.
   checkouts by freezing their historical canonical bytes in the sole registry,
   adding explicit per-file checkout EOL policy, and rejecting malformed or
   content-drifted sources before SQLite mutation without rewriting history.
+- Made concurrent maintenance-test artifact generations share a stable
+  `.task-artifacts` root: creators bind generation identity before post-issue
+  seams, workers remove only receipt-bound generations, nested SQLite defers
+  shared-root contraction to the globally quiescent test parent, and standalone
+  package/SQLite owners retain deterministic empty-root contraction evidence.
 
 These entries do not announce a release or supported runtime. The executable
 material is limited to the development package, feasibility harness, pure

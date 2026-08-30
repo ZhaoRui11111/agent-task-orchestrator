@@ -26,7 +26,14 @@ generation under the ignored `.task-artifacts/` boundary and checks:
 - fresh-process recovery of a persisted intent whose external effect exists
   but whose receipt does not, classified as ambiguous without replay.
 
-The script removes only its exact owned generation. Its JSON output excludes
+The script removes only its exact owned generation while work may still be in
+scope. A standalone invocation, after its worker threads and generation
+boundary are quiescent, separately contracts the exact fixed
+`.task-artifacts/` root only when that root is a regular empty directory;
+unexpected reclaim errors fail the route. When invoked beneath any native Node
+test context it instead defers root contraction to the outer test runner,
+because local SQLite quiescence does not establish global test-child
+quiescence. This path-based operational step is not coordinator prune. Its JSON output excludes
 temporary paths, prompts, identifiers, and database contents. A mock or a run
 on another platform cannot satisfy the Windows evidence criterion.
 

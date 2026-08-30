@@ -2,7 +2,13 @@ import { spawnSync } from "node:child_process";
 import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { invariant, repoRoot, taskArtifactsRoot } from "./repo-utils.mjs";
+import {
+  artifactRootReclaimTestOptions,
+  invariant,
+  reclaimEmptyTaskArtifactsRoot,
+  repoRoot,
+  taskArtifactsRoot,
+} from "./repo-utils.mjs";
 
 const TEST_LOADER_MARKER = "agent-task-orchestrator:test-runner-child:v1";
 
@@ -155,10 +161,15 @@ export function executeNodeTests(testArgs = [], options = {}) {
       stderr: result.stderr ?? "",
     });
   }
+  let rootReclaimStatus = "not_applicable";
+  if (!baseline.exists && pathIdentity(artifactRoot) === pathIdentity(taskArtifactsRoot)) {
+    rootReclaimStatus = reclaimEmptyTaskArtifactsRoot(artifactRootReclaimTestOptions(childEnv)).status;
+  }
   const terminal = assertArtifactSnapshotUnchanged(baseline, artifactRoot);
   return Object.freeze({
     status: 0,
     hygieneChecked: true,
+    rootReclaimStatus,
     baselineEntries: baseline.entries.length,
     terminalEntries: terminal.entries.length,
     stdout: result.stdout ?? "",
@@ -184,6 +195,7 @@ if (isMainModule()) {
     if (result.status === 0) {
       console.log(JSON.stringify({
         artifactHygiene: "passed",
+        rootReclaimStatus: result.rootReclaimStatus,
         baselineEntries: result.baselineEntries,
         terminalEntries: result.terminalEntries,
       }));

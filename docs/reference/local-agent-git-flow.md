@@ -93,11 +93,20 @@ or any external repository or adjacent action.
 
 The repository's package and SQLite feasibility tools create unique
 creator-owned child generations beneath `.task-artifacts` and normally remove
-their own children. Coordinator pruning is still required for an opted-in task,
-even when the exact root is already absent, because the receipt proves the
-terminal observation. `node_modules`, `.pnpm-store`, `dist`, `.worktrees`, and
-runtime or personal data are not registered and are never inferred as
-prunable.
+only their own children. A generation creator accepts `EEXIST` only for the
+single concurrent root-creation attempt, immediately binds the created regular
+child's identity before any post-issue seam, then revalidates both exact
+identities; it does not retry disappearance or adopt a same-path replacement.
+No worker removes the shared root. Package smoke may separately contract the
+exact fixed root only after its generation boundary is quiescent. SQLite may do
+so only as a standalone invocation after its worker threads and generation are
+quiescent. SQLite nested in any native Node test context removes only its own
+generation and defers fixed-root contraction to the outer runner's global
+child-quiescent boundary. Coordinator pruning is still required for an
+opted-in task, even when the exact root is already absent, because the receipt
+proves the terminal observation. `node_modules`, `.pnpm-store`, `dist`,
+`.worktrees`, and runtime or personal data are not registered and are never
+inferred as prunable.
 
 Both public Node test commands run through the repository test runner. It takes
 a path-based metadata snapshot of the artifact tree, invokes native
@@ -109,18 +118,24 @@ evidence is recorded and the final explicit coordinator prune runs.
 
 This wrapper is an observation-only hygiene assertion for a test process whose
 mutating work, including surviving child processes, is quiescent before the
-terminal snapshot. It rejects a symlink, junction, reparse, or nonregular node
-that is present during either snapshot, but path-based Node APIs do not give it
+terminal snapshot. The comparator deletes nothing. Separately, after a complete
+successful child exits and only when the baseline root was absent, the parent
+runner contracts the exact fixed root if it remains a regular empty directory;
+it never contracts a custom observed path, a nonempty baseline, or failed-child
+diagnostics. It rejects a symlink, junction, reparse, or nonregular node that is
+present during either snapshot, but path-based Node APIs do not give it
 the coordinator's anchored no-follow guarantee against concurrent Windows path
-replacement. The runner deletes nothing, publishes no security or prune
-receipt, and never turns test success into prune authorization. Coordinator
-prune independently revalidates and anchors its own frozen inventory before it
-may unlink an in-root alias without traversing the target.
+replacement. This quiescent fixed-root contraction publishes no security or prune
+receipt and never turns test success into prune authorization.
+Coordinator prune independently revalidates and anchors its own frozen
+inventory before it may unlink an in-root alias without traversing the target.
 
 The wrapper stamps its own child before native discovery. `NODE_TEST_CONTEXT`
 suppresses the runner entry only when that owner marker is also present; a
 direct invocation that merely inherits or fabricates the Node context fails
-closed instead of reporting a zero-test success.
+closed instead of reporting a zero-test success. Independently, any present
+Node test context removes nested SQLite's fixed-root contraction authority, so
+an unowned or fabricated marker can only make cleanup more conservative.
 
 ## Required lifecycle
 

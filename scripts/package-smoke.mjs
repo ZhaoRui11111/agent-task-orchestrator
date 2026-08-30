@@ -11,7 +11,14 @@ import {
 import path from "node:path";
 import { userInfo } from "node:os";
 import { gunzipSync } from "node:zlib";
-import { createOwnedGeneration, invariant, removeOwnedGeneration, repoRoot } from "./repo-utils.mjs";
+import {
+  artifactRootReclaimTestOptions,
+  createOwnedGeneration,
+  invariant,
+  reclaimEmptyTaskArtifactsRoot,
+  removeOwnedGeneration,
+  repoRoot,
+} from "./repo-utils.mjs";
 
 function pnpm(args, cwd, storeDir = undefined, extraEnv = {}) {
   const cli = process.env.npm_execpath;
@@ -430,4 +437,5 @@ void ingress;
   );
 } finally {
   removeOwnedGeneration(generation);
+  reclaimEmptyTaskArtifactsRoot(artifactRootReclaimTestOptions());
 }

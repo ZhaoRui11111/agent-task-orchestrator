@@ -35,11 +35,23 @@ local convenience override.
 Creator-owned package and SQLite validation generations live only beneath the
 ignored `.task-artifacts/` root registered by the
 [local agent Git workflow](local-agent-git-flow.md). Each tool creates a unique
-direct child, validates root and child identity without following links, and
-removes only that owned child. Cleanup atomically moves the receipt-bound child
-to a unique same-root quarantine, verifies the moved identity, and revalidates
-every inventoried member before a same-parent rename-and-delete boundary;
-identity drift fails closed with replacement content preserved. `.pnpm-store/`,
+direct child after one root `mkdir` attempt, accepts only `EEXIST` as the
+concurrent stable-root case, and immediately binds the created child's regular
+directory identity and real path before any post-issue seam. It then revalidates
+the root and that exact child identity without following links; replacement of
+either fails closed with original and replacement content preserved. A worker
+removes only its owned child and never removes the shared root. Child cleanup
+atomically moves the receipt-bound child to a unique same-root quarantine,
+verifies the moved identity, and revalidates every inventoried member before a
+same-parent rename-and-delete boundary; identity drift fails closed with
+replacement content preserved. After its single-process generation boundary is
+quiescent, package smoke may separately contract the exact fixed root only when
+it is a regular empty directory. SQLite has that authority only as a standalone
+invocation after its worker threads and generation are quiescent. A SQLite
+process nested in any native Node test context removes its generation but
+defers fixed-root contraction to the outer test runner, whose complete child
+exit establishes global native-test quiescence.
+Unexpected inspection or removal errors propagate. `.pnpm-store/`,
 `node_modules/`, `dist/`, runtime data, and user data remain outside the
 registered disposable-root policy.
 
@@ -54,14 +66,27 @@ may leave diagnostics for the final explicit coordinator prune; a later
 successful command must add no further residue but need not erase that prior
 baseline.
 
+The snapshot comparator itself is observation-only. Separately, when and only
+when the baseline root was absent and the complete child process exits
+successfully, the parent runner contracts the exact fixed `.task-artifacts`
+root after child quiescence if it is still regular and empty, then performs the
+terminal comparison. An absent root needs no action, a nonempty root is not
+deleted, and a custom observed path is never a reclamation target. A failed
+child bypasses this contraction and retains diagnostics.
+
 The assertion assumes the test process and any child that could mutate the
 tree are quiescent before the terminal observation. It is not handle-bound
 against concurrent Windows path replacement and is neither a security boundary
 nor a prune receipt. Those guarantees remain solely with the coordinator's
 independent frozen-inventory validation and anchored deletion transition.
+The fixed-root contraction is path-based operational hygiene under the same
+quiescence assumption; it publishes no security or prune receipt and does not
+authorize or replace coordinator prune.
 The wrapper-owned child marker distinguishes its native test-loader child from
 an ambient `NODE_TEST_CONTEXT`; a direct runner with an unowned context exits
-nonzero rather than silently bypassing the suite.
+nonzero rather than silently bypassing the suite. For nested SQLite, any present
+`NODE_TEST_CONTEXT` conservatively removes contraction authority; fabricating
+the marker therefore cannot grant deletion authority.
 
 ## Module and distribution boundary
 

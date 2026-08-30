@@ -17,7 +17,13 @@ import path from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { isMainThread, parentPort, workerData, Worker } from "node:worker_threads";
-import { createOwnedGeneration, invariant, removeOwnedGeneration } from "./repo-utils.mjs";
+import {
+  artifactRootReclaimTestOptions,
+  createOwnedGeneration,
+  invariant,
+  reclaimEmptyTaskArtifactsRoot,
+  removeOwnedGeneration,
+} from "./repo-utils.mjs";
 
 const BUSY_TIMEOUT_MS = 200;
 const CLAIM_READY_TIMEOUT_MS = 3_000;
@@ -657,6 +663,9 @@ async function runSpike() {
     if (reader?.isOpen) reader.close();
     if (primary?.isOpen) primary.close();
     removeOwnedGeneration(generation);
+    if (!Object.hasOwn(process.env, "NODE_TEST_CONTEXT")) {
+      reclaimEmptyTaskArtifactsRoot(artifactRootReclaimTestOptions());
+    }
   }
 }
 

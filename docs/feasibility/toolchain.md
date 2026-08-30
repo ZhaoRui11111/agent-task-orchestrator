@@ -18,8 +18,11 @@ export, `ato` console entry, and uninstall boundary.
 The current package-smoke procedure creates its unique disposable consumer and
 pack generation beneath `.task-artifacts/`, while the reusable `.pnpm-store/`
 cache remains outside the coordinator-prunable policy. The tool removes only
-its creator-owned generation and never treats the store or build output as
-disposable coordinator material.
+its creator-owned generation. After that single-process generation boundary is
+quiescent, it separately contracts the exact fixed root only when the root is a
+regular empty directory. It never treats the store or build output as
+disposable coordinator material, and this operational contraction is not a
+coordinator prune or receipt.
 
 On 2026-08-28 the post-A1 candidate `pnpm verify:offline` command exited `0`
 using a separately frozen offline compiler install, including lint, typecheck,

@@ -256,6 +256,15 @@ function inspectRegularDirectory(root, label) {
   return { resolved, dev: stat.dev, ino: stat.ino };
 }
 
+function inspectRegularDirectoryIfPresent(root, label) {
+  try {
+    return inspectRegularDirectory(root, label);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
 function inspectOwnedGeneration(generation, receipt, expectedPath = receipt.generation.resolved) {
   const root = inspectRegularDirectory(taskArtifactsRoot, "artifact root");
   invariant(
@@ -378,36 +387,121 @@ function normalizeCleanupHooks(options) {
   return options;
 }
 
-export function createOwnedGenerationAt(root, prefix) {
+function normalizeGenerationHooks(options) {
+  if (options === undefined) return {};
+  invariant(options && typeof options === "object" && !Array.isArray(options), "generation options must be an object");
+  const allowed = new Set(["afterRootInspection", "afterGenerationIssue"]);
+  for (const key of Object.keys(options)) {
+    invariant(allowed.has(key), `unknown generation option: ${key}`);
+    invariant(typeof options[key] === "function", `generation option ${key} must be a function`);
+  }
+  return options;
+}
+
+function normalizeRootReclaimOptions(options) {
+  if (options === undefined) return {};
+  invariant(options && typeof options === "object" && !Array.isArray(options), "root reclaim options must be an object");
+  const allowed = new Set(["afterInitialInspection", "removeRoot"]);
+  for (const key of Object.keys(options)) {
+    invariant(allowed.has(key), `unknown root reclaim option: ${key}`);
+    invariant(typeof options[key] === "function", `root reclaim option ${key} must be a function`);
+  }
+  return options;
+}
+
+function sameDirectoryIdentity(left, right) {
+  return pathIdentity(left.resolved) === pathIdentity(right.resolved) && left.dev === right.dev && left.ino === right.ino;
+}
+
+function issueOwnedGenerationAt(root, prefix, options = undefined) {
+  const hooks = normalizeGenerationHooks(options);
   invariant(/^[a-z0-9][a-z0-9-]{2,40}$/u.test(prefix), "generation prefix is invalid");
-  if (!existsSync(root)) {
+  try {
     mkdirSync(root);
+  } catch (error) {
+    if (error?.code !== "EEXIST") throw error;
   }
   const before = inspectRegularDirectory(root, "artifact root");
-  const generation = mkdtempSync(path.join(root, `${prefix}-`));
+  hooks.afterRootInspection?.(Object.freeze({ root: before.resolved }));
+  const issuedPath = mkdtempSync(path.join(root, `${prefix}-`));
+  const issued = inspectRegularDirectory(issuedPath, "created generation");
+  invariant(
+    pathIdentity(path.dirname(issued.resolved)) === pathIdentity(before.resolved),
+    "generation escaped the validated temp root",
+  );
+  hooks.afterGenerationIssue?.(Object.freeze({ generation: issued.resolved, root: before.resolved }));
   const after = inspectRegularDirectory(root, "artifact root");
   invariant(
-    pathIdentity(before.resolved) === pathIdentity(after.resolved) && before.dev === after.dev && before.ino === after.ino,
+    sameDirectoryIdentity(before, after),
     "artifact root identity changed during generation creation",
   );
-  const generationStat = lstatSync(generation);
-  invariant(generationStat.isDirectory() && !generationStat.isSymbolicLink(), "created generation is not a regular directory");
-  const resolved = realpathSync(generation);
-  invariant(pathIdentity(path.dirname(resolved)) === pathIdentity(before.resolved), "generation escaped the validated temp root");
-  return resolved;
+  const terminal = inspectRegularDirectory(issued.resolved, "created generation");
+  invariant(
+    sameDirectoryIdentity(issued, terminal),
+    "created generation identity changed during generation creation",
+  );
+  invariant(
+    pathIdentity(path.dirname(terminal.resolved)) === pathIdentity(after.resolved),
+    "generation escaped the validated temp root",
+  );
+  return Object.freeze({ root: Object.freeze(before), generation: Object.freeze(issued) });
+}
+
+export function createOwnedGenerationAt(root, prefix, options = undefined) {
+  return issueOwnedGenerationAt(root, prefix, options).generation.resolved;
+}
+
+export function artifactRootReclaimTestOptions(env = process.env) {
+  invariant(env && typeof env === "object" && !Array.isArray(env), "reclaim test environment must be an object");
+  const code = env.ATO_TEST_TASK_ARTIFACT_RECLAIM_ERROR;
+  if (code === undefined) return undefined;
+  invariant(
+    code === "EACCES" || code === "EPERM" || code === "EIO",
+    "ATO_TEST_TASK_ARTIFACT_RECLAIM_ERROR must be EACCES, EPERM, or EIO",
+  );
+  return Object.freeze({
+    removeRoot() {
+      const error = new Error(`injected task-artifact root reclaim failure: ${code}`);
+      error.code = code;
+      throw error;
+    },
+  });
+}
+
+export function reclaimEmptyTaskArtifactsRoot(options = undefined) {
+  const hooks = normalizeRootReclaimOptions(options);
+  const initial = inspectRegularDirectoryIfPresent(taskArtifactsRoot, "artifact root");
+  if (!initial) {
+    return Object.freeze({ status: "absent" });
+  }
+  if (readdirSync(taskArtifactsRoot).length !== 0) {
+    return Object.freeze({ status: "nonempty" });
+  }
+  hooks.afterInitialInspection?.(Object.freeze({ root: initial.resolved }));
+  const terminal = inspectRegularDirectory(taskArtifactsRoot, "artifact root");
+  invariant(sameDirectoryIdentity(initial, terminal), "artifact root identity changed before quiescent reclaim");
+  if (readdirSync(taskArtifactsRoot).length !== 0) {
+    return Object.freeze({ status: "nonempty" });
+  }
+  try {
+    (hooks.removeRoot ?? rmdirSync)(taskArtifactsRoot);
+    return Object.freeze({ status: "reclaimed" });
+  } catch (error) {
+    if (error?.code === "ENOENT") return Object.freeze({ status: "absent" });
+    if (error?.code === "ENOTEMPTY") return Object.freeze({ status: "nonempty" });
+    throw error;
+  }
 }
 
 export function createOwnedGeneration(prefix) {
-  const resolved = createOwnedGenerationAt(taskArtifactsRoot, prefix);
+  const receipt = issueOwnedGenerationAt(taskArtifactsRoot, prefix);
+  const resolved = receipt.generation.resolved;
   assertDirectGeneration(resolved);
-  const root = inspectRegularDirectory(taskArtifactsRoot, "artifact root");
-  const stat = lstatSync(resolved);
-  invariant(stat.isDirectory() && !stat.isSymbolicLink(), "created generation is not a regular directory");
   const key = pathIdentity(resolved);
   invariant(!ownedGenerationReceipts.has(key), "owned generation receipt already exists");
   ownedGenerationReceipts.set(key, {
-    root,
-    generation: { resolved: key, dev: stat.dev, ino: stat.ino },
+    root: receipt.root,
+    generation: { ...receipt.generation, resolved: key },
   });
   return resolved;
 }
@@ -514,23 +608,6 @@ export function removeOwnedGeneration(generation, options = undefined) {
   }
   invariant(!quarantined && !existsSync(generation) && !existsSync(quarantine), "owned generation survived cleanup");
   ownedGenerationReceipts.delete(key);
-  if (existsSync(taskArtifactsRoot) && readdirSync(taskArtifactsRoot).length === 0) {
-    const root = inspectRegularDirectory(taskArtifactsRoot, "artifact root");
-    invariant(
-      pathIdentity(root.resolved) === pathIdentity(receipt.root.resolved) &&
-        root.dev === receipt.root.dev &&
-        root.ino === receipt.root.ino,
-      "artifact root identity changed before empty-root cleanup",
-    );
-    try {
-      rmdirSync(taskArtifactsRoot);
-    } catch (error) {
-      invariant(
-        error?.code === "ENOENT" || error?.code === "ENOTEMPTY",
-        `unexpected artifact-root cleanup failure: ${error?.message ?? error}`,
-      );
-    }
-  }
 }
 
 export function run(command, args, options = {}) {
