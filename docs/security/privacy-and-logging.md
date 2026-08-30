@@ -77,6 +77,11 @@ adapter payload/error text is never persisted. `turn_succeeded` is recorded as
 a turn fact, while the distinct completion decision retains only its exact
 authorization/confirmation/evidence lineage.
 
+The durable intent failure projection is limited to the closed adapter
+category, bounded code, retryable/ambiguous booleans, nullable canonical retry
+time, and integer retry count. Raw adapter messages, payloads, stacks, SQL, and
+Task/source content are discarded before that projection.
+
 Task body, Project canonical path, prompts, source/repository content, tool or
 Agent output, free text, raw commands, environment values, credentials, and
 secrets are never copied into audit details. Accepted application operations

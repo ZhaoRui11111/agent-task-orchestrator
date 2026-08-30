@@ -18,13 +18,8 @@ CREATE TABLE authorization_grants_v6 (
   revision INTEGER NOT NULL CHECK (revision > 0),
   actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
   action TEXT NOT NULL CHECK (action IN (
-    'authorization.grant.issue', 'authorization.grant.inspect', 'authorization.grant.revoke',
-    'policy.evaluate', 'project.register', 'project.update', 'project.disable', 'project.inspect',
-    'task.create', 'task.update', 'task.mark_ready', 'task.cancel', 'task.inspect',
-    'dependency.add', 'dependency.remove', 'authorization.grant.list', 'runtime.status',
-    'runtime.backup', 'runtime.restore', 'execution.claim', 'execution.claim.inspect',
-    'execution.lease.renew', 'execution.lease.takeover', 'execution.start', 'execution.inspect',
-    'execution.resume', 'execution.retry', 'execution.cancel', 'execution.completion.accept'
+    'execution.start', 'execution.inspect', 'execution.resume', 'execution.retry',
+    'execution.cancel', 'execution.completion.accept'
   )),
   scope_kind TEXT NOT NULL CHECK (scope_kind IN ('runtime', 'project')),
   scope_project_id TEXT,
@@ -55,6 +50,39 @@ CREATE INDEX authorization_grants_v6_actor_action_index
   ON authorization_grants_v6(actor_id, action, grant_id);
 CREATE INDEX authorization_grants_v6_project_index
   ON authorization_grants_v6(scope_project_id, action, grant_id) WHERE scope_project_id IS NOT NULL;
+
+CREATE TRIGGER authorization_grants_v6_global_id_guard
+BEFORE INSERT ON authorization_grants_v6
+WHEN EXISTS (SELECT 1 FROM authorization_grants WHERE grant_id=NEW.grant_id)
+BEGIN
+  SELECT RAISE(ABORT, 'authorization grant identifiers must be globally unique');
+END;
+
+CREATE TRIGGER authorization_grants_global_id_v6_guard
+BEFORE INSERT ON authorization_grants
+WHEN EXISTS (SELECT 1 FROM authorization_grants_v6 WHERE grant_id=NEW.grant_id)
+BEGIN
+  SELECT RAISE(ABORT, 'authorization grant identifiers must be globally unique');
+END;
+
+CREATE UNIQUE INDEX authorization_grants_id_action_v6_link_index
+  ON authorization_grants(grant_id, action);
+
+CREATE TABLE authorization_grant_epoch_v6_links (
+  grant_id TEXT PRIMARY KEY NOT NULL CHECK (length(grant_id) BETWEEN 1 AND 128),
+  action TEXT NOT NULL CHECK (action IN (
+    'authorization.grant.issue', 'authorization.grant.inspect', 'authorization.grant.revoke',
+    'policy.evaluate', 'project.register', 'project.update', 'project.disable', 'project.inspect',
+    'task.create', 'task.update', 'task.mark_ready', 'task.cancel', 'task.inspect',
+    'dependency.add', 'dependency.remove', 'authorization.grant.list', 'runtime.status',
+    'runtime.backup', 'runtime.restore', 'execution.claim', 'execution.claim.inspect',
+    'execution.lease.renew', 'execution.lease.takeover'
+  )),
+  capability_epoch_id TEXT NOT NULL CHECK (length(capability_epoch_id) BETWEEN 1 AND 128),
+  UNIQUE(capability_epoch_id, action),
+  FOREIGN KEY (grant_id, action) REFERENCES authorization_grants(grant_id, action) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (capability_epoch_id) REFERENCES authorization_capability_epochs_v6(epoch_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
 
 CREATE TABLE application_lifecycle_digest_v6 (
   authorization_id TEXT PRIMARY KEY NOT NULL,
@@ -96,6 +124,7 @@ CREATE TABLE execution_authorization_decisions (
   grant_revision INTEGER,
   project_id TEXT NOT NULL CHECK (length(project_id) > 0),
   resource_revision INTEGER NOT NULL CHECK (resource_revision > 0),
+  config_revision INTEGER NOT NULL CHECK (config_revision > 0),
   created_at TEXT NOT NULL CHECK (length(created_at) > 0),
   CHECK ((grant_id IS NULL AND grant_revision IS NULL) OR (length(grant_id) > 0 AND grant_revision > 0)),
   CHECK ((result = 'allow' AND reason = 'allowed' AND grant_id IS NOT NULL) OR (result = 'deny' AND reason <> 'allowed')),
@@ -136,6 +165,8 @@ CREATE TABLE execution_operation_intents (
   actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
   request_id TEXT NOT NULL UNIQUE,
   decision_id TEXT NOT NULL UNIQUE,
+  current_authorization_decision_id TEXT NOT NULL,
+  authorization_binding_revision INTEGER NOT NULL CHECK (authorization_binding_revision > 0),
   confirmation_id TEXT,
   project_id TEXT NOT NULL CHECK (length(project_id) > 0),
   project_resource_revision INTEGER NOT NULL CHECK (project_resource_revision > 0),
@@ -171,6 +202,17 @@ CREATE TABLE execution_operation_intents (
   report_code TEXT,
   evidence_reference TEXT,
   last_observation_number INTEGER NOT NULL CHECK (last_observation_number >= 0),
+  last_error_category TEXT CHECK (last_error_category IS NULL OR last_error_category IN (
+    'invalid_request', 'incompatible_contract', 'unauthorized', 'policy_denied', 'not_found',
+    'conflict', 'stale_revision', 'busy', 'rate_limited', 'resource_exhausted',
+    'transient_external', 'permanent_external', 'ambiguous_external_state', 'cancelled',
+    'integrity_failure'
+  )),
+  last_error_code TEXT,
+  last_error_retryable INTEGER CHECK (last_error_retryable IS NULL OR last_error_retryable IN (0, 1)),
+  last_error_ambiguous INTEGER CHECK (last_error_ambiguous IS NULL OR last_error_ambiguous IN (0, 1)),
+  retry_after TEXT,
+  retry_count INTEGER NOT NULL CHECK (retry_count >= 0),
   created_at TEXT NOT NULL CHECK (length(created_at) > 0),
   updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
   CHECK (continuation_reference IS NULL OR length(continuation_reference) BETWEEN 1 AND 128),
@@ -179,6 +221,14 @@ CREATE TABLE execution_operation_intents (
   CHECK (report_id IS NULL OR length(report_id) BETWEEN 1 AND 128),
   CHECK (report_code IS NULL OR length(report_code) BETWEEN 1 AND 64),
   CHECK (evidence_reference IS NULL OR length(evidence_reference) BETWEEN 1 AND 128),
+  CHECK (
+    (retry_count = 0 AND last_error_category IS NULL AND last_error_code IS NULL
+      AND last_error_retryable IS NULL AND last_error_ambiguous IS NULL AND retry_after IS NULL)
+    OR (retry_count > 0 AND last_error_category IS NOT NULL
+      AND length(last_error_code) BETWEEN 1 AND 64
+      AND last_error_retryable IS NOT NULL AND last_error_ambiguous IS NOT NULL
+      AND (retry_after IS NULL OR length(retry_after) > 0))
+  ),
   CHECK ((operation_kind IN ('resume', 'retry') AND length(source_execution_id) > 0
       AND source_execution_id <> execution_id AND source_execution_revision > 0
       AND source_attempt_number > 0 AND source_fencing_token > 0 AND source_observation_number >= 0)
@@ -217,6 +267,7 @@ CREATE TABLE execution_operation_intents (
       AND report_operation IS NOT NULL AND length(report_code) > 0)),
   FOREIGN KEY (request_id) REFERENCES execution_operation_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (decision_id) REFERENCES execution_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (current_authorization_decision_id) REFERENCES execution_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
@@ -230,6 +281,26 @@ CREATE INDEX execution_intents_recovery
   WHERE state <> 'finalized';
 CREATE UNIQUE INDEX execution_intents_confirmation_once
   ON execution_operation_intents(confirmation_id) WHERE confirmation_id IS NOT NULL;
+
+CREATE TABLE execution_intent_authorization_bindings (
+  binding_id TEXT PRIMARY KEY NOT NULL CHECK (length(binding_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL,
+  binding_revision INTEGER NOT NULL CHECK (binding_revision > 0),
+  phase TEXT NOT NULL CHECK (phase IN ('prepare', 'act', 'finalize')),
+  request_id TEXT NOT NULL UNIQUE,
+  decision_id TEXT NOT NULL UNIQUE,
+  audit_id TEXT NOT NULL UNIQUE,
+  prior_decision_id TEXT,
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  UNIQUE(intent_id, binding_revision),
+  CHECK ((binding_revision = 1 AND phase = 'prepare' AND prior_decision_id IS NULL)
+    OR (binding_revision > 1 AND phase IN ('act', 'finalize') AND length(prior_decision_id) > 0)),
+  FOREIGN KEY (intent_id) REFERENCES execution_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (request_id) REFERENCES execution_operation_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (decision_id) REFERENCES execution_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (audit_id) REFERENCES execution_operation_audit(audit_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (prior_decision_id) REFERENCES execution_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
 
 CREATE TABLE execution_observations (
   observation_id TEXT PRIMARY KEY NOT NULL CHECK (length(observation_id) BETWEEN 1 AND 128),
@@ -275,13 +346,15 @@ CREATE TABLE execution_finalizations (
   finalization_id TEXT PRIMARY KEY NOT NULL CHECK (length(finalization_id) BETWEEN 1 AND 128),
   intent_id TEXT NOT NULL UNIQUE,
   verified_receipt_id TEXT,
+  authorization_decision_id TEXT NOT NULL,
   outcome TEXT NOT NULL CHECK (outcome IN ('accepted', 'deferred', 'rejected', 'waiting', 'interrupted')),
   code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
   task_revision INTEGER NOT NULL CHECK (task_revision > 0),
   execution_revision INTEGER NOT NULL CHECK (execution_revision > 0),
   finalized_at TEXT NOT NULL CHECK (length(finalized_at) > 0),
   FOREIGN KEY (intent_id) REFERENCES execution_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
-  FOREIGN KEY (verified_receipt_id) REFERENCES execution_verified_receipts(verified_receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+  FOREIGN KEY (verified_receipt_id) REFERENCES execution_verified_receipts(verified_receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (authorization_decision_id) REFERENCES execution_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT
 ) STRICT;
 
 CREATE TABLE execution_terminal_states (
@@ -348,6 +421,7 @@ CREATE TABLE manual_backend_operations (
   backend_operation_id TEXT PRIMARY KEY NOT NULL CHECK (length(backend_operation_id) BETWEEN 1 AND 128),
   idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 128),
   intent_id TEXT NOT NULL UNIQUE CHECK (length(intent_id) BETWEEN 1 AND 128),
+  authorization_decision_id TEXT NOT NULL CHECK (length(authorization_decision_id) BETWEEN 1 AND 128),
   operation_kind TEXT NOT NULL CHECK (operation_kind IN ('start', 'resume', 'retry', 'request_cancel', 'manual_report')),
   report_operation TEXT CHECK (report_operation IS NULL OR report_operation IN ('activate', 'wait', 'succeed', 'fail', 'confirm_cancelled')),
   backend_execution_id TEXT NOT NULL CHECK (length(backend_execution_id) BETWEEN 1 AND 128),
@@ -366,6 +440,7 @@ CREATE TABLE manual_backend_operations (
       AND source_backend_execution_id <> backend_execution_id)
     OR (operation_kind <> 'retry' AND source_backend_execution_id IS NULL AND source_thread_id IS NULL)),
   FOREIGN KEY (intent_id) REFERENCES execution_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (authorization_decision_id) REFERENCES execution_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (backend_execution_id) REFERENCES manual_backend_turns(backend_execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (thread_id) REFERENCES manual_backend_turns(thread_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (source_backend_execution_id) REFERENCES manual_backend_turns(backend_execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
@@ -494,6 +569,31 @@ CREATE TRIGGER authorization_grants_v6_no_delete
 BEFORE DELETE ON authorization_grants_v6 BEGIN
   SELECT RAISE(ABORT, 'vocabulary-v6 grants cannot be deleted');
 END;
+CREATE TRIGGER authorization_grant_epoch_v6_links_insert_guard
+BEFORE INSERT ON authorization_grant_epoch_v6_links
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM authorization_grants AS grant_record
+  JOIN authorization_capability_epochs_v6 AS epoch
+    ON epoch.epoch_id = NEW.capability_epoch_id
+  WHERE grant_record.grant_id = NEW.grant_id
+    AND grant_record.action = NEW.action
+    AND grant_record.capability_epoch_id IS NULL
+    AND grant_record.issuer_grant_id IS NULL
+    AND grant_record.source_grant_id IS NULL
+    AND grant_record.created_request_id = epoch.request_id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'vocabulary-v6 legacy grant link must bind one matching origin grant and epoch request');
+END;
+CREATE TRIGGER authorization_grant_epoch_v6_links_no_update
+BEFORE UPDATE ON authorization_grant_epoch_v6_links BEGIN
+  SELECT RAISE(ABORT, 'vocabulary-v6 legacy grant links are immutable');
+END;
+CREATE TRIGGER authorization_grant_epoch_v6_links_no_delete
+BEFORE DELETE ON authorization_grant_epoch_v6_links BEGIN
+  SELECT RAISE(ABORT, 'vocabulary-v6 legacy grant links cannot be deleted');
+END;
 
 CREATE TRIGGER application_lifecycle_digest_v6_no_update
 BEFORE UPDATE ON application_lifecycle_digest_v6 BEGIN
@@ -522,6 +622,12 @@ END;
 CREATE TRIGGER execution_operation_audit_no_delete BEFORE DELETE ON execution_operation_audit BEGIN
   SELECT RAISE(ABORT, 'execution operation audit is append-only');
 END;
+CREATE TRIGGER execution_intent_authorization_bindings_no_update BEFORE UPDATE ON execution_intent_authorization_bindings BEGIN
+  SELECT RAISE(ABORT, 'execution intent authorization bindings are append-only');
+END;
+CREATE TRIGGER execution_intent_authorization_bindings_no_delete BEFORE DELETE ON execution_intent_authorization_bindings BEGIN
+  SELECT RAISE(ABORT, 'execution intent authorization bindings are append-only');
+END;
 
 CREATE TRIGGER execution_operation_intents_transition_guard
 BEFORE UPDATE ON execution_operation_intents
@@ -547,10 +653,37 @@ WHEN NEW.intent_id <> OLD.intent_id OR NEW.operation_id <> OLD.operation_id OR N
   OR NEW.reason_code IS NOT OLD.reason_code OR NEW.report_id IS NOT OLD.report_id
   OR NEW.report_operation IS NOT OLD.report_operation OR NEW.report_code IS NOT OLD.report_code
   OR NEW.evidence_reference IS NOT OLD.evidence_reference OR NEW.last_observation_number <> OLD.last_observation_number
+  OR NOT (
+    (NEW.current_authorization_decision_id = OLD.current_authorization_decision_id
+      AND NEW.authorization_binding_revision = OLD.authorization_binding_revision)
+    OR (NEW.authorization_binding_revision = OLD.authorization_binding_revision + 1
+      AND NEW.current_authorization_decision_id <> OLD.current_authorization_decision_id
+      AND EXISTS (
+        SELECT 1 FROM execution_intent_authorization_bindings AS binding
+        WHERE binding.intent_id = OLD.intent_id
+          AND binding.binding_revision = NEW.authorization_binding_revision
+          AND binding.decision_id = NEW.current_authorization_decision_id
+          AND binding.prior_decision_id = OLD.current_authorization_decision_id
+      ))
+  )
+  OR NOT (
+    (NEW.last_error_category IS OLD.last_error_category
+      AND NEW.last_error_code IS OLD.last_error_code
+      AND NEW.last_error_retryable IS OLD.last_error_retryable
+      AND NEW.last_error_ambiguous IS OLD.last_error_ambiguous
+      AND NEW.retry_after IS OLD.retry_after
+      AND NEW.retry_count = OLD.retry_count)
+    OR (OLD.state = 'executing' AND NEW.state IN ('retry_wait', 'ambiguous', 'failed')
+      AND NEW.last_error_category IS NOT NULL AND NEW.last_error_code IS NOT NULL
+      AND NEW.last_error_retryable IS NOT NULL AND NEW.last_error_ambiguous IS NOT NULL
+      AND NEW.retry_count = OLD.retry_count + 1)
+  )
   OR NEW.created_at <> OLD.created_at OR NEW.updated_at <= OLD.updated_at OR NEW.revision <> OLD.revision + 1
   OR NOT (
-    (OLD.state = 'pending' AND NEW.state = 'executing')
-    OR (OLD.state = 'executing' AND NEW.state IN ('observed', 'retry_wait', 'ambiguous', 'failed'))
+    (OLD.state = 'pending' AND NEW.state IN ('executing', 'finalized'))
+    OR (OLD.state = 'executing' AND NEW.state = 'executing'
+      AND NEW.authorization_binding_revision = OLD.authorization_binding_revision + 1)
+    OR (OLD.state = 'executing' AND NEW.state IN ('observed', 'retry_wait', 'ambiguous', 'failed', 'finalized'))
     OR (OLD.state = 'retry_wait' AND NEW.state IN ('executing', 'finalized'))
     OR (OLD.state = 'observed' AND NEW.state IN ('verified', 'ambiguous', 'failed'))
     OR (OLD.state = 'ambiguous' AND NEW.state IN ('observed', 'finalized'))
@@ -601,7 +734,7 @@ WHEN NEW.backend_execution_id <> OLD.backend_execution_id OR NEW.thread_id <> OL
   OR NEW.predecessor_thread_id IS NOT OLD.predecessor_thread_id
   OR NEW.policy_binding_reference <> OLD.policy_binding_reference OR NEW.workspace_mode <> OLD.workspace_mode
   OR NEW.created_at <> OLD.created_at OR NEW.updated_at <= OLD.updated_at OR NEW.revision <> OLD.revision + 1
-  OR (OLD.lifecycle IN ('turn_succeeded', 'failed', 'cancelled') AND NEW.lifecycle <> OLD.lifecycle)
+  OR OLD.lifecycle IN ('turn_succeeded', 'failed', 'cancelled')
 BEGIN
   SELECT RAISE(ABORT, 'Manual turn update violates identity, fence, revision or terminal immutability');
 END;
@@ -625,11 +758,13 @@ CREATE TEMP TABLE ep02b_migration_assertion (ok INTEGER NOT NULL CHECK (ok = 1))
 INSERT INTO ep02b_migration_assertion
 SELECT NOT EXISTS (SELECT 1 FROM authorization_capability_epochs_v6)
   AND NOT EXISTS (SELECT 1 FROM authorization_grants_v6)
+  AND NOT EXISTS (SELECT 1 FROM authorization_grant_epoch_v6_links)
   AND NOT EXISTS (SELECT 1 FROM application_lifecycle_digest_v6)
   AND NOT EXISTS (SELECT 1 FROM execution_operation_requests)
   AND NOT EXISTS (SELECT 1 FROM execution_authorization_decisions)
   AND NOT EXISTS (SELECT 1 FROM execution_operation_audit)
   AND NOT EXISTS (SELECT 1 FROM execution_operation_intents)
+  AND NOT EXISTS (SELECT 1 FROM execution_intent_authorization_bindings)
   AND NOT EXISTS (SELECT 1 FROM execution_observations)
   AND NOT EXISTS (SELECT 1 FROM execution_verified_receipts)
   AND NOT EXISTS (SELECT 1 FROM execution_finalizations)

@@ -595,35 +595,49 @@ function sameRootIdentity(left: ProjectRootIdentity, right: ProjectRootIdentity)
     left.inode === right.inode &&
     left.mode === right.mode;
 }
+export type TrustedRuntimeActorValidation = Readonly<
+  { ok: true } |
+  { ok: false; reason: "bootstrap_absent" | "runtime_root_unavailable" | "runtime_root_mismatch" | "local_identity_mismatch" }
+>;
+
+export function validateTrustedRuntimeAndActor(
+  state: ApplicationState,
+  actor: TrustedActorAssertion,
+  store: PersistenceStore,
+): TrustedRuntimeActorValidation {
+  if (state.bootstrap === null) return Object.freeze({ ok: false, reason: "bootstrap_absent" as const });
+  let current: ProjectRootIdentity;
+  try {
+    current = inspectTrustedRuntimeRoot(store.layout.root);
+  } catch {
+    return Object.freeze({ ok: false, reason: "runtime_root_unavailable" as const });
+  }
+  if (!sameRootIdentity(state.bootstrap, current)) {
+    return Object.freeze({ ok: false, reason: "runtime_root_mismatch" as const });
+  }
+  const localIdentityRequired = actor.actorId.startsWith("local-v1:") || actor.actorId === state.identity?.actorId;
+  if (localIdentityRequired && (
+    state.identity === null || state.identity.actorId !== actor.actorId ||
+    state.identity.principalSha256 !== actor.principal || state.identity.platform !== current.platform ||
+    state.identity.runtimeRootKey !== current.rootKey
+  )) return Object.freeze({ ok: false, reason: "local_identity_mismatch" as const });
+  return Object.freeze({ ok: true as const });
+}
+
 function validateRuntimeAndActor(
   state: ApplicationState,
   identity: ExecutionOperationIdentity,
   store: PersistenceStore,
 ): ExecutionApplicationFailure | null {
-  if (state.bootstrap === null) {
-    return failed("AUTHORIZATION_DENIED", "Authorization bootstrap is absent", identity);
-  }
-  let current: ProjectRootIdentity;
-  try {
-    current = inspectTrustedRuntimeRoot(store.layout.root);
-  } catch {
-    return failed("PROJECT_IDENTITY_CHANGED", "Runtime root identity could not be revalidated", identity);
-  }
-  if (!sameRootIdentity(state.bootstrap, current)) {
-    return failed("AUTHORIZATION_DENIED", "Authorization bootstrap is bound to another runtime root", identity);
-  }
-  const localIdentityRequired = identity.actor.actorId.startsWith("local-v1:") ||
-    identity.actor.actorId === state.identity?.actorId;
-  if (localIdentityRequired && (
-    state.identity === null ||
-    state.identity.actorId !== identity.actor.actorId ||
-    state.identity.principalSha256 !== identity.actor.principal ||
-    state.identity.platform !== current.platform ||
-    state.identity.runtimeRootKey !== current.rootKey
-  )) {
-    return failed("AUTHORIZATION_DENIED", "Trusted local identity does not match the initialized runtime", identity);
-  }
-  return null;
+  const validation = validateTrustedRuntimeAndActor(state, identity.actor, store);
+  if (validation.ok) return null;
+  return validation.reason === "runtime_root_unavailable"
+    ? failed("PROJECT_IDENTITY_CHANGED", "Runtime root identity could not be revalidated", identity)
+    : failed("AUTHORIZATION_DENIED", validation.reason === "runtime_root_mismatch"
+      ? "Authorization bootstrap is bound to another runtime root"
+      : validation.reason === "local_identity_mismatch"
+        ? "Trusted local identity does not match the initialized runtime"
+        : "Authorization bootstrap is absent", identity);
 }
 function executionPolicy(
   state: ApplicationState,

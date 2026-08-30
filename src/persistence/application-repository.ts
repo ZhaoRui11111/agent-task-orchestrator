@@ -1,5 +1,6 @@
 import {
   AUTHORIZATION_ACTIONS,
+  MANUAL_EXECUTION_AUTHORIZATION_ACTIONS,
   PHASE1_AUTHORIZATION_ACTIONS,
   PHASE2A_AUTHORIZATION_ACTIONS,
   isHighRiskAction,
@@ -230,6 +231,7 @@ export interface ExecutionAuthorizationDecisionRecord {
   readonly grantRevision: number | null;
   readonly projectId: string;
   readonly resourceRevision: number;
+  readonly configRevision: number;
   readonly createdAt: string;
 }
 
@@ -262,6 +264,8 @@ export interface ExecutionOperationIntent {
   readonly actorId: string;
   readonly requestId: string;
   readonly decisionId: string;
+  readonly currentAuthorizationDecisionId: string;
+  readonly authorizationBindingRevision: number;
   readonly confirmationId: string | null;
   readonly projectId: string;
   readonly projectResourceRevision: number;
@@ -297,8 +301,32 @@ export interface ExecutionOperationIntent {
   readonly reportCode: string | null;
   readonly evidenceReference: string | null;
   readonly lastObservationNumber: number;
+  readonly lastErrorCategory: ExecutionAdapterFailureCategory | null;
+  readonly lastErrorCode: string | null;
+  readonly lastErrorRetryable: boolean | null;
+  readonly lastErrorAmbiguous: boolean | null;
+  readonly retryAfter: string | null;
+  readonly retryCount: number;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+export type ExecutionAdapterFailureCategory =
+  | "invalid_request" | "incompatible_contract" | "unauthorized" | "policy_denied"
+  | "not_found" | "conflict" | "stale_revision" | "busy" | "rate_limited"
+  | "resource_exhausted" | "transient_external" | "permanent_external"
+  | "ambiguous_external_state" | "cancelled" | "integrity_failure";
+
+export interface ExecutionIntentAuthorizationBindingRecord {
+  readonly bindingId: string;
+  readonly intentId: string;
+  readonly bindingRevision: number;
+  readonly phase: "prepare" | "act" | "finalize";
+  readonly requestId: string;
+  readonly decisionId: string;
+  readonly auditId: string;
+  readonly priorDecisionId: string | null;
+  readonly createdAt: string;
 }
 
 export interface ExecutionObservationRecord {
@@ -336,6 +364,7 @@ export interface ExecutionFinalizationRecord {
   readonly finalizationId: string;
   readonly intentId: string;
   readonly verifiedReceiptId: string | null;
+  readonly authorizationDecisionId: string;
   readonly outcome: "accepted" | "deferred" | "rejected" | "waiting" | "interrupted";
   readonly code: string;
   readonly taskRevision: number;
@@ -390,6 +419,7 @@ export interface ManualBackendOperationRecord {
   readonly backendOperationId: string;
   readonly idempotencyKey: string;
   readonly intentId: string;
+  readonly authorizationDecisionId: string;
   readonly operationKind: "start" | "resume" | "retry" | "request_cancel" | "manual_report";
   readonly reportOperation: "activate" | "wait" | "succeed" | "fail" | "confirm_cancelled" | null;
   readonly backendExecutionId: string;
@@ -439,6 +469,7 @@ export interface ApplicationState {
   readonly executionAuthorizationDecisions: readonly ExecutionAuthorizationDecisionRecord[];
   readonly executionOperationAudit: readonly ExecutionOperationAuditRecord[];
   readonly executionIntents: readonly ExecutionOperationIntent[];
+  readonly executionIntentAuthorizationBindings: readonly ExecutionIntentAuthorizationBindingRecord[];
   readonly executionObservations: readonly ExecutionObservationRecord[];
   readonly executionReceipts: readonly ExecutionVerifiedReceiptRecord[];
   readonly executionFinalizations: readonly ExecutionFinalizationRecord[];
@@ -1006,7 +1037,7 @@ function readExecutionAuthorizationDecisions(database: SqliteDatabase): readonly
   ]);
   return Object.freeze(database.prepare(
     `SELECT decision_id, request_id, actor_id, action, result, reason, policy_result,
-      grant_id, grant_revision, project_id, resource_revision, created_at
+      grant_id, grant_revision, project_id, resource_revision, config_revision, created_at
     FROM execution_authorization_decisions ORDER BY decision_id`,
   ).all().map((row) => Object.freeze({
     decisionId: sqliteText(row.decision_id, "execution_authorization_decisions.decision_id"),
@@ -1020,6 +1051,7 @@ function readExecutionAuthorizationDecisions(database: SqliteDatabase): readonly
     grantRevision: nullablePositive(row.grant_revision, "execution_authorization_decisions.grant_revision"),
     projectId: sqliteText(row.project_id, "execution_authorization_decisions.project_id"),
     resourceRevision: positive(row.resource_revision, "execution_authorization_decisions.resource_revision"),
+    configRevision: positive(row.config_revision, "execution_authorization_decisions.config_revision"),
     createdAt: timestamp(row.created_at, "execution_authorization_decisions.created_at"),
   })));
 }
@@ -1065,7 +1097,8 @@ function readExecutionIntents(database: SqliteDatabase): readonly ExecutionOpera
   const reportOperations = new Set<NonNullable<ExecutionOperationIntent["reportOperation"]>>(["activate", "wait", "succeed", "fail", "confirm_cancelled"]);
   return Object.freeze(database.prepare(
     `SELECT intent_id, operation_id, idempotency_key, operation_kind, action, state,
-      revision, actor_id, request_id, decision_id, confirmation_id, project_id,
+      revision, actor_id, request_id, decision_id, current_authorization_decision_id,
+      authorization_binding_revision, confirmation_id, project_id,
       project_resource_revision, project_config_revision, task_id, task_revision,
       input_reference, execution_id, execution_revision, attempt_number, fencing_token,
       source_execution_id, source_execution_revision, source_attempt_number, source_fencing_token,
@@ -1074,6 +1107,8 @@ function readExecutionIntents(database: SqliteDatabase): readonly ExecutionOpera
       backend_execution_id, thread_id, previous_receipt_id, expected_journal_revision,
       requested_deadline, continuation_reference, required_action_receipt_id, expected_lifecycle,
       reason_code, report_id, report_operation, report_code, evidence_reference, last_observation_number,
+      last_error_category, last_error_code, last_error_retryable, last_error_ambiguous,
+      retry_after, retry_count,
       created_at, updated_at FROM execution_operation_intents ORDER BY intent_id`,
   ).all().map((row) => {
     const contractId = sqliteText(row.contract_id, "execution_operation_intents.contract_id");
@@ -1092,6 +1127,12 @@ function readExecutionIntents(database: SqliteDatabase): readonly ExecutionOpera
       actorId: sqliteText(row.actor_id, "execution_operation_intents.actor_id"),
       requestId: sqliteText(row.request_id, "execution_operation_intents.request_id"),
       decisionId: sqliteText(row.decision_id, "execution_operation_intents.decision_id"),
+      currentAuthorizationDecisionId: sqliteText(
+        row.current_authorization_decision_id, "execution_operation_intents.current_authorization_decision_id",
+      ),
+      authorizationBindingRevision: positive(
+        row.authorization_binding_revision, "execution_operation_intents.authorization_binding_revision",
+      ),
       confirmationId: sqliteNullableText(row.confirmation_id, "execution_operation_intents.confirmation_id"),
       projectId: sqliteText(row.project_id, "execution_operation_intents.project_id"),
       projectResourceRevision: positive(row.project_resource_revision, "execution_operation_intents.project_resource_revision"),
@@ -1127,10 +1168,51 @@ function readExecutionIntents(database: SqliteDatabase): readonly ExecutionOpera
       reportCode: sqliteNullableText(row.report_code, "execution_operation_intents.report_code"),
       evidenceReference: sqliteNullableText(row.evidence_reference, "execution_operation_intents.evidence_reference"),
       lastObservationNumber: nonnegative(row.last_observation_number, "execution_operation_intents.last_observation_number"),
+      lastErrorCategory: row.last_error_category === null ? null : enumText(
+        row.last_error_category,
+        "execution_operation_intents.last_error_category",
+        new Set<ExecutionAdapterFailureCategory>([
+          "invalid_request", "incompatible_contract", "unauthorized", "policy_denied", "not_found",
+          "conflict", "stale_revision", "busy", "rate_limited", "resource_exhausted",
+          "transient_external", "permanent_external", "ambiguous_external_state", "cancelled",
+          "integrity_failure",
+        ]),
+      ),
+      lastErrorCode: sqliteNullableText(row.last_error_code, "execution_operation_intents.last_error_code"),
+      lastErrorRetryable: row.last_error_retryable === null ? null : integer(
+        row.last_error_retryable, "execution_operation_intents.last_error_retryable",
+      ) === 1,
+      lastErrorAmbiguous: row.last_error_ambiguous === null ? null : integer(
+        row.last_error_ambiguous, "execution_operation_intents.last_error_ambiguous",
+      ) === 1,
+      retryAfter: row.retry_after === null ? null : timestamp(row.retry_after, "execution_operation_intents.retry_after"),
+      retryCount: nonnegative(row.retry_count, "execution_operation_intents.retry_count"),
       createdAt: timestamp(row.created_at, "execution_operation_intents.created_at"),
       updatedAt: timestamp(row.updated_at, "execution_operation_intents.updated_at"),
     });
   }));
+}
+
+function readExecutionIntentAuthorizationBindings(
+  database: SqliteDatabase,
+): readonly ExecutionIntentAuthorizationBindingRecord[] {
+  if (!tableExists(database, "execution_intent_authorization_bindings")) return Object.freeze([]);
+  const phases = new Set<ExecutionIntentAuthorizationBindingRecord["phase"]>(["prepare", "act", "finalize"]);
+  return Object.freeze(database.prepare(
+    `SELECT binding_id, intent_id, binding_revision, phase, request_id, decision_id,
+      audit_id, prior_decision_id, created_at
+    FROM execution_intent_authorization_bindings ORDER BY intent_id, binding_revision`,
+  ).all().map((row) => Object.freeze({
+    bindingId: sqliteText(row.binding_id, "execution_intent_authorization_bindings.binding_id"),
+    intentId: sqliteText(row.intent_id, "execution_intent_authorization_bindings.intent_id"),
+    bindingRevision: positive(row.binding_revision, "execution_intent_authorization_bindings.binding_revision"),
+    phase: enumText(row.phase, "execution_intent_authorization_bindings.phase", phases),
+    requestId: sqliteText(row.request_id, "execution_intent_authorization_bindings.request_id"),
+    decisionId: sqliteText(row.decision_id, "execution_intent_authorization_bindings.decision_id"),
+    auditId: sqliteText(row.audit_id, "execution_intent_authorization_bindings.audit_id"),
+    priorDecisionId: sqliteNullableText(row.prior_decision_id, "execution_intent_authorization_bindings.prior_decision_id"),
+    createdAt: timestamp(row.created_at, "execution_intent_authorization_bindings.created_at"),
+  })));
 }
 
 function readExecutionObservations(database: SqliteDatabase): readonly ExecutionObservationRecord[] {
@@ -1187,12 +1269,13 @@ function readExecutionFinalizations(database: SqliteDatabase): readonly Executio
   if (!tableExists(database, "execution_finalizations")) return Object.freeze([]);
   const outcomes = new Set<ExecutionFinalizationRecord["outcome"]>(["accepted", "deferred", "rejected", "waiting", "interrupted"]);
   return Object.freeze(database.prepare(
-    `SELECT finalization_id, intent_id, verified_receipt_id, outcome, code,
+    `SELECT finalization_id, intent_id, verified_receipt_id, authorization_decision_id, outcome, code,
       task_revision, execution_revision, finalized_at FROM execution_finalizations ORDER BY finalization_id`,
   ).all().map((row) => Object.freeze({
     finalizationId: sqliteText(row.finalization_id, "execution_finalizations.finalization_id"),
     intentId: sqliteText(row.intent_id, "execution_finalizations.intent_id"),
     verifiedReceiptId: sqliteNullableText(row.verified_receipt_id, "execution_finalizations.verified_receipt_id"),
+    authorizationDecisionId: sqliteText(row.authorization_decision_id, "execution_finalizations.authorization_decision_id"),
     outcome: enumText(row.outcome, "execution_finalizations.outcome", outcomes),
     code: sqliteText(row.code, "execution_finalizations.code"),
     taskRevision: positive(row.task_revision, "execution_finalizations.task_revision"),
@@ -1273,7 +1356,8 @@ function readManualBackendOperations(database: SqliteDatabase): readonly ManualB
   const reports = new Set<Exclude<ManualBackendOperationRecord["reportOperation"], null>>(["activate", "wait", "succeed", "fail", "confirm_cancelled"]);
   const lifecycles = new Set<ManualTurnLifecycle>(["queued", "active", "waiting", "turn_succeeded", "failed", "cancelled"]);
   return Object.freeze(database.prepare(
-    `SELECT backend_operation_id, idempotency_key, intent_id, operation_kind, report_operation,
+    `SELECT backend_operation_id, idempotency_key, intent_id, authorization_decision_id,
+      operation_kind, report_operation,
       backend_execution_id, thread_id, source_backend_execution_id, source_thread_id,
       expected_fencing_token, expected_pre_revision,
       post_revision, result_lifecycle, receipt_id, created_at
@@ -1282,6 +1366,9 @@ function readManualBackendOperations(database: SqliteDatabase): readonly ManualB
     backendOperationId: sqliteText(row.backend_operation_id, "manual_backend_operations.backend_operation_id"),
     idempotencyKey: sqliteText(row.idempotency_key, "manual_backend_operations.idempotency_key"),
     intentId: sqliteText(row.intent_id, "manual_backend_operations.intent_id"),
+    authorizationDecisionId: sqliteText(
+      row.authorization_decision_id, "manual_backend_operations.authorization_decision_id",
+    ),
     operationKind: enumText(row.operation_kind, "manual_backend_operations.operation_kind", kinds),
     reportOperation: row.report_operation === null ? null : enumText(row.report_operation, "manual_backend_operations.report_operation", reports),
     backendExecutionId: sqliteText(row.backend_execution_id, "manual_backend_operations.backend_execution_id"),
@@ -1342,38 +1429,59 @@ function readRequests(database: SqliteDatabase): readonly ApplicationRequestReco
   })));
 }
 
-function readGrants(database: SqliteDatabase): readonly AuthorizationGrant[] {
+type AuthorizationGrantPhysicalOwner = "legacy" | "v6";
+
+interface DecodedAuthorizationGrant {
+  readonly grant: AuthorizationGrant;
+  readonly physicalOwner: AuthorizationGrantPhysicalOwner;
+}
+
+function readGrants(database: SqliteDatabase): readonly DecodedAuthorizationGrant[] {
   const union = tableExists(database, "authorization_grants_v6")
     ? ` UNION ALL SELECT grant_id, revision, actor_id, action, scope_kind, scope_project_id,
         scope_resource_revision, scope_config_revision, not_before, expires_at,
-        revoked_at, issuer_grant_id, source_grant_id FROM authorization_grants_v6`
+        revoked_at, issuer_grant_id, source_grant_id, 'v6' AS physical_owner
+      FROM authorization_grants_v6`
     : "";
   const rows = database.prepare(
     `SELECT grant_id, revision, actor_id, action, scope_kind, scope_project_id,
       scope_resource_revision, scope_config_revision, not_before, expires_at,
-      revoked_at, issuer_grant_id, source_grant_id FROM authorization_grants${union} ORDER BY grant_id`,
+      revoked_at, issuer_grant_id, source_grant_id, 'legacy' AS physical_owner
+    FROM authorization_grants${union} ORDER BY grant_id`,
   ).all();
-  return Object.freeze(rows.map((row) => {
+  const decoded = rows.map((row) => {
+    const physicalOwner = enumText(
+      row.physical_owner,
+      "authorization grant physical owner",
+      new Set<AuthorizationGrantPhysicalOwner>(["legacy", "v6"]),
+    );
     const parsed = parseAuthorizationGrant({
-      grantId: sqliteText(row.grant_id, "authorization_grants.grant_id"),
-      revision: positive(row.revision, "authorization_grants.revision"),
-      actorId: sqliteText(row.actor_id, "authorization_grants.actor_id"),
-      action: grantAction(row.action, "authorization_grants.action"),
+      grantId: sqliteText(row.grant_id, `${physicalOwner} authorization grant.grant_id`),
+      revision: positive(row.revision, `${physicalOwner} authorization grant.revision`),
+      actorId: sqliteText(row.actor_id, `${physicalOwner} authorization grant.actor_id`),
+      action: grantAction(row.action, `${physicalOwner} authorization grant.action`),
       scope: {
-        kind: enumText(row.scope_kind, "authorization_grants.scope_kind", SCOPE_KINDS),
-        projectId: sqliteNullableText(row.scope_project_id, "authorization_grants.scope_project_id"),
-        resourceRevision: nullablePositive(row.scope_resource_revision, "authorization_grants.scope_resource_revision"),
-        configRevision: nullablePositive(row.scope_config_revision, "authorization_grants.scope_config_revision"),
+        kind: enumText(row.scope_kind, `${physicalOwner} authorization grant.scope_kind`, SCOPE_KINDS),
+        projectId: sqliteNullableText(row.scope_project_id, `${physicalOwner} authorization grant.scope_project_id`),
+        resourceRevision: nullablePositive(row.scope_resource_revision, `${physicalOwner} authorization grant.scope_resource_revision`),
+        configRevision: nullablePositive(row.scope_config_revision, `${physicalOwner} authorization grant.scope_config_revision`),
       },
-      notBefore: timestamp(row.not_before, "authorization_grants.not_before"),
-      expiresAt: timestamp(row.expires_at, "authorization_grants.expires_at"),
-      revokedAt: row.revoked_at === null ? null : timestamp(row.revoked_at, "authorization_grants.revoked_at"),
-      issuerGrantId: sqliteNullableText(row.issuer_grant_id, "authorization_grants.issuer_grant_id"),
-      sourceGrantId: sqliteNullableText(row.source_grant_id, "authorization_grants.source_grant_id"),
+      notBefore: timestamp(row.not_before, `${physicalOwner} authorization grant.not_before`),
+      expiresAt: timestamp(row.expires_at, `${physicalOwner} authorization grant.expires_at`),
+      revokedAt: row.revoked_at === null ? null : timestamp(row.revoked_at, `${physicalOwner} authorization grant.revoked_at`),
+      issuerGrantId: sqliteNullableText(row.issuer_grant_id, `${physicalOwner} authorization grant.issuer_grant_id`),
+      sourceGrantId: sqliteNullableText(row.source_grant_id, `${physicalOwner} authorization grant.source_grant_id`),
     });
     if (parsed === null) throw persistenceFailure("CORRUPT_ROW", "Authorization grant has an impossible shape");
-    return parsed;
-  }));
+    if (physicalOwner === "v6" && !(MANUAL_EXECUTION_AUTHORIZATION_ACTIONS as readonly string[]).includes(parsed.action)) {
+      throw persistenceFailure("CORRUPT_ROW", "Vocabulary-v6 grant is stored in the wrong physical relation");
+    }
+    return Object.freeze({ grant: parsed, physicalOwner });
+  });
+  if (new Set(decoded.map(({ grant }) => grant.grantId)).size !== decoded.length) {
+    throw persistenceFailure("CORRUPT_ROW", "Authorization grant identifiers are not globally unique");
+  }
+  return Object.freeze(decoded);
 }
 
 function readDecisions(database: SqliteDatabase): readonly AuthorizationDecisionRecord[] {
@@ -1462,7 +1570,9 @@ function readApplicationStateUntransactional(
   const projects = readProjects(database);
   const bootstrap = readBootstrap(database, schemaShape);
   const identity = schemaShape === "version-three" ? null : readIdentity(database);
-  const grants = readGrants(database);
+  const decodedGrants = readGrants(database);
+  const grants = Object.freeze(decodedGrants.map(({ grant }) => grant));
+  const grantPhysicalOwnerById = new Map(decodedGrants.map(({ grant, physicalOwner }) => [grant.grantId, physicalOwner]));
   const epochs = schemaShape === "version-three" ? Object.freeze([]) : readEpochs(database);
   const requests = readRequests(database);
   const decisions = readDecisions(database);
@@ -1475,6 +1585,8 @@ function readApplicationStateUntransactional(
   const executionAuthorizationDecisions = schemaShape === "current" ? readExecutionAuthorizationDecisions(database) : Object.freeze([]);
   const executionOperationAudit = schemaShape === "current" ? readExecutionOperationAudit(database) : Object.freeze([]);
   const executionIntents = schemaShape === "current" ? readExecutionIntents(database) : Object.freeze([]);
+  const executionIntentAuthorizationBindings = schemaShape === "current"
+    ? readExecutionIntentAuthorizationBindings(database) : Object.freeze([]);
   const executionObservations = schemaShape === "current" ? readExecutionObservations(database) : Object.freeze([]);
   const executionReceipts = schemaShape === "current" ? readExecutionReceipts(database) : Object.freeze([]);
   const executionFinalizations = schemaShape === "current" ? readExecutionFinalizations(database) : Object.freeze([]);
@@ -1482,12 +1594,21 @@ function readApplicationStateUntransactional(
   const manualTurns = schemaShape === "current" ? readManualTurns(database) : Object.freeze([]);
   const manualBackendOperations = schemaShape === "current" ? readManualBackendOperations(database) : Object.freeze([]);
   const manualCompletionDecisions = schemaShape === "current" ? readManualCompletionDecisions(database) : Object.freeze([]);
+  const v6LegacyGrantLinks = schemaShape === "current" && tableExists(database, "authorization_grant_epoch_v6_links");
+  const baseGrantRelationSelect = v6LegacyGrantLinks
+    ? `SELECT grant_record.grant_id, grant_record.action,
+        COALESCE(epoch_link.capability_epoch_id, grant_record.capability_epoch_id) AS capability_epoch_id,
+        grant_record.created_request_id, grant_record.revoked_request_id, 'legacy' AS physical_owner
+      FROM authorization_grants AS grant_record
+      LEFT JOIN authorization_grant_epoch_v6_links AS epoch_link
+        ON epoch_link.grant_id=grant_record.grant_id AND epoch_link.action=grant_record.action`
+    : "SELECT grant_id, action, capability_epoch_id, created_request_id, revoked_request_id, 'legacy' AS physical_owner FROM authorization_grants";
   const grantRelationUnion = schemaShape === "current" && tableExists(database, "authorization_grants_v6")
-    ? " UNION ALL SELECT grant_id, capability_epoch_id, created_request_id, revoked_request_id FROM authorization_grants_v6"
+    ? " UNION ALL SELECT grant_id, action, capability_epoch_id, created_request_id, revoked_request_id, 'v6' AS physical_owner FROM authorization_grants_v6"
     : "";
   const grantRelationRows = database.prepare(schemaShape !== "version-three"
-    ? `SELECT grant_id, capability_epoch_id, created_request_id, revoked_request_id FROM authorization_grants${grantRelationUnion} ORDER BY grant_id`
-    : "SELECT grant_id, created_request_id, revoked_request_id FROM authorization_grants ORDER BY grant_id"
+    ? `${baseGrantRelationSelect}${grantRelationUnion} ORDER BY grant_id`
+    : "SELECT grant_id, action, created_request_id, revoked_request_id, 'legacy' AS physical_owner FROM authorization_grants ORDER BY grant_id"
   ).all();
   const domainProjectIds = new Set(domain.projects.map((project) => project.id));
   if (projects.some((project) => !domainProjectIds.has(project.projectId) || project.updatedAt < project.createdAt)) {
@@ -1500,12 +1621,21 @@ function readApplicationStateUntransactional(
   const grantById = new Map(grants.map((grant) => [grant.grantId, grant]));
   const grantRelations = grantRelationRows.map((row) => Object.freeze({
     grantId: sqliteText(row.grant_id, "authorization_grants.grant_id"),
+    action: grantAction(row.action, "authorization_grants.action"),
     capabilityEpochId: schemaShape !== "version-three"
       ? sqliteNullableText(row.capability_epoch_id, "authorization_grants.capability_epoch_id")
       : null,
     createdRequestId: sqliteText(row.created_request_id, "authorization_grants.created_request_id"),
     revokedRequestId: sqliteNullableText(row.revoked_request_id, "authorization_grants.revoked_request_id"),
+    physicalOwner: enumText(
+      row.physical_owner,
+      "authorization grant relation physical owner",
+      new Set<AuthorizationGrantPhysicalOwner>(["legacy", "v6"]),
+    ),
   }));
+  if (new Set(grantRelations.map((relation) => relation.grantId)).size !== grantRelations.length) {
+    throw persistenceFailure("CORRUPT_ROW", "Authorization grant relation identifiers are not globally unique");
+  }
   const grantRelationById = new Map(grantRelations.map((relation) => [relation.grantId, relation]));
   if ((bootstrap === null) !== (grants.length === 0)) {
     throw persistenceFailure("CORRUPT_ROW", "Bootstrap and grant existence do not form one initialized authorization state");
@@ -1614,6 +1744,32 @@ function readApplicationStateUntransactional(
     ) {
       throw persistenceFailure("CORRUPT_ROW", "Capability epoch lineage is incomplete or non-contiguous");
     }
+    const epochRelations = grantRelations.filter((relation) => relation.capabilityEpochId === epoch.epochId);
+    const expectedActions = epoch.vocabularyVersion === 6
+      ? AUTHORIZATION_ACTIONS
+      : epoch.vocabularyVersion === 5
+        ? PHASE2A_AUTHORIZATION_ACTIONS
+        : PHASE1_AUTHORIZATION_ACTIONS;
+    const actionSet = new Set(epochRelations.map((relation) => relation.action));
+    if (
+      epochRelations.length !== expectedActions.length ||
+      actionSet.size !== expectedActions.length ||
+      expectedActions.some((expected) => !actionSet.has(expected))
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Capability epoch grant action inventory is not exact");
+    }
+    const expectedLegacyActions = epoch.vocabularyVersion === 6 ? PHASE2A_AUTHORIZATION_ACTIONS : expectedActions;
+    const expectedV6Actions = epoch.vocabularyVersion === 6 ? MANUAL_EXECUTION_AUTHORIZATION_ACTIONS : Object.freeze([]);
+    const legacyActions = epochRelations.filter((relation) => relation.physicalOwner === "legacy").map((relation) => relation.action);
+    const v6Actions = epochRelations.filter((relation) => relation.physicalOwner === "v6").map((relation) => relation.action);
+    if (
+      legacyActions.length !== expectedLegacyActions.length ||
+      expectedLegacyActions.some((expected) => !legacyActions.includes(expected)) ||
+      v6Actions.length !== expectedV6Actions.length ||
+      expectedV6Actions.some((expected) => !v6Actions.includes(expected))
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Capability epoch grants use an invalid physical partition");
+    }
   }
   const bootstrapRequests = requests.filter((request) => request.result === "bootstrap");
   if ((bootstrap === null && bootstrapRequests.length !== 0) || (bootstrap !== null && (bootstrapRequests.length !== 1 || bootstrapRequests[0]?.requestId !== bootstrap.requestId))) {
@@ -1662,6 +1818,8 @@ function readApplicationStateUntransactional(
     const revokedRequest = revokedRequestId === null ? null : requestById.get(revokedRequestId);
     if (
       grant === undefined ||
+      relation.action !== grant.action ||
+      relation.physicalOwner !== grantPhysicalOwnerById.get(relation.grantId) ||
       createdRequest === undefined ||
       (
         createdRequest.result !== "bootstrap" &&
@@ -2025,6 +2183,9 @@ function readApplicationStateUntransactional(
   const executionDecisionById = new Map(executionAuthorizationDecisions.map((decision) => [decision.decisionId, decision]));
   const executionDecisionByRequest = new Map(executionAuthorizationDecisions.map((decision) => [decision.requestId, decision]));
   const intentById = new Map(executionIntents.map((intent) => [intent.intentId, intent]));
+  const authorizationBindingByDecision = new Map(
+    executionIntentAuthorizationBindings.map((binding) => [binding.decisionId, binding]),
+  );
   const receiptById = new Map(executionReceipts.map((receipt) => [receipt.verifiedReceiptId, receipt]));
   const finalizationById = new Map(executionFinalizations.map((finalization) => [finalization.finalizationId, finalization]));
   const manualTurnByBackendId = new Map(manualTurns.map((turn) => [turn.backendExecutionId, turn]));
@@ -2032,7 +2193,9 @@ function readApplicationStateUntransactional(
     executionRequestById.size !== executionOperationRequests.length ||
     executionDecisionById.size !== executionAuthorizationDecisions.length ||
     executionDecisionByRequest.size !== executionAuthorizationDecisions.length ||
-    intentById.size !== executionIntents.length || receiptById.size !== executionReceipts.length ||
+    intentById.size !== executionIntents.length ||
+    authorizationBindingByDecision.size !== executionIntentAuthorizationBindings.length ||
+    receiptById.size !== executionReceipts.length ||
     finalizationById.size !== executionFinalizations.length || manualTurnByBackendId.size !== manualTurns.length
   ) throw persistenceFailure("CORRUPT_ROW", "Phase 2 execution identity inventory is not unique");
   for (const request of executionOperationRequests) {
@@ -2055,7 +2218,8 @@ function readApplicationStateUntransactional(
       (request.result === "deny" && decision.reason === "allowed")
     ) throw persistenceFailure("CORRUPT_ROW", "Execution request, decision, audit, and target binding is inconsistent");
     const project = projects.find((candidate) => candidate.projectId === decision.projectId);
-    if (project === undefined || decision.resourceRevision > project.resourceRevision) {
+    if (project === undefined || decision.resourceRevision > project.resourceRevision ||
+      decision.configRevision > project.configRevision) {
       throw persistenceFailure("CORRUPT_ROW", "Execution decision Project binding is impossible");
     }
     if (decision.grantId !== null) {
@@ -2066,7 +2230,7 @@ function readApplicationStateUntransactional(
         (grant.revokedAt !== null && grant.revokedAt <= decision.createdAt) ||
         (grant.scope.kind === "project" && (
           grant.scope.projectId !== decision.projectId || grant.scope.resourceRevision !== decision.resourceRevision ||
-          grant.scope.configRevision !== project.configRevision
+          grant.scope.configRevision !== decision.configRevision
         ))
       ) throw persistenceFailure("CORRUPT_ROW", "Execution decision grant binding is impossible");
     }
@@ -2113,6 +2277,42 @@ function readApplicationStateUntransactional(
     ) throw persistenceFailure("CORRUPT_ROW", "Execution intent semantic, authorization, or revision binding is inconsistent");
     operationIds.add(intent.operationId);
     operationIdempotency.add(intent.idempotencyKey);
+    const bindings = executionIntentAuthorizationBindings
+      .filter((candidate) => candidate.intentId === intent.intentId)
+      .sort((left, right) => left.bindingRevision - right.bindingRevision);
+    const currentBinding = bindings.at(-1);
+    if (
+      bindings.length === 0 || currentBinding === undefined ||
+      currentBinding.bindingRevision !== intent.authorizationBindingRevision ||
+      currentBinding.decisionId !== intent.currentAuthorizationDecisionId ||
+      bindings.some((binding, index) => {
+        const boundRequest = executionRequestById.get(binding.requestId);
+        const boundDecision = executionDecisionById.get(binding.decisionId);
+        const boundAudit = executionOperationAudit.find((event) => event.auditId === binding.auditId);
+        const previous = index === 0 ? undefined : bindings[index - 1];
+        const expectedPhase = index === 0 ? "prepare" : binding.phase;
+        return binding.bindingRevision !== index + 1 || binding.phase !== expectedPhase ||
+          (index === 0 && (binding.phase !== "prepare" || binding.priorDecisionId !== null ||
+            binding.requestId !== intent.requestId || binding.decisionId !== intent.decisionId)) ||
+          (index > 0 && binding.priorDecisionId !== previous?.decisionId) ||
+          boundRequest?.result !== "allow" || boundRequest.action !== intent.action ||
+          boundRequest.actorId !== intent.actorId || boundRequest.targetExecutionId !== intent.executionId ||
+          boundRequest.targetRevision !== intent.executionRevision || boundDecision?.result !== "allow" ||
+          boundDecision.requestId !== binding.requestId || boundDecision.action !== intent.action ||
+          boundDecision.actorId !== intent.actorId || boundDecision.projectId !== intent.projectId ||
+          boundDecision.resourceRevision !== intent.projectResourceRevision ||
+          boundDecision.configRevision !== intent.projectConfigRevision ||
+          boundAudit?.requestId !== binding.requestId || boundAudit.decisionId !== binding.decisionId ||
+          boundAudit.result !== "accepted" || boundAudit.actorId !== intent.actorId ||
+          boundAudit.executionId !== intent.executionId || boundAudit.executionRevision < intent.executionRevision ||
+          boundAudit.createdAt !== binding.createdAt || boundDecision.createdAt !== binding.createdAt ||
+          boundRequest.createdAt !== binding.createdAt;
+      }) ||
+      (intent.state === "pending" && currentBinding.phase !== "prepare") ||
+      (intent.state !== "pending" && intent.state !== "executing" && intent.state !== "finalized" &&
+        currentBinding.phase !== "act") ||
+      (intent.state === "finalized" && currentBinding.phase !== "finalize")
+    ) throw persistenceFailure("CORRUPT_ROW", "Execution intent authorization binding chain is inconsistent");
     const observations = executionObservations
       .filter((observation) => observation.intentId === intent.intentId)
       .sort((left, right) => left.observationNumber - right.observationNumber);
@@ -2139,9 +2339,13 @@ function readApplicationStateUntransactional(
     }
     if (finalization !== undefined && (
       finalization.verifiedReceiptId !== (receipt?.verifiedReceiptId ?? null) ||
+      finalization.authorizationDecisionId !== currentBinding.decisionId || currentBinding.phase !== "finalize" ||
       finalization.executionRevision < intent.executionRevision || finalization.taskRevision < intent.taskRevision ||
       finalization.finalizedAt < intent.updatedAt
     )) throw persistenceFailure("CORRUPT_ROW", "Execution finalization is inconsistent with its intent and receipt");
+  }
+  if (executionIntentAuthorizationBindings.some((binding) => !intentById.has(binding.intentId))) {
+    throw persistenceFailure("CORRUPT_ROW", "Execution intent authorization binding is orphaned");
   }
   for (const observation of executionObservations) {
     const intent = intentById.get(observation.intentId);
@@ -2182,6 +2386,7 @@ function readApplicationStateUntransactional(
   }
   for (const operation of manualBackendOperations) {
     const intent = intentById.get(operation.intentId);
+    const effectAuthorization = authorizationBindingByDecision.get(operation.authorizationDecisionId);
     const turn = manualTurnByBackendId.get(operation.backendExecutionId);
     const sourceTurn = operation.sourceBackendExecutionId === null
       ? undefined : manualTurnByBackendId.get(operation.sourceBackendExecutionId);
@@ -2189,9 +2394,10 @@ function readApplicationStateUntransactional(
     const expectedKind = intent?.operationKind;
     if (
       intent === undefined || turn === undefined || operation.threadId !== turn.threadId ||
+      effectAuthorization?.intentId !== operation.intentId || effectAuthorization.phase !== "act" ||
       operation.expectedFencingToken !== intent.fencingToken || operation.expectedFencingToken !== turn.fencingToken ||
       operation.operationKind !== expectedKind || operation.idempotencyKey !== intent.idempotencyKey ||
-      operation.postRevision > turn.revision || operation.createdAt < intent.createdAt ||
+      operation.postRevision > turn.revision || operation.createdAt < effectAuthorization.createdAt ||
       (operation.operationKind === "manual_report") !== (operation.reportOperation !== null) ||
       (operation.sourceBackendExecutionId === null) !== (operation.sourceThreadId === null) ||
       (operation.operationKind === "retry" && !hasSourceTurn) ||
@@ -2255,7 +2461,8 @@ function readApplicationStateUntransactional(
     domain, projects, bootstrap, identity, grants, epochs, requests, decisions, audit,
     executionSequences, executions,
     executionOperationRequests, executionAuthorizationDecisions, executionOperationAudit,
-    executionIntents, executionObservations, executionReceipts, executionFinalizations, executionTerminalStates,
+    executionIntents, executionIntentAuthorizationBindings, executionObservations,
+    executionReceipts, executionFinalizations, executionTerminalStates,
     manualTurns, manualBackendOperations, manualCompletionDecisions,
     lifecycle: Object.freeze([]) as readonly ApplicationLifecycleAuthorization[],
   });
@@ -2369,6 +2576,7 @@ function applicationStateSha256ForVersion(
     executionFinalizations: state.executionFinalizations,
     executionTerminalStates: state.executionTerminalStates,
     executionIntents: state.executionIntents,
+    executionIntentAuthorizationBindings: state.executionIntentAuthorizationBindings,
     executionObservations: state.executionObservations,
     executionOperationAudit: state.executionOperationAudit,
     executionOperationRequests: state.executionOperationRequests,
@@ -2691,13 +2899,14 @@ export class ApplicationTransaction {
   }
 
   insertGrant(record: NewGrantRecord): void {
-    const v6Epoch = record.capabilityEpochId === undefined || record.capabilityEpochId === null
-      ? false
-      : this.#database.prepare("SELECT 1 FROM authorization_capability_epochs_v6 WHERE epoch_id=?").get(record.capabilityEpochId) !== undefined;
-    const v6Source = record.issuerGrantId !== null &&
-      this.#database.prepare("SELECT 1 FROM authorization_grants_v6 WHERE grant_id=?").get(record.issuerGrantId) !== undefined;
+    const v6EpochId = record.capabilityEpochId === undefined || record.capabilityEpochId === null ||
+      this.#database.prepare("SELECT 1 FROM authorization_capability_epochs_v6 WHERE epoch_id=?").get(record.capabilityEpochId) === undefined
+      ? null
+      : record.capabilityEpochId;
+    const v6Epoch = v6EpochId !== null;
     const v6Action = !((PHASE2A_AUTHORIZATION_ACTIONS as readonly string[]).includes(record.action));
-    const table = v6Epoch || v6Source || v6Action ? "authorization_grants_v6" : "authorization_grants";
+    const table = v6Action ? "authorization_grants_v6" : "authorization_grants";
+    const storedCapabilityEpochId = v6Epoch && !v6Action ? null : record.capabilityEpochId ?? null;
     this.#database.prepare(
       `INSERT INTO ${table}(
         grant_id, revision, actor_id, action, scope_kind, scope_project_id,
@@ -2709,8 +2918,14 @@ export class ApplicationTransaction {
       record.grantId, record.revision, record.actorId, record.action, record.scope.kind,
       record.scope.projectId, record.scope.resourceRevision, record.scope.configRevision,
       record.notBefore, record.expiresAt, record.revokedAt, record.issuerGrantId, record.sourceGrantId,
-      record.capabilityEpochId ?? null, record.createdRequestId,
+      storedCapabilityEpochId, record.createdRequestId,
     );
+    if (v6Epoch && !v6Action) {
+      this.#database.prepare(
+        `INSERT INTO authorization_grant_epoch_v6_links(grant_id, action, capability_epoch_id)
+         VALUES (?, ?, ?)`,
+      ).run(record.grantId, record.action, v6EpochId);
+    }
   }
 
   insertLifecycleAuthorization(record: NewLifecycleAuthorizationRecord): void {
@@ -2811,12 +3026,12 @@ export class ApplicationTransaction {
     this.#database.prepare(
       `INSERT INTO execution_authorization_decisions(
         decision_id, request_id, actor_id, action, result, reason, policy_result,
-        grant_id, grant_revision, project_id, resource_revision, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        grant_id, grant_revision, project_id, resource_revision, config_revision, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       record.decisionId, record.requestId, record.actorId, record.action, record.result,
       record.reason, record.policy, record.grantId, record.grantRevision,
-      record.projectId, record.resourceRevision, record.createdAt,
+      record.projectId, record.resourceRevision, record.configRevision, record.createdAt,
     );
   }
 
@@ -2837,7 +3052,8 @@ export class ApplicationTransaction {
     this.#database.prepare(
       `INSERT INTO execution_operation_intents(
         intent_id, operation_id, idempotency_key, operation_kind, action, state, revision,
-        actor_id, request_id, decision_id, confirmation_id, project_id,
+        actor_id, request_id, decision_id, current_authorization_decision_id,
+        authorization_binding_revision, confirmation_id, project_id,
         project_resource_revision, project_config_revision, task_id, task_revision,
         input_reference, execution_id, execution_revision, attempt_number, fencing_token,
         source_execution_id, source_execution_revision, source_attempt_number, source_fencing_token,
@@ -2846,15 +3062,18 @@ export class ApplicationTransaction {
         backend_execution_id, thread_id, previous_receipt_id, expected_journal_revision,
         requested_deadline, continuation_reference, required_action_receipt_id, expected_lifecycle,
         reason_code, report_id, report_operation, report_code, evidence_reference, last_observation_number,
+        last_error_category, last_error_code, last_error_retryable, last_error_ambiguous,
+        retry_after, retry_count,
         created_at, updated_at
       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28,
         ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42,
-        ?43, ?44, ?45, ?46, ?47)`,
+        ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53, ?54, ?55)`,
     ).run(
       record.intentId, record.operationId, record.idempotencyKey, record.operationKind,
       record.action, record.state, record.revision, record.actorId, record.requestId,
-      record.decisionId, record.confirmationId, record.projectId,
+      record.decisionId, record.currentAuthorizationDecisionId,
+      record.authorizationBindingRevision, record.confirmationId, record.projectId,
       record.projectResourceRevision, record.projectConfigRevision, record.taskId,
       record.taskRevision, record.inputReference, record.executionId,
       record.executionRevision, record.attemptNumber, record.fencingToken,
@@ -2866,8 +3085,79 @@ export class ApplicationTransaction {
       record.requestedDeadline, record.continuationReference, record.requiredActionReceiptId,
       record.expectedLifecycle, record.reasonCode, record.reportId, record.reportOperation,
       record.reportCode, record.evidenceReference, record.lastObservationNumber,
+      record.lastErrorCategory, record.lastErrorCode,
+      record.lastErrorRetryable === null ? null : record.lastErrorRetryable ? 1 : 0,
+      record.lastErrorAmbiguous === null ? null : record.lastErrorAmbiguous ? 1 : 0,
+      record.retryAfter, record.retryCount,
       record.createdAt, record.updatedAt,
     );
+  }
+
+  insertExecutionIntentAuthorizationBinding(record: ExecutionIntentAuthorizationBindingRecord): void {
+    this.#database.prepare(
+      `INSERT INTO execution_intent_authorization_bindings(
+        binding_id, intent_id, binding_revision, phase, request_id, decision_id,
+        audit_id, prior_decision_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.bindingId, record.intentId, record.bindingRevision, record.phase,
+      record.requestId, record.decisionId, record.auditId, record.priorDecisionId,
+      record.createdAt,
+    );
+  }
+
+  bindExecutionIntentAuthorization(
+    intentId: string,
+    expectedState: ExecutionIntentState,
+    expectedRevision: number,
+    nextState: ExecutionIntentState,
+    expectedDecisionId: string,
+    expectedBindingRevision: number,
+    nextDecisionId: string,
+    nextBindingRevision: number,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE execution_operation_intents
+       SET state=?, current_authorization_decision_id=?, authorization_binding_revision=?,
+           revision=revision+1, updated_at=?
+       WHERE intent_id=? AND state=? AND revision=?
+         AND current_authorization_decision_id=? AND authorization_binding_revision=?`,
+    ).run(
+      nextState, nextDecisionId, nextBindingRevision, updatedAt, intentId,
+      expectedState, expectedRevision, expectedDecisionId, expectedBindingRevision,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Execution authorization binding CAS failed", { intentId });
+    }
+  }
+
+  recordExecutionIntentFailure(
+    intentId: string,
+    expectedRevision: number,
+    nextState: Extract<ExecutionIntentState, "retry_wait" | "ambiguous" | "failed">,
+    failure: Readonly<{
+      category: ExecutionAdapterFailureCategory;
+      code: string;
+      retryable: boolean;
+      ambiguous: boolean;
+      retryAfter: string | null;
+    }>,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE execution_operation_intents
+       SET state=?, last_error_category=?, last_error_code=?, last_error_retryable=?,
+           last_error_ambiguous=?, retry_after=?, retry_count=retry_count+1,
+           revision=revision+1, updated_at=?
+       WHERE intent_id=? AND state='executing' AND revision=?`,
+    ).run(
+      nextState, failure.category, failure.code, failure.retryable ? 1 : 0,
+      failure.ambiguous ? 1 : 0, failure.retryAfter, updatedAt, intentId, expectedRevision,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Execution adapter failure CAS failed", { intentId });
+    }
   }
 
   transitionExecutionIntent(
@@ -2920,11 +3210,12 @@ export class ApplicationTransaction {
   insertExecutionFinalization(record: ExecutionFinalizationRecord): void {
     this.#database.prepare(
       `INSERT INTO execution_finalizations(
-        finalization_id, intent_id, verified_receipt_id, outcome, code,
+        finalization_id, intent_id, verified_receipt_id, authorization_decision_id, outcome, code,
         task_revision, execution_revision, finalized_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
-      record.finalizationId, record.intentId, record.verifiedReceiptId, record.outcome,
+      record.finalizationId, record.intentId, record.verifiedReceiptId,
+      record.authorizationDecisionId, record.outcome,
       record.code, record.taskRevision, record.executionRevision, record.finalizedAt,
     );
   }
@@ -2990,13 +3281,14 @@ export class ApplicationTransaction {
   insertManualBackendOperation(record: ManualBackendOperationRecord): void {
     this.#database.prepare(
       `INSERT INTO manual_backend_operations(
-        backend_operation_id, idempotency_key, intent_id, operation_kind,
+        backend_operation_id, idempotency_key, intent_id, authorization_decision_id, operation_kind,
         report_operation, backend_execution_id, thread_id, source_backend_execution_id,
         source_thread_id, expected_fencing_token,
         expected_pre_revision, post_revision, result_lifecycle, receipt_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       record.backendOperationId, record.idempotencyKey, record.intentId,
+      record.authorizationDecisionId,
       record.operationKind, record.reportOperation, record.backendExecutionId,
       record.threadId, record.sourceBackendExecutionId, record.sourceThreadId,
       record.expectedFencingToken, record.expectedPreRevision,

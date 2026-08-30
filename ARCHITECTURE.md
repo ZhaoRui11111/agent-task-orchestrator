@@ -13,7 +13,8 @@ authorization decisions, lifecycle coordination, and append-only application
 audit; schema `5` additionally owns ordered execution attempts, one active
 execution per Task, lease state, per-Task fencing, and claim idempotency/CAS.
 Schema `6` adds only the reliable Manual-loop authorization lineage,
-operation requests/decisions/audit, semantic intents, ordered observations,
+operation requests/decisions/audit, semantic intents and their immutable
+prepare/act/finalize authorization-binding chain, ordered observations,
 verified receipts, finalizations, execution terminal facts, a durable Manual
 turn/operation journal, and Manual completion decisions.
 The application service orchestrates business owners in one

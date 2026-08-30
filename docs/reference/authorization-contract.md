@@ -311,13 +311,28 @@ No execution operation consumes a prior decision as authority.
 The reliable Manual-loop owner extends that sequence without widening it. Each
 operation parses its complete closed command, obtains trusted identities and a
 current exact grant, and persists an authorization-bound semantic intent in a
-short transaction. It marks the intent executing before invoking the injected
-adapter outside SQLite, then obtains a distinct current `execution.inspect`
-allow for independent observation. Observation, verification, and finalization
-use separate short transactions and exact Task/execution/attempt/fence/Project
-CAS. Resume, retry, cancellation, expired-lease recovery, and old-fence refusal
-therefore never derive authority from an adapter receipt, Task text, or lease
-expiry.
+short transaction. That prepare decision is evidence, not standing authority.
+Before every mutation call the owner revalidates the persisted local
+actor/principal and runtime-root identity, evaluates the grant again, and CAS
+binds a fresh `act` decision to the same immutable intent tuple. Before every
+finalization it repeats that process and binds a fresh `finalize` decision in
+the same transaction as the result mutation. The immutable
+prepare/act/finalize binding chain, its revision, the journal operation and the
+finalization all name the decision they consumed; revocation or expiry between
+any two stages therefore prevents the next effect or result mutation. The
+authorization-attempt identity is separate from the successful binding
+revision: a denied attempt remains immutable without advancing the binding,
+and a later retry allocates new request/decision/audit identities and evaluates
+then-current authority. The adapter remains outside SQLite, and every
+independent observation attempt obtains and evaluates a distinct current
+`execution.inspect` allow; neither a prior allow nor a prior denial is cached as
+current authority. Observation, verification, and finalization use separate
+short transactions and exact Task/execution/attempt/fence/Project CAS. Resume,
+retry, cancellation, expired-lease recovery, and old-fence refusal therefore
+never derive authority from a prior decision, adapter receipt, Task text, or
+lease expiry. Even an exact finalized idempotent replay revalidates the persisted
+actor/principal and current runtime-root identity before returning its bounded
+result.
 
 Manual outcome reporting additionally requires the trusted actor ID
 `local_manual_operator`, current `execution.inspect` authority for the exact

@@ -397,7 +397,11 @@ void outcomeControl;
           idempotencyKey: "package-claim",
           leaseDurationSeconds: 60,
         });
-        if (!claimed.ok) throw new Error("package execution claim was rejected");
+        if (!claimed.ok) {
+          throw new Error(
+            "package execution claim was rejected: " + claimed.error.code + ":" + claimed.error.message,
+          );
+        }
         trustedNow = new Date(Date.parse(issuedAt) + 4000).toISOString();
         let manualBackend = m.createManualExecutionBackend(store, { ingress: trusted });
         let manual = m.createReliableExecutionService(store, trusted, manualBackend, manualBackend);

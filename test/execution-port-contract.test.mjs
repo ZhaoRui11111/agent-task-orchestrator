@@ -258,6 +258,16 @@ test("closed adapter error flags and Manual outcome shapes are exact", () => {
     assert.equal(parseExecutionAdapterError({ ...error, retryable: !retryable }), null, category);
     assert.equal(parseExecutionAdapterError({ ...error, ambiguous: !ambiguous }), null, category);
   }
+  assert.notEqual(parseExecutionAdapterError(Object.freeze({
+    code: "bounded_permanent_failure",
+    category: "permanent_external",
+    retryable: false,
+    ambiguous: false,
+    message: "bounded adapter error",
+    correlationId: "correlation-error-retry-after",
+    externalReference: null,
+    retryAfter: "2026-08-30T12:01:00.000Z",
+  })), null);
 
   const semantic = Object.freeze({
     projectId: "project", projectResourceRevision: 1, projectConfigRevision: 1,

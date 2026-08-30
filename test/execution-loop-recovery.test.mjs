@@ -28,14 +28,16 @@ const FAILPOINTS = Object.freeze([
 function trustedIngress(label) {
   let sequence = 0;
   let now = "2026-08-30T12:00:00.000Z";
+  let owner = "worker-recovery";
   return {
     currentActor: () => ({ actorId: ACTOR, principal: PRINCIPAL }),
-    currentLeaseOwner: () => "worker-recovery",
+    currentLeaseOwner: () => owner,
     now: () => now,
     nextId: (kind) => `${kind}-${label}-${++sequence}`,
     confirmHighRisk: () => true,
     confirmOperation: ({ action }) => ({ confirmationId: `confirmation-${label}-${action}-${++sequence}` }),
     setNow(value) { now = value; },
+    setOwner(value) { owner = value; },
   };
 }
 
@@ -383,5 +385,107 @@ test("an ambiguous start with no durable Manual effect finalizes waiting and exa
   } finally {
     if (storeOpen) await store.close();
     cleanupPersistenceFixture(runtime.fixture);
+  }
+});
+
+test("expired pending and executing intents never invoke an old-fence effect and permit fenced takeover after reconciliation", async (context) => {
+  for (const boundary of ["prepared", "executing"]) {
+    await context.test(`expired after ${boundary}`, async () => {
+      const runtime = await prepareRuntime(`expired-old-fence-${boundary}`);
+      try {
+        let startCalls = 0;
+        let manual = createManualExecutionBackend(runtime.store, { ingress: runtime.ingress });
+        const wrap = () => Object.freeze({
+          contractId: manual.contractId,
+          adapterId: manual.adapterId,
+          adapterVersion: manual.adapterVersion,
+          start(request) { startCalls += 1; return manual.start(request); },
+          resume: (request) => manual.resume(request),
+          inspect: (request) => manual.inspect(request),
+          requestCancel: (request) => manual.requestCancel(request),
+        });
+        const crashing = createReliableExecutionServiceWithHooks(
+          runtime.store,
+          runtime.ingress,
+          wrap(),
+          manual,
+          {
+            afterStage(stage) {
+              if (stage === boundary) throw new Error(`crash-${boundary}`);
+            },
+          },
+        );
+        let stopped;
+        try {
+          stopped = crashing.start(startCommand(runtime.claim.value.executionId, `expired-${boundary}-start-key`));
+        } catch (error) {
+          assert.match(String(error), new RegExp(`crash-${boundary}`, "u"));
+        }
+        if (stopped !== undefined) {
+          assert.equal(stopped.ok, false, JSON.stringify(stopped));
+          assert.equal(stopped.error.code, "PERSISTENCE_FAILURE");
+        }
+        assert.equal(startCalls, 0);
+
+        await runtime.store.close();
+        runtime.ingress.setNow("2026-08-30T12:06:00.000Z");
+        runtime.ingress.setOwner("worker-recovery-b");
+        runtime.store = await openPersistence(runtime.fixture.layout, {
+          applicationVersion: `ep02b-expired-${boundary}-restart`,
+        });
+        manual = createManualExecutionBackend(runtime.store, { ingress: runtime.ingress });
+        const service = createReliableExecutionService(runtime.store, runtime.ingress, wrap(), manual);
+        const reconciled = service.reconcile({
+          kind: "execution.inspect",
+          projectId: "project",
+          expectedProjectResourceRevision: 1,
+          expectedProjectConfigRevision: 1,
+          taskId: "task",
+          expectedTaskRevision: 3,
+          inputReference: "input-ref",
+          executionId: runtime.claim.value.executionId,
+          expectedExecutionRevision: 1,
+          expectedAttemptNumber: 1,
+          expectedFencingToken: 1,
+          idempotencyKey: `expired-${boundary}-reconcile-key`,
+          policyBindingReference: "policy-ref",
+          requestedDeadline: "2026-08-30T12:10:00.000Z",
+          backendExecutionId: `absent-backend-${boundary}`,
+          threadId: `absent-thread-${boundary}`,
+          lastObservationNumber: 0,
+        });
+        assert.equal(reconciled.ok, true, JSON.stringify(reconciled));
+        assert.equal(reconciled.value.intentState, "finalized");
+        assert.equal(startCalls, 0);
+        let state = readApplicationStateForOwner(runtime.store);
+        assert.equal(state.manualTurns.length, 0);
+        assert.equal(state.manualBackendOperations.length, 0);
+        assert.equal(state.executionIntents.every((candidate) => candidate.state === "finalized"), true);
+
+        runtime.ingress.setNow("2026-08-30T12:06:01.000Z");
+        const takeover = createExecutionApplicationService(runtime.store, runtime.ingress).takeover({
+          kind: "execution.lease.takeover",
+          projectId: "project",
+          expectedProjectResourceRevision: 1,
+          expectedProjectConfigRevision: 1,
+          taskId: "task",
+          expectedTaskRevision: 3,
+          predecessorExecutionId: runtime.claim.value.executionId,
+          expectedExecutionRevision: 1,
+          expectedLeaseRevision: 1,
+          expectedFencingToken: 1,
+          idempotencyKey: `expired-${boundary}-takeover-key`,
+          leaseDurationSeconds: 300,
+        });
+        assert.equal(takeover.ok, true, JSON.stringify(takeover));
+        assert.equal(takeover.value.attemptNumber, 2);
+        assert.equal(takeover.value.fencingToken, 2);
+        state = readApplicationStateForOwner(runtime.store);
+        assert.equal(state.executions.find((candidate) => candidate.executionId === runtime.claim.value.executionId)?.status, "superseded");
+      } finally {
+        await runtime.store.close();
+        cleanupPersistenceFixture(runtime.fixture);
+      }
+    });
   }
 });

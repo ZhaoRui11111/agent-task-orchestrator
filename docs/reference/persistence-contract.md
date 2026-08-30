@@ -190,7 +190,10 @@ post-migration decode select the exact recorded projection; they never
 reinterpret a historical digest with the version-2 execution fields.
 
 Schema version `6` leaves migrations 0001-0005 and their records unchanged. It
-adds separate immutable vocabulary-6 epoch/grant relations so migration,
+adds an immutable vocabulary-6 epoch, a vocabulary-6 grant relation for the six
+new Manual actions, and an immutable epoch-link relation for the twenty-three
+already-representable actions whose grants remain in `authorization_grants` so
+existing application decision and lifecycle foreign keys remain exact. Migration,
 bootstrap, and renewal create no new authority. A successful, separately
 confirmed vocabulary-5-to-6 upgrade alone appends one epoch and exactly
 twenty-nine current origin grants. `application_lifecycle_digest_v6` records
@@ -199,14 +202,21 @@ exact historical projections, while version 3 additionally binds every
 schema-v6 operation/journal/completion relation.
 
 The operation relations separate immutable request/decision/audit,
-authorization-bound semantic intent, ordered independent observations, one
-verified receipt, one finalization, and an optional immutable execution terminal
-fact. Intent updates are limited to the closed one-step state CAS; their tuple,
-authorization, adapter, Project/Task/execution/attempt/fence, predecessor, and
-operation-specific identities are immutable. `manual_backend_turns` is the sole
-narrowly mutable local adapter state and allows only revision-incrementing,
-fence-preserving, terminal-immutable transitions. Its operation journal and
-Manual completion decisions are immutable. All evidence is bounded IDs, enums,
+authorization-bound semantic intent, immutable prepare/act/finalize
+authorization bindings, ordered independent observations, one verified
+receipt, one finalization, and an optional immutable execution terminal fact.
+Each execution decision stores its decision-era Project resource and config
+revision; each journal mutation and finalization stores the fresh decision it
+consumed. Intent updates are limited to the closed one-step state/binding CAS;
+their tuple, adapter, Project/Task/execution/attempt/fence, predecessor, and
+operation-specific identities are immutable. Their closed failure projection
+alone may advance on executing-to-`retry_wait|ambiguous|failed`, retaining
+category, code, retry/ambiguity flags, nullable retry time, and retry count.
+`manual_backend_turns` is the sole narrowly mutable local adapter state and
+allows only revision-incrementing, fence-preserving transitions; once a turn is
+`turn_succeeded`, `failed`, or `cancelled`, every update is rejected, including
+a same-lifecycle rewrite. Its operation journal and Manual completion decisions
+are immutable. All evidence is bounded IDs, enums,
 revisions, timestamps, hashes, and redacted references; no Task body, prompt,
 path, environment, credential, raw adapter payload/error, SQL, or stack is
 allocated.
@@ -224,10 +234,10 @@ foreign-key validation is empty.
 | `schema_metadata.domain_initialized` one-time `0` to `1` transition | `src/persistence/repository.ts` inside the initial snapshot transaction | startup compatibility, repository decoder, backup/restore verification |
 | `projects`, `tasks`, `task_dependencies` | `src/persistence/repository.ts`, invoked only through the internal Phase 1 application transaction after initialization | the same repository decoder, combined application decoder, backup verification, and doctor |
 | `project_registry` | `src/persistence/application-repository.ts` in the accepted application transaction | the combined decoder and application service |
-| `authorization_bootstrap`, `authorization_local_identity`, vocabulary-4/5 `authorization_capability_epochs`/`authorization_grants`, and vocabulary-6 `authorization_capability_epochs_v6`/`authorization_grants_v6` | `src/persistence/application-repository.ts` in bootstrap, adoption/renewal/upgrade, or authorized grant transactions | the combined decoder and application authorization owner |
+| `authorization_bootstrap`, `authorization_local_identity`, vocabulary-4/5 `authorization_capability_epochs`/`authorization_grants`, vocabulary-6 `authorization_capability_epochs_v6`/`authorization_grants_v6`, and `authorization_grant_epoch_v6_links` for vocabulary-6 origins of already-representable actions | `src/persistence/application-repository.ts` in bootstrap, adoption/renewal/upgrade, or authorized grant transactions | the combined decoder and application authorization owner |
 | `application_requests`, `authorization_decisions`, `application_audit`, `application_lifecycle_authorizations`, `application_lifecycle_digest_v6` | `src/persistence/application-repository.ts` in the same decision/operation transaction | the combined decoder, application result mapping, lifecycle verifier, backup verification, and doctor |
 | `task_execution_sequences`, `execution_attempts` | `src/persistence/application-repository.ts` only inside the typed execution application transaction | the combined decoder, execution application owner, backup verification, and doctor |
-| `execution_operation_requests`, `execution_authorization_decisions`, `execution_operation_audit`, `execution_operation_intents`, `execution_observations`, `execution_verified_receipts`, `execution_finalizations`, `execution_terminal_states`, `manual_completion_decisions` | `src/persistence/application-repository.ts` only inside reliable-loop transactions after the application owner selects and authorizes the exact operation | the combined decoder, reliable execution owner, backup verification, and doctor |
+| `execution_operation_requests`, `execution_authorization_decisions`, `execution_operation_audit`, `execution_operation_intents`, `execution_intent_authorization_bindings`, `execution_observations`, `execution_verified_receipts`, `execution_finalizations`, `execution_terminal_states`, `manual_completion_decisions` | `src/persistence/application-repository.ts` only inside reliable-loop transactions after the application owner selects and authorizes the exact operation | the combined decoder, reliable execution owner, backup verification, and doctor |
 | `manual_backend_turns`, `manual_backend_operations` | `src/persistence/manual-backend-repository.ts` through the injected production Manual backend/control after a matching committed core intent | the same journal, combined decoder, reliable execution owner, backup verification, and doctor |
 | backup generation and manifest | `src/persistence/backup.ts` under the lifecycle lock | the same verifier, restore, and current CLI/doctor surfaces |
 | lifecycle lock and connection receipts | `src/persistence/runtime.ts` | persistence lifecycle operations only |
@@ -358,7 +368,8 @@ classes/enums/JSON/time shapes and all cross-record bindings and returns one
 combined immutable state. It proves contiguous vocabularies, exact
 sequence/attempt/fence order, at most one active attempt, complete
 authorization/request identity, Project/Task revisions, lease/idempotency and
-supersession semantics, exact intent-stage evidence, independent inspect
+supersession semantics, contiguous prepare/act/finalize authorization binding
+chains, exact intent-stage and durable retry evidence, independent inspect
 authorization, Manual turn/operation lineage, unique confirmation consumption,
 and terminal Task/execution/receipt/finalization/completion consistency. It also
 retains exact legacy schema-v5, schema-v4, and schema-v3 decoders needed for
@@ -366,10 +377,24 @@ upgrade and read-only doctor
 classification. Those readers consume the exact released physical shapes and
 apply their complete historical cross-record validation without manufacturing
 new vocabulary, identity, lifecycle, or execution rows.
+
+For schema version `6`, the combined authorization decoder preserves each
+grant's physical relation instead of erasing it during union. Grant identifiers
+and grant-relation identifiers are globally unique across the legacy and v6
+relations. Every vocabulary-6 epoch has the exact twenty-nine-action inventory:
+the twenty-three already-representable actions are legacy grants with immutable
+epoch links, and the six Manual actions are v6 grants. Missing, substituted,
+wrong-relation, duplicate-ID, or cross-relation-collision state is corruption.
+
 For every accepted delegated `authorization.grant.issue`, it also requires the
 new grant's runtime-versus-Project scope, Project identity, and resource
 revision to match the persisted issue decision target; provenance authority
 alone cannot broaden or redirect that issued scope after the fact.
+Historical execution decisions remain valid history after a later Project
+config revision: their decision-era resource/config revision must not exceed
+the current Project, and any Project-scoped grant is compared with that
+decision-era revision rather than reinterpreted against the current config.
+Restart, backup verification, and restore all apply this same rule.
 Missing, unknown, impossible, or corrupt state is a typed failure: no default,
 skipped row, empty replacement, or partial success is returned.
 
@@ -395,10 +420,15 @@ authorization, attempt/sequence CAS, audit, and readback together. Any
 effect-capable state instead requires reliable-loop reconciliation.
 
 Every reliable-loop prepare commits its execution request/decision/audit and
-complete intent atomically before a possible Manual journal call. Executing,
-observation, verification, and finalization are separate short CAS transactions;
-the adapter/control call is outside them. Verified interruption atomically
-records the exact terminal execution fact with Domain cancellation. Manual
+complete intent plus its first immutable authorization binding atomically before
+a possible Manual journal call. Executing CAS-binds a fresh Act decision;
+observation and verification are separate short transactions; finalization
+CAS-binds a fresh Finalize decision with the result. The adapter/control call is
+outside all writer transactions. A denied fresh stage commits only its bounded
+deny request/decision/audit and cannot advance the binding, invoke a mutation,
+or finalize. Verified interruption atomically records the exact terminal
+execution fact with Domain cancellation, including the explicit stopped
+execution disposition required when the Task is already `waiting`. Manual
 completion atomically records its fresh request/decision/audit, immutable
 completion decision and terminal execution fact with Domain completion and
 terminal readback. A fully bound authorization

@@ -106,6 +106,43 @@ function requireIntent(
   return intent;
 }
 
+function requireCurrentActAuthorization(
+  state: ReturnType<typeof readApplicationStateForOwner>,
+  intent: ExecutionOperationIntent,
+  decisionId: string,
+  at: string,
+): void {
+  const binding = state.executionIntentAuthorizationBindings.find((candidate) =>
+    candidate.intentId === intent.intentId &&
+    candidate.bindingRevision === intent.authorizationBindingRevision &&
+    candidate.decisionId === decisionId
+  );
+  const decision = state.executionAuthorizationDecisions.find((candidate) => candidate.decisionId === decisionId);
+  const request = decision === undefined ? undefined : state.executionOperationRequests.find(
+    (candidate) => candidate.requestId === decision.requestId,
+  );
+  const grant = decision?.grantId === null || decision?.grantId === undefined
+    ? undefined : state.grants.find((candidate) => candidate.grantId === decision.grantId);
+  const scopeMatches = grant?.scope.kind === "runtime" || (
+    grant?.scope.kind === "project" &&
+    grant.scope.projectId === intent.projectId &&
+    grant.scope.resourceRevision === intent.projectResourceRevision &&
+    grant.scope.configRevision === intent.projectConfigRevision
+  );
+  if (
+    intent.state !== "executing" || intent.currentAuthorizationDecisionId !== decisionId ||
+    binding?.phase !== "act" || binding.requestId !== request?.requestId || binding.auditId.length === 0 ||
+    decision?.result !== "allow" || decision.action !== intent.action || decision.actorId !== intent.actorId ||
+    decision.projectId !== intent.projectId || decision.resourceRevision !== intent.projectResourceRevision ||
+    decision.configRevision !== intent.projectConfigRevision || request?.result !== "allow" ||
+    request.actorId !== intent.actorId || request.action !== intent.action ||
+    request.targetExecutionId !== intent.executionId || request.targetRevision !== intent.executionRevision ||
+    grant === undefined || grant.actorId !== intent.actorId || grant.action !== intent.action ||
+    grant.revision !== decision.grantRevision || !scopeMatches || grant.revokedAt !== null ||
+    grant.notBefore > at || grant.expiresAt <= at
+  ) throw new ManualJournalError("CONFLICT", "Manual mutation lacks one current exact intent-bound allow");
+}
+
 function operationReplay(
   state: ReturnType<typeof readApplicationStateForOwner>,
   operationId: string,
@@ -198,6 +235,7 @@ function operationRecord(
   operationId: string,
   idempotencyKey: string,
   intentId: string,
+  authorizationDecisionId: string,
   operationKind: ManualBackendOperationRecord["operationKind"],
   reportOperation: ManualBackendOperationRecord["reportOperation"],
   turn: ManualBackendTurnRecord,
@@ -210,6 +248,7 @@ function operationRecord(
     backendOperationId: operationId,
     idempotencyKey,
     intentId,
+    authorizationDecisionId,
     operationKind,
     reportOperation,
     backendExecutionId: turn.backendExecutionId,
@@ -251,21 +290,23 @@ class SqliteManualTurnJournal implements ManualTurnJournal {
   start(request: ExecutionStartRequest, identity: ManualStartIdentity): ManualJournalMutationResult {
     const initial = readApplicationStateForOwner(this.#store);
     const initialIntent = requireIntent(initial, request.intentId, request.operationId, request.idempotencyKey, "start", request.semantic);
-    if (initialIntent.actorId !== request.actorId || initialIntent.decisionId !== request.authorizationDecisionId ||
+    if (initialIntent.actorId !== request.actorId ||
       initialIntent.action !== request.action || initialIntent.adapterId !== request.adapterId ||
       initialIntent.adapterVersion !== request.adapterVersion || initialIntent.backendExecutionId !== null ||
       initialIntent.threadId !== null) throw new ManualJournalError("CONFLICT", "Manual start differs from its durable intent");
     const replay = operationReplay(initial, request.operationId, request.idempotencyKey, request.intentId, "start", request.semantic, null);
     if (replay !== null) return replay;
+    requireCurrentActAuthorization(initial, initialIntent, request.authorizationDecisionId, identity.observedAt);
     if (
       initial.manualTurns.some((turn) => turn.backendExecutionId === identity.backendExecutionId ||
         turn.threadId === identity.threadId || turn.executionId === request.semantic.executionId)
     ) throw new ManualJournalError("CONFLICT", "Manual start identities are already allocated");
     return withApplicationTransaction(this.#store, (transaction) => {
       const state = transaction.read();
-      requireIntent(state, request.intentId, request.operationId, request.idempotencyKey, "start", request.semantic);
+      const intent = requireIntent(state, request.intentId, request.operationId, request.idempotencyKey, "start", request.semantic);
       const concurrent = operationReplay(state, request.operationId, request.idempotencyKey, request.intentId, "start", request.semantic, null);
       if (concurrent !== null) return concurrent;
+      requireCurrentActAuthorization(state, intent, request.authorizationDecisionId, identity.observedAt);
       if (state.manualTurns.some((turn) => turn.backendExecutionId === identity.backendExecutionId ||
         turn.threadId === identity.threadId || turn.executionId === request.semantic.executionId)) {
         throw new ManualJournalError("CONFLICT", "Manual start identity was allocated concurrently");
@@ -299,7 +340,7 @@ class SqliteManualTurnJournal implements ManualTurnJournal {
         updatedAt: identity.observedAt,
       });
       const operation = operationRecord(
-        request.operationId, request.idempotencyKey, request.intentId, "start", null,
+        request.operationId, request.idempotencyKey, request.intentId, request.authorizationDecisionId, "start", null,
         turn, null, null, identity.receiptId, identity.observedAt,
       );
       transaction.insertManualTurn(turn);
@@ -312,7 +353,7 @@ class SqliteManualTurnJournal implements ManualTurnJournal {
     const initial = readApplicationStateForOwner(this.#store);
     const operationKind = request.action === "execution.retry" ? "retry" as const : "resume" as const;
     const initialIntent = requireIntent(initial, request.intentId, request.operationId, request.idempotencyKey, operationKind, request.semantic);
-    if (initialIntent.actorId !== request.actorId || initialIntent.decisionId !== request.authorizationDecisionId ||
+    if (initialIntent.actorId !== request.actorId ||
       initialIntent.action !== request.action || initialIntent.adapterId !== request.adapterId ||
       initialIntent.adapterVersion !== request.adapterVersion || initialIntent.backendExecutionId !== request.backendExecutionId ||
       initialIntent.threadId !== request.threadId || initialIntent.previousReceiptId !== request.previousTurnReceiptId) {
@@ -320,11 +361,13 @@ class SqliteManualTurnJournal implements ManualTurnJournal {
     }
     const replay = operationReplay(initial, request.operationId, request.idempotencyKey, request.intentId, operationKind, request.semantic, null);
     if (replay !== null) return replay;
+    requireCurrentActAuthorization(initial, initialIntent, request.authorizationDecisionId, identity.observedAt);
     return withApplicationTransaction(this.#store, (transaction) => {
       const state = transaction.read();
       const intent = requireIntent(state, request.intentId, request.operationId, request.idempotencyKey, operationKind, request.semantic);
       const concurrent = operationReplay(state, request.operationId, request.idempotencyKey, request.intentId, operationKind, request.semantic, null);
       if (concurrent !== null) return concurrent;
+      requireCurrentActAuthorization(state, intent, request.authorizationDecisionId, identity.observedAt);
       if (intent.sourceExecutionId !== null) {
         const source = requireSuccessorSourceTurn(state, intent, request);
         if ((operationKind === "retry" && source.lifecycle !== "failed") ||
@@ -364,7 +407,7 @@ class SqliteManualTurnJournal implements ManualTurnJournal {
           updatedAt: identity.observedAt,
         });
         const operation = operationRecord(
-          request.operationId, request.idempotencyKey, request.intentId, operationKind, null,
+          request.operationId, request.idempotencyKey, request.intentId, request.authorizationDecisionId, operationKind, null,
           turn, source, null, identity.receiptId, identity.observedAt,
         );
         transaction.insertManualTurn(turn);
@@ -374,7 +417,7 @@ class SqliteManualTurnJournal implements ManualTurnJournal {
       const current = requireTurn(state, request.backendExecutionId, request.threadId, request.semantic);
       if (current.lifecycle !== "waiting") throw new ManualJournalError("CONFLICT", "Only a waiting Manual turn can resume");
       const turn = Object.freeze({ ...current, lifecycle: "active" as const, code: "manual_resumed", revision: current.revision + 1, updatedAt: identity.observedAt });
-      const operation = operationRecord(request.operationId, request.idempotencyKey, request.intentId, operationKind, null, turn, null, current.revision, identity.receiptId, identity.observedAt);
+      const operation = operationRecord(request.operationId, request.idempotencyKey, request.intentId, request.authorizationDecisionId, operationKind, null, turn, null, current.revision, identity.receiptId, identity.observedAt);
       transaction.updateManualTurn(turn, current.revision);
       transaction.insertManualBackendOperation(operation);
       return Object.freeze({ turn, operation, replayed: false });
@@ -401,17 +444,19 @@ class SqliteManualTurnJournal implements ManualTurnJournal {
   requestCancel(request: ExecutionCancelRequest, identity: ManualMutationIdentity): ManualJournalMutationResult {
     const initial = readApplicationStateForOwner(this.#store);
     const initialIntent = requireIntent(initial, request.intentId, request.operationId, request.idempotencyKey, "request_cancel", request.semantic);
-    if (initialIntent.actorId !== request.actorId || initialIntent.decisionId !== request.authorizationDecisionId ||
+    if (initialIntent.actorId !== request.actorId ||
       initialIntent.action !== request.action || initialIntent.adapterId !== request.adapterId ||
       initialIntent.adapterVersion !== request.adapterVersion || initialIntent.backendExecutionId !== request.backendExecutionId ||
       initialIntent.threadId !== request.threadId) throw new ManualJournalError("CONFLICT", "Manual cancellation differs from its durable intent");
     const replay = operationReplay(initial, request.operationId, request.idempotencyKey, request.intentId, "request_cancel", request.semantic, null);
     if (replay !== null) return replay;
+    requireCurrentActAuthorization(initial, initialIntent, request.authorizationDecisionId, identity.observedAt);
     return withApplicationTransaction(this.#store, (transaction) => {
       const state = transaction.read();
-      requireIntent(state, request.intentId, request.operationId, request.idempotencyKey, "request_cancel", request.semantic);
+      const intent = requireIntent(state, request.intentId, request.operationId, request.idempotencyKey, "request_cancel", request.semantic);
       const concurrent = operationReplay(state, request.operationId, request.idempotencyKey, request.intentId, "request_cancel", request.semantic, null);
       if (concurrent !== null) return concurrent;
+      requireCurrentActAuthorization(state, intent, request.authorizationDecisionId, identity.observedAt);
       const current = requireTurn(state, request.backendExecutionId, request.threadId, request.semantic);
       const terminal = current.lifecycle === "turn_succeeded" || current.lifecycle === "failed" || current.lifecycle === "cancelled";
       const turn = terminal ? current : Object.freeze({
@@ -422,7 +467,7 @@ class SqliteManualTurnJournal implements ManualTurnJournal {
         revision: current.revision + 1,
         updatedAt: identity.observedAt,
       });
-      const operation = operationRecord(request.operationId, request.idempotencyKey, request.intentId, "request_cancel", null, turn, null, current.revision, identity.receiptId, identity.observedAt);
+      const operation = operationRecord(request.operationId, request.idempotencyKey, request.intentId, request.authorizationDecisionId, "request_cancel", null, turn, null, current.revision, identity.receiptId, identity.observedAt);
       if (!terminal) transaction.updateManualTurn(turn, current.revision);
       transaction.insertManualBackendOperation(operation);
       return Object.freeze({ turn, operation, replayed: false });
@@ -432,7 +477,7 @@ class SqliteManualTurnJournal implements ManualTurnJournal {
   recordOutcome(request: ManualOutcomeReportRequest, identity: ManualMutationIdentity): ManualJournalMutationResult {
     const initial = readApplicationStateForOwner(this.#store);
     const initialIntent = requireIntent(initial, request.intentId, request.operationId, request.idempotencyKey, "manual_report", request.semantic);
-    if (initialIntent.actorId !== request.actorId || initialIntent.decisionId !== request.authorizationDecisionId ||
+    if (initialIntent.actorId !== request.actorId ||
       initialIntent.action !== "execution.inspect" || initialIntent.confirmationId !== request.confirmationId ||
       initialIntent.backendExecutionId !== request.backendExecutionId || initialIntent.threadId !== request.threadId ||
       initialIntent.expectedJournalRevision !== request.expectedJournalRevision) {
@@ -440,11 +485,13 @@ class SqliteManualTurnJournal implements ManualTurnJournal {
     }
     const replay = operationReplay(initial, request.operationId, request.idempotencyKey, request.intentId, "manual_report", request.semantic, request.operation);
     if (replay !== null) return replay;
+    requireCurrentActAuthorization(initial, initialIntent, request.authorizationDecisionId, identity.observedAt);
     return withApplicationTransaction(this.#store, (transaction) => {
       const state = transaction.read();
-      requireIntent(state, request.intentId, request.operationId, request.idempotencyKey, "manual_report", request.semantic);
+      const intent = requireIntent(state, request.intentId, request.operationId, request.idempotencyKey, "manual_report", request.semantic);
       const concurrent = operationReplay(state, request.operationId, request.idempotencyKey, request.intentId, "manual_report", request.semantic, request.operation);
       if (concurrent !== null) return concurrent;
+      requireCurrentActAuthorization(state, intent, request.authorizationDecisionId, identity.observedAt);
       const current = requireTurn(state, request.backendExecutionId, request.threadId, request.semantic);
       if (current.revision !== request.expectedJournalRevision || current.lifecycle !== request.expectedLifecycle) {
         throw new ManualJournalError("STALE_REVISION", "Manual outcome expected revision or lifecycle is stale");
@@ -464,7 +511,7 @@ class SqliteManualTurnJournal implements ManualTurnJournal {
         revision: current.revision + 1,
         updatedAt: identity.observedAt,
       });
-      const operation = operationRecord(request.operationId, request.idempotencyKey, request.intentId, "manual_report", request.operation, turn, null, current.revision, identity.receiptId, identity.observedAt);
+      const operation = operationRecord(request.operationId, request.idempotencyKey, request.intentId, request.authorizationDecisionId, "manual_report", request.operation, turn, null, current.revision, identity.receiptId, identity.observedAt);
       transaction.updateManualTurn(turn, current.revision);
       transaction.insertManualBackendOperation(operation);
       return Object.freeze({ turn, operation, replayed: false });

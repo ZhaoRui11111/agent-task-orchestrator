@@ -78,7 +78,11 @@ The Phase 1 `task.cancel` application command refuses any Task that has an
 active execution attempt. The reliable Manual loop is the implemented verified
 interruption owner for its own exact cancellation-request/inspection evidence;
 the Phase 1 command cannot substitute for it or bypass the transition relation
-above.
+above. If verified interruption arrives after the Task has already entered
+`waiting`, the loop invokes the ordinary `cancel` event with an exact stopped
+execution disposition bound to the verified receipt, Task revision and
+execution ID; it does not reuse the running-only `interruption_verified` event
+or leave the verified cancellation unfinalizable.
 
 ### Terminal immutability
 

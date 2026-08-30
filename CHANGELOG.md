@@ -52,10 +52,12 @@ All notable changes to this project will be documented in this file.
   explicit one-step vocabulary-6 upgrade, the corrected-before-first-release
   `ato.execution/v1` contract kit, one production local no-workspace Manual
   backend/control and test-only Fake, durable semantic intents, independent
-  observations, verified receipts, CAS finalizations, restart-safe
+  prepare/act/finalize authorization bindings, observations, verified receipts,
+  CAS finalizations, durable due-gated retry metadata, restart-safe
   start/inspect/resume/retry/cancel/outcome paths, reconcile-first expired
-  execution handling, verified interruption, complete waiting metadata, stale-
-  fence refusal, and a separate authorization- and confirmation-bound Manual
+  execution handling, authoritative receipt/journal verification, verified
+  interruption from running or waiting, terminal-journal immutability, complete
+  waiting metadata, stale-fence refusal, and a separate authorization- and confirmation-bound Manual
   completion decision. The Phase 1 `ato.api/v1` CLI remains unchanged; this
   adds no dispatcher, scheduler, MCP, Codex/Git/workspace adapter, ProjectPolicy,
   CompletionBackend/gate, release, deployment, or platform-support claim.

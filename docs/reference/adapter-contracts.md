@@ -146,7 +146,12 @@ Operations are:
   not an implicit replacement.
 - `inspect` (read/inspection, `execution.inspect`): input identifies the backend execution/thread and last observation.
   Receipt adds lifecycle `unknown|queued|active|waiting|turn_succeeded|failed|cancelled`
-  and a redacted result/evidence reference.
+  and a redacted result/evidence reference. Shape and digest validity do not make
+  it authoritative: the reliable owner must match the exact durable Manual turn
+  identity, semantic tuple, revision, lifecycle, code, and evidence. A
+  `cancelled` receipt additionally requires the exact durable request-cancel and
+  `confirm_cancelled` operation lineage; a forged but well-shaped receipt cannot
+  terminalize a Task.
 - `request_cancel` (mutating-effect, `execution.cancel`): input adds expected backend lifecycle and cancellation
   reason code. Receipt reports `requested|already_terminal|rejected`; only a
   later inspection can prove interruption.
@@ -166,7 +171,11 @@ same semantic identity, current `execution.inspect` allow, a fresh
 bounded code/evidence reference. Terminal Manual lifecycles are immutable, and
 `confirm_cancelled` additionally requires an exact prior cancellation-request
 revision. The loop then inspects through `ato.execution/v1`; the control return
-is not itself finalization or completion evidence.
+is not itself finalization or completion evidence. Immediately before every
+journal mutation the backend requires the intent's current fresh Act binding
+and rechecks its referenced finite grant; replay may return an already committed
+operation, but a new mutation cannot consume a revoked, expired, stale, or
+prepare-only decision.
 
 ## WorkspaceBackend: `ato.workspace/v1`
 

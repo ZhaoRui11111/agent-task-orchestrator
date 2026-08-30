@@ -1,14 +1,22 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DatabaseSync } from "node:sqlite";
 import {
   createApplicationService,
   createExecutionApplicationService,
   createManualExecutionBackend,
   createReliableExecutionService,
+  inspectPrimaryIdentity,
   openPersistence,
+  restoreBackup,
 } from "../src/index.ts";
 import { readApplicationStateForOwner } from "../src/persistence/application-repository.ts";
-import { cleanupPersistenceFixture, createPersistenceFixture } from "./persistence-test-helpers.mjs";
+import {
+  authorizeTestLifecycle,
+  cleanupPersistenceFixture,
+  createAuthorizedTestBackup,
+  createPersistenceFixture,
+} from "./persistence-test-helpers.mjs";
 
 const ACTOR = "local_manual_operator";
 const PRINCIPAL = "A".repeat(64);
@@ -692,6 +700,227 @@ test("competing Manual outcome writers permit one expected-revision CAS and the 
     assert.equal(state.manualBackendOperations.filter((candidate) => candidate.operationKind === "manual_report").length, 1);
     assert.equal(state.manualTurns[0].revision, 2);
     assert.equal(state.manualTurns[0].lifecycle, "active");
+  } finally {
+    await runtime.store.close();
+    cleanupPersistenceFixture(runtime.fixture);
+  }
+});
+
+test("verified cancellation closes a Task that was already waiting through the explicit stopped disposition", async () => {
+  const runtime = await prepareClaimedRuntime("manual-waiting-cancellation");
+  try {
+    const backend = createManualExecutionBackend(runtime.store, { ingress: runtime.trusted });
+    const service = createReliableExecutionService(runtime.store, runtime.trusted, backend, backend);
+    const started = service.start(startCommand(runtime.claim.value.executionId));
+    assert.equal(started.ok, true, JSON.stringify(started));
+
+    runtime.trusted.setNow("2026-08-30T12:00:05.000Z");
+    const waiting = service.recordManualOutcome({
+      kind: "manual.turn.report",
+      projectId: "project",
+      expectedProjectResourceRevision: 1,
+      expectedProjectConfigRevision: 1,
+      taskId: "task",
+      expectedTaskRevision: 3,
+      inputReference: "input-ref",
+      executionId: runtime.claim.value.executionId,
+      expectedExecutionRevision: 1,
+      expectedAttemptNumber: 1,
+      expectedFencingToken: 1,
+      idempotencyKey: "waiting-before-cancel-key",
+      policyBindingReference: "policy-ref",
+      requestedDeadline: "2026-08-30T12:04:00.000Z",
+      reportId: "waiting-before-cancel-report",
+      backendExecutionId: started.value.backendExecutionId,
+      threadId: started.value.threadId,
+      expectedJournalRevision: 1,
+      expectedLifecycle: "queued",
+      outcomeOperation: "wait",
+      code: "manual_input_required",
+      evidenceReference: "waiting-before-cancel-evidence",
+      lastObservationNumber: 1,
+    });
+    assert.equal(waiting.ok, true, JSON.stringify(waiting));
+    assert.equal(waiting.value.taskState, "waiting");
+
+    runtime.trusted.setNow("2026-08-30T12:00:06.000Z");
+    const requested = service.requestCancel({
+      kind: "execution.cancel",
+      projectId: "project",
+      expectedProjectResourceRevision: 1,
+      expectedProjectConfigRevision: 1,
+      taskId: "task",
+      expectedTaskRevision: 4,
+      inputReference: "input-ref",
+      executionId: runtime.claim.value.executionId,
+      expectedExecutionRevision: 1,
+      expectedAttemptNumber: 1,
+      expectedFencingToken: 1,
+      idempotencyKey: "waiting-cancel-request-key",
+      policyBindingReference: "policy-ref",
+      requestedDeadline: "2026-08-30T12:04:00.000Z",
+      backendExecutionId: started.value.backendExecutionId,
+      threadId: started.value.threadId,
+      expectedLifecycle: "waiting",
+      reasonCode: "operator_cancelled",
+      lastObservationNumber: 2,
+    });
+    assert.equal(requested.ok, true, JSON.stringify(requested));
+    assert.equal(requested.value.taskState, "waiting");
+
+    runtime.trusted.setNow("2026-08-30T12:00:07.000Z");
+    const cancelled = service.recordManualOutcome({
+      kind: "manual.turn.report",
+      projectId: "project",
+      expectedProjectResourceRevision: 1,
+      expectedProjectConfigRevision: 1,
+      taskId: "task",
+      expectedTaskRevision: 4,
+      inputReference: "input-ref",
+      executionId: runtime.claim.value.executionId,
+      expectedExecutionRevision: 1,
+      expectedAttemptNumber: 1,
+      expectedFencingToken: 1,
+      idempotencyKey: "waiting-cancel-confirm-key",
+      policyBindingReference: "policy-ref",
+      requestedDeadline: "2026-08-30T12:04:00.000Z",
+      reportId: "waiting-cancel-confirm-report",
+      backendExecutionId: started.value.backendExecutionId,
+      threadId: started.value.threadId,
+      expectedJournalRevision: 3,
+      expectedLifecycle: "waiting",
+      outcomeOperation: "confirm_cancelled",
+      code: "manual_cancelled",
+      evidenceReference: "waiting-cancel-evidence",
+      lastObservationNumber: 3,
+    });
+    assert.equal(cancelled.ok, true, JSON.stringify(cancelled));
+    assert.equal(cancelled.value.taskState, "cancelled");
+    const state = readApplicationStateForOwner(runtime.store);
+    assert.equal(state.domain.tasks[0].state, "cancelled");
+    assert.equal(state.executionTerminalStates[0].status, "cancelled");
+    assert.equal(state.executionFinalizations.find(
+      (candidate) => candidate.finalizationId === cancelled.value.finalizationId,
+    )?.outcome, "interrupted");
+  } finally {
+    await runtime.store.close();
+    cleanupPersistenceFixture(runtime.fixture);
+  }
+});
+
+test("terminal Manual turn rows reject same-lifecycle SQL rewrites", async () => {
+  const runtime = await prepareClaimedRuntime("manual-terminal-sql-immutability");
+  try {
+    const backend = createManualExecutionBackend(runtime.store, { ingress: runtime.trusted });
+    const service = createReliableExecutionService(runtime.store, runtime.trusted, backend, backend);
+    const started = service.start(startCommand(runtime.claim.value.executionId));
+    assert.equal(started.ok, true, JSON.stringify(started));
+    runtime.trusted.setNow("2026-08-30T12:00:05.000Z");
+    const succeeded = service.recordManualOutcome({
+      kind: "manual.turn.report",
+      projectId: "project",
+      expectedProjectResourceRevision: 1,
+      expectedProjectConfigRevision: 1,
+      taskId: "task",
+      expectedTaskRevision: 3,
+      inputReference: "input-ref",
+      executionId: runtime.claim.value.executionId,
+      expectedExecutionRevision: 1,
+      expectedAttemptNumber: 1,
+      expectedFencingToken: 1,
+      idempotencyKey: "terminal-sql-report-key",
+      policyBindingReference: "policy-ref",
+      requestedDeadline: "2026-08-30T12:04:00.000Z",
+      reportId: "terminal-sql-report",
+      backendExecutionId: started.value.backendExecutionId,
+      threadId: started.value.threadId,
+      expectedJournalRevision: 1,
+      expectedLifecycle: "queued",
+      outcomeOperation: "succeed",
+      code: "manual_turn_succeeded",
+      evidenceReference: "terminal-sql-evidence",
+      lastObservationNumber: 1,
+    });
+    assert.equal(succeeded.ok, true, JSON.stringify(succeeded));
+    const before = structuredClone(readApplicationStateForOwner(runtime.store).manualTurns[0]);
+    const database = new DatabaseSync(runtime.fixture.layout.databasePath);
+    try {
+      assert.throws(
+        () => database.prepare(`
+          UPDATE manual_backend_turns
+          SET code = 'forged_terminal_code', revision = revision + 1,
+              updated_at = '2026-08-30T12:00:06.000Z'
+          WHERE backend_execution_id = ?
+        `).run(started.value.backendExecutionId),
+        /terminal immutability/u,
+      );
+    } finally {
+      database.close();
+    }
+    assert.deepEqual(readApplicationStateForOwner(runtime.store).manualTurns[0], before);
+  } finally {
+    await runtime.store.close();
+    cleanupPersistenceFixture(runtime.fixture);
+  }
+});
+
+test("historical execution decisions survive later Project config revisions, restart, backup, and restore", async () => {
+  const runtime = await prepareClaimedRuntime("manual-historical-config-binding");
+  try {
+    const backend = createManualExecutionBackend(runtime.store, { ingress: runtime.trusted });
+    const started = createReliableExecutionService(runtime.store, runtime.trusted, backend, backend)
+      .start(startCommand(runtime.claim.value.executionId));
+    assert.equal(started.ok, true, JSON.stringify(started));
+    const application = createApplicationService(runtime.store, runtime.trusted);
+    runtime.trusted.setNow("2026-08-30T12:00:05.000Z");
+    const disabled = application.execute({
+      kind: "project.disable",
+      projectId: "project",
+      expectedResourceRevision: 1,
+      expectedConfigRevision: 1,
+    });
+    assert.equal(disabled.ok, true, JSON.stringify(disabled));
+    runtime.trusted.setNow("2026-08-30T12:00:06.000Z");
+    const enabled = application.execute({
+      kind: "project.update",
+      projectId: "project",
+      expectedResourceRevision: 2,
+      expectedConfigRevision: 2,
+    });
+    assert.equal(enabled.ok, true, JSON.stringify(enabled));
+    assert.equal(enabled.value.configRevision, 3);
+
+    await runtime.store.close();
+    runtime.store = await openPersistence(runtime.fixture.layout, {
+      applicationVersion: "ep02b-historical-config-restart",
+    });
+    let state = readApplicationStateForOwner(runtime.store);
+    assert.equal(state.projects[0].configRevision, 3);
+    assert.equal(state.executionAuthorizationDecisions.every((decision) => decision.configRevision === 1), true);
+
+    const generation = await createAuthorizedTestBackup(runtime.store);
+    const restoreAuthorization = authorizeTestLifecycle(
+      runtime.store,
+      "runtime.restore",
+      generation.generationId,
+    );
+    await runtime.store.close();
+    const expectedCurrent = await inspectPrimaryIdentity(runtime.fixture.layout);
+    await restoreBackup(runtime.fixture.layout, {
+      generationId: generation.generationId,
+      expectedCurrent,
+      acknowledgeDataLoss: true,
+      applicationVersion: "ep02b-historical-config-restore",
+      authorization: restoreAuthorization,
+    });
+    runtime.store = await openPersistence(runtime.fixture.layout, {
+      applicationVersion: "ep02b-historical-config-restored",
+    });
+    state = readApplicationStateForOwner(runtime.store);
+    assert.equal(state.projects[0].configRevision, 3);
+    assert.equal(state.executionAuthorizationDecisions.every((decision) => decision.configRevision === 1), true);
+    assert.equal(state.executionFinalizations.length, 1);
+    assert.equal(state.manualTurns.length, 1);
   } finally {
     await runtime.store.close();
     cleanupPersistenceFixture(runtime.fixture);

@@ -92,8 +92,10 @@ identity- and confirmation-bound upgrade to vocabulary 6 before
 `execution.cancel`, or `execution.completion.accept` can authorize work.
 
 Each effect-capable operation commits its exact semantic intent before calling
-the injected adapter, independently inspects durable Manual state, persists and
-verifies bounded evidence, and finalizes through revision/fence CAS. Recovery
+the injected adapter, CAS-binds a fresh Act allow immediately before mutation,
+independently inspects durable Manual state, persists and verifies bounded
+evidence, and CAS-binds a fresh Finalize allow with revision/fence finalization.
+Retryable refusals retain exact bounded retry metadata and are due-gated. Recovery
 inspects before uncertain replay; expiry alone cannot justify takeover or a
 second effect. Manual `turn_succeeded` leaves the Task running until a distinct
 current completion grant and fresh confirmation atomically accept the exact

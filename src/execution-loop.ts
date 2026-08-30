@@ -6,6 +6,7 @@ import {
 } from "./authorization.ts";
 import { transitionTask, type Task, type WaitingMetadataInput } from "./domain.ts";
 import type { TrustedActorAssertion } from "./application.ts";
+import { validateTrustedRuntimeAndActor } from "./execution-application.ts";
 import { ProjectRegistryError, revalidateProjectRoot } from "./project-registry.ts";
 import {
   readApplicationStateForOwner,
@@ -18,6 +19,7 @@ import {
   type ExecutionAttempt,
   type ExecutionAuthorizationDecisionRecord,
   type ExecutionFinalizationRecord,
+  type ExecutionIntentAuthorizationBindingRecord,
   type ExecutionOperationAuditRecord,
   type ExecutionOperationIntent,
   type ExecutionOperationRequestRecord,
@@ -517,7 +519,24 @@ function decisionRecord(
     decisionId, requestId, actorId, action, result: evaluation.allowed ? "allow" : "deny",
     reason: evaluation.reason, policy: evaluation.policy, grantId: evaluation.grantId,
     grantRevision: evaluation.grantRevision, projectId: project.projectId,
-    resourceRevision: project.resourceRevision, createdAt: now,
+    resourceRevision: project.resourceRevision, configRevision: project.configRevision, createdAt: now,
+  });
+}
+
+function initialAuthorizationBinding(
+  intentId: string,
+  identity: OperationIdentity,
+): ExecutionIntentAuthorizationBindingRecord {
+  return Object.freeze({
+    bindingId: stableId("authorization-binding", intentId, 1),
+    intentId,
+    bindingRevision: 1,
+    phase: "prepare" as const,
+    requestId: identity.requestId,
+    decisionId: identity.decisionId,
+    auditId: identity.auditId,
+    priorDecisionId: null,
+    createdAt: identity.now,
   });
 }
 function auditRecord(
@@ -536,6 +555,96 @@ function auditRecord(
     auditId, requestId, decisionId, eventKind, result: accepted ? "accepted" : "denied",
     actorId, correlationId, executionId: execution.executionId, executionRevision: execution.revision,
     code, createdAt: now,
+  });
+}
+
+function runtimeActorFailure(
+  store: PersistenceStore,
+  state: ApplicationState,
+  context: TrustedContext,
+  expectedActorId?: string,
+): ReliableExecutionFailure | null {
+  if (expectedActorId !== undefined && context.actor.actorId !== expectedActorId) {
+    return failed("AUTHORIZATION_DENIED", "Trusted execution actor changed");
+  }
+  const validation = validateTrustedRuntimeAndActor(state, context.actor, store);
+  if (validation.ok) return null;
+  return validation.reason === "runtime_root_unavailable"
+    ? failed("PROJECT_IDENTITY_CHANGED", "Runtime root identity could not be revalidated")
+    : failed("AUTHORIZATION_DENIED", validation.reason === "local_identity_mismatch"
+      ? "Trusted principal does not match the persisted local identity"
+      : validation.reason === "runtime_root_mismatch"
+        ? "Authorization bootstrap is bound to another runtime root"
+        : "Authorization bootstrap is absent");
+}
+
+interface StageAuthorization {
+  readonly allowed: boolean;
+  readonly requestId: string;
+  readonly correlationId: string;
+  readonly decisionId: string;
+  readonly auditId: string;
+  readonly bindingRevision: number;
+  readonly failure: ReliableExecutionFailure | null;
+}
+
+function persistStageAuthorization(
+  transaction: ApplicationTransaction,
+  state: ApplicationState,
+  intent: ExecutionOperationIntent,
+  context: TrustedContext,
+  phase: "act" | "finalize",
+  acceptedCode: string,
+): StageAuthorization {
+  const project = state.projects.find((candidate) => candidate.projectId === intent.projectId);
+  const execution = state.executions.find((candidate) => candidate.executionId === intent.executionId);
+  if (project === undefined || execution === undefined ||
+    project.resourceRevision !== intent.projectResourceRevision ||
+    project.configRevision !== intent.projectConfigRevision || execution.revision !== intent.executionRevision) {
+    throw new TypeError("Execution stage authorization target is stale");
+  }
+  const bindingRevision = intent.authorizationBindingRevision + 1;
+  const authorizationAttemptOrdinal = state.executionOperationRequests.length + 1;
+  const requestId = stableId("request", intent.intentId, phase, bindingRevision, authorizationAttemptOrdinal);
+  const correlationId = stableId("correlation", intent.intentId, phase, bindingRevision, authorizationAttemptOrdinal);
+  const decisionId = stableId("decision", intent.intentId, phase, bindingRevision, authorizationAttemptOrdinal);
+  const auditId = stableId("audit", intent.intentId, phase, bindingRevision, authorizationAttemptOrdinal);
+  const evaluation = authorize(state, intent.actorId, intent.action, project, context.now, true);
+  transaction.insertExecutionOperationRequest(requestRecord(
+    requestId, correlationId, intent.actorId, intent.action, execution, evaluation.allowed, context.now,
+  ));
+  transaction.insertExecutionAuthorizationDecision(decisionRecord(
+    decisionId, requestId, intent.actorId, intent.action, evaluation, project, context.now,
+  ));
+  transaction.insertExecutionOperationAudit(auditRecord(
+    auditId, requestId, decisionId, intent.actorId, correlationId, execution,
+    evaluation.allowed
+      ? phase === "act" ? "execution.operation.executing" : "execution.operation.finalized"
+      : "execution.operation.denied",
+    evaluation.allowed, evaluation.allowed ? acceptedCode : evaluation.reason, context.now,
+  ));
+  if (!evaluation.allowed) return Object.freeze({
+    allowed: false,
+    requestId,
+    correlationId,
+    decisionId,
+    auditId,
+    bindingRevision,
+    failure: failed("AUTHORIZATION_DENIED", `Current ${intent.action} grant did not allow ${phase}`, { requestId, correlationId }),
+  });
+  transaction.insertExecutionIntentAuthorizationBinding(Object.freeze({
+    bindingId: stableId("authorization-binding", intent.intentId, bindingRevision),
+    intentId: intent.intentId,
+    bindingRevision,
+    phase,
+    requestId,
+    decisionId,
+    auditId,
+    priorDecisionId: intent.currentAuthorizationDecisionId,
+    createdAt: context.now,
+  }));
+  return Object.freeze({
+    allowed: true, requestId, correlationId, decisionId, auditId, bindingRevision, failure: null,
   });
 }
 
@@ -685,19 +794,27 @@ function waitingMetadata(
   intent: ExecutionOperationIntent,
   code: string,
 ): WaitingMetadataInput {
-  const reason = lifecycle === "unknown" ? "ambiguous_external_state" :
+  const category = intent.lastErrorCategory;
+  const isAmbiguous = lifecycle === "unknown" || intent.lastErrorAmbiguous === true;
+  const reason = isAmbiguous ? "ambiguous_external_state" :
+    category === "unauthorized" || category === "policy_denied" ? "authorization_required" :
+    category === "incompatible_contract" ? "backend_incompatible" :
+    category === "rate_limited" ? "rate_limited" :
+    category === "resource_exhausted" ? "resource_exhausted" :
     lifecycle === "failed" || lifecycle === "adapter_failure" ? "execution_failed" : "human_input";
-  const requiredAction = lifecycle === "failed" || lifecycle === "adapter_failure" ? "execution.retry" :
-    lifecycle === "unknown" ? "execution.inspect" : "execution.resume";
+  const requiredAction = isAmbiguous ? "execution.inspect" :
+    lifecycle === "failed" || lifecycle === "adapter_failure"
+      ? intent.lastErrorRetryable === false ? "execution.cancel" : "execution.retry"
+      : "execution.resume";
   return Object.freeze({
     reason,
     phase: lifecycle === "unknown" ? "reconcile" : "manual_execution",
     requiredAction,
     lastErrorCode: code,
     lastErrorSummary: null,
-    retryable: lifecycle !== "unknown",
-    retryCount: 0,
-    retryAfter: null,
+    retryable: intent.lastErrorRetryable ?? lifecycle !== "unknown",
+    retryCount: intent.retryCount,
+    retryAfter: intent.retryAfter === null ? null : Date.parse(intent.retryAfter),
     executionId: intent.executionId,
     workspaceRevision: null,
     backendThreadId: intent.threadId,
@@ -1009,6 +1126,8 @@ function prepareSuccessorOperation(
         actorId: identity.actor.actorId,
         requestId: identity.requestId,
         decisionId: identity.decisionId,
+        currentAuthorizationDecisionId: identity.decisionId,
+        authorizationBindingRevision: 1,
         confirmationId: null,
         projectId: command.projectId,
         projectResourceRevision: command.expectedProjectResourceRevision,
@@ -1044,10 +1163,17 @@ function prepareSuccessorOperation(
         reportCode: null,
         evidenceReference: null,
         lastObservationNumber: 0,
+        lastErrorCategory: null,
+        lastErrorCode: null,
+        lastErrorRetryable: null,
+        lastErrorAmbiguous: null,
+        retryAfter: null,
+        retryCount: 0,
         createdAt: identity.now,
         updatedAt: identity.now,
       });
       transaction.insertExecutionIntent(intent);
+      transaction.insertExecutionIntentAuthorizationBinding(initialAuthorizationBinding(intent.intentId, identity));
       const readback = transaction.read().executionIntents.find((candidate) => candidate.intentId === intent.intentId);
       if (readback === undefined || readback.executionId !== replacement.executionId || readback.state !== "pending") {
         throw new TypeError("Successor execution intent readback failed");
@@ -1148,6 +1274,8 @@ function prepareOperation(
         actorId: identity.actor.actorId,
         requestId: identity.requestId,
         decisionId: identity.decisionId,
+        currentAuthorizationDecisionId: identity.decisionId,
+        authorizationBindingRevision: 1,
         confirmationId,
         projectId: command.projectId,
         projectResourceRevision: command.expectedProjectResourceRevision,
@@ -1187,10 +1315,17 @@ function prepareOperation(
         reportCode: command.kind === "manual.turn.report" ? command.code : null,
         evidenceReference: command.kind === "manual.turn.report" ? command.evidenceReference : null,
         lastObservationNumber: command.kind === "execution.start" ? 0 : command.lastObservationNumber,
+        lastErrorCategory: null,
+        lastErrorCode: null,
+        lastErrorRetryable: null,
+        lastErrorAmbiguous: null,
+        retryAfter: null,
+        retryCount: 0,
         createdAt: identity.now,
         updatedAt: identity.now,
       });
       transaction.insertExecutionIntent(intent);
+      transaction.insertExecutionIntentAuthorizationBinding(initialAuthorizationBinding(intent.intentId, identity));
       const readback = transaction.read().executionIntents.find((candidate) => candidate.intentId === intent.intentId);
       if (readback === undefined || readback.state !== "pending") throw new TypeError("Prepared execution intent readback failed");
       return Object.freeze({ intent: readback, requestId: identity.requestId, correlationId: identity.correlationId });
@@ -1221,18 +1356,38 @@ function insertStageAudit(
   ));
 }
 
-function markExecuting(store: PersistenceStore, intentId: string, now: string): ExecutionOperationIntent {
+function markExecuting(
+  store: PersistenceStore,
+  intentId: string,
+  context: TrustedContext,
+): ExecutionOperationIntent | ReliableExecutionFailure {
+  const preflight = readApplicationStateForOwner(store);
+  const preflightIntent = preflight.executionIntents.find((candidate) => candidate.intentId === intentId);
+  if (preflightIntent === undefined) return failed("RECONCILIATION_REQUIRED", "Prepared execution intent is absent");
+  const runtimeFailure = runtimeActorFailure(store, preflight, context, preflightIntent.actorId);
+  if (runtimeFailure !== null) return runtimeFailure;
   return withApplicationTransaction(store, (transaction) => {
     const state = transaction.read();
     const intent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
     if (intent === undefined) throw new TypeError("Prepared execution intent is absent");
-    if (intent.state === "executing") return intent;
-    if (intent.state !== "pending" && intent.state !== "retry_wait") throw new TypeError("Execution intent cannot enter executing");
-    const updatedAt = afterTimestamp(intent.updatedAt, now);
-    transaction.transitionExecutionIntent(intent.intentId, intent.state, intent.revision, "executing", updatedAt);
-    insertStageAudit(transaction, state, intent, "execution.operation.executing", "executing", updatedAt);
+    if (intent.state !== "pending" && intent.state !== "retry_wait" && intent.state !== "executing") {
+      throw new TypeError("Execution intent cannot bind an Act authorization");
+    }
+    const semantic = semanticForIntent(state, intent, context);
+    if ("ok" in semantic) return semantic;
+    const stage = persistStageAuthorization(transaction, state, intent, context, "act", "act_authorized");
+    if (!stage.allowed) return stage.failure ?? failed("AUTHORIZATION_DENIED", "Act authorization was denied");
+    const updatedAt = afterTimestamp(intent.updatedAt, context.now);
+    transaction.bindExecutionIntentAuthorization(
+      intent.intentId, intent.state, intent.revision, "executing",
+      intent.currentAuthorizationDecisionId, intent.authorizationBindingRevision,
+      stage.decisionId, stage.bindingRevision, updatedAt,
+    );
     const readback = transaction.read().executionIntents.find((candidate) => candidate.intentId === intentId);
-    if (readback === undefined || readback.state !== "executing") throw new TypeError("Executing intent readback failed");
+    if (readback === undefined || readback.state !== "executing" ||
+      readback.currentAuthorizationDecisionId !== stage.decisionId) {
+      throw new TypeError("Executing intent authorization readback failed");
+    }
     return readback;
   });
 }
@@ -1294,6 +1449,11 @@ function authorizeInspection(
   options: BindExecutionOptions = Object.freeze({}),
 ): InspectionAuthorization | ReliableExecutionFailure {
   try {
+    const preflight = readApplicationStateForOwner(store);
+    const preflightIntent = preflight.executionIntents.find((candidate) => candidate.intentId === intentId);
+    if (preflightIntent === undefined) return failed("RECONCILIATION_REQUIRED", "Execution intent is absent");
+    const runtimeFailure = runtimeActorFailure(store, preflight, context, preflightIntent.actorId);
+    if (runtimeFailure !== null) return runtimeFailure;
     return withApplicationTransaction(store, (transaction) => {
       const state = transaction.read();
       const intent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
@@ -1301,22 +1461,11 @@ function authorizeInspection(
       const semantic = semanticForIntent(state, intent, context, options);
       if ("ok" in semantic) return semantic;
       const requestedDeadline = new Date(Date.parse(context.now) + 30_000).toISOString();
-      const ordinal = state.executionObservations.filter((candidate) => candidate.intentId === intent.intentId).length + 1;
+      const ordinal = state.executionOperationRequests.length + 1;
       const requestId = stableId("request", intent.intentId, "inspect", ordinal);
       const correlationId = stableId("correlation", intent.intentId, "inspect", ordinal);
       const decisionId = stableId("decision", intent.intentId, "inspect", ordinal);
       const auditId = stableId("audit", intent.intentId, "inspect", ordinal);
-      const existingRequest = state.executionOperationRequests.find((candidate) => candidate.requestId === requestId);
-      if (existingRequest !== undefined) {
-        const existingDecision = state.executionAuthorizationDecisions.find((candidate) => candidate.requestId === requestId);
-        if (
-          existingDecision === undefined || existingRequest.correlationId !== correlationId ||
-          existingRequest.actorId !== intent.actorId || existingRequest.action !== "execution.inspect" ||
-          existingRequest.targetExecutionId !== intent.executionId || existingRequest.targetRevision !== intent.executionRevision ||
-          existingDecision.decisionId !== decisionId || existingDecision.result !== "allow"
-        ) return failed("AUTHORIZATION_DENIED", "Persisted inspection authorization is not an exact allow");
-        return Object.freeze({ requestId, correlationId, decisionId, semantic, requestedDeadline });
-      }
       const project = state.projects.find((candidate) => candidate.projectId === intent.projectId);
       const execution = state.executions.find((candidate) => candidate.executionId === intent.executionId);
       if (project === undefined || execution === undefined) return failed("STALE_REVISION", "Inspection target is stale");
@@ -1376,6 +1525,50 @@ type InspectionResult =
   | Readonly<{ ok: true; receipt: ExecutionInspectReceipt; authorization: InspectionAuthorization }>
   | Readonly<{ ok: false; error: ExecutionAdapterError | null; ambiguous: boolean }>;
 
+function authoritativeManualObservationMatches(
+  state: ApplicationState,
+  intent: ExecutionOperationIntent,
+  receipt: ExecutionInspectReceipt,
+): boolean {
+  const turn = state.manualTurns.find((candidate) => candidate.backendExecutionId === receipt.backendExecutionId);
+  if (
+    turn === undefined || turn.threadId !== receipt.threadId || turn.executionId !== intent.executionId ||
+    turn.projectId !== intent.projectId || turn.projectResourceRevision !== intent.projectResourceRevision ||
+    turn.projectConfigRevision !== intent.projectConfigRevision || turn.taskId !== intent.taskId ||
+    turn.inputReference !== intent.inputReference || turn.executionRevision !== intent.executionRevision ||
+    turn.attemptNumber !== intent.attemptNumber || turn.fencingToken !== intent.fencingToken ||
+    turn.policyBindingReference !== intent.policyBindingReference || turn.workspaceMode !== "none" ||
+    turn.revision !== receipt.observationNumber || turn.lifecycle !== receipt.lifecycle ||
+    turn.code !== receipt.code || turn.evidenceReference !== receipt.evidenceReference ||
+    turn.evidenceReference !== receipt.resultReference
+  ) return false;
+  if (intent.operationKind !== "inspect") {
+    const operation = state.manualBackendOperations.find((candidate) => candidate.intentId === intent.intentId);
+    if (
+      operation === undefined || operation.authorizationDecisionId !== intent.currentAuthorizationDecisionId ||
+      operation.backendExecutionId !== turn.backendExecutionId || operation.threadId !== turn.threadId ||
+      operation.expectedFencingToken !== intent.fencingToken || operation.postRevision !== turn.revision ||
+      operation.resultLifecycle !== turn.lifecycle
+    ) return false;
+  }
+  if (receipt.lifecycle === "cancelled") {
+    const request = state.manualBackendOperations.find((candidate) =>
+      candidate.backendExecutionId === turn.backendExecutionId && candidate.operationKind === "request_cancel" &&
+      candidate.postRevision === turn.cancellationRequestRevision
+    );
+    const confirmation = state.manualBackendOperations.find((candidate) =>
+      candidate.backendExecutionId === turn.backendExecutionId && candidate.operationKind === "manual_report" &&
+      candidate.reportOperation === "confirm_cancelled" && candidate.postRevision === turn.revision &&
+      candidate.resultLifecycle === "cancelled"
+    );
+    if (turn.cancellationRequestRevision === null || request === undefined || confirmation === undefined ||
+      confirmation.expectedPreRevision === null || confirmation.expectedPreRevision < turn.cancellationRequestRevision) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function independentlyInspect(
   store: PersistenceStore,
   intent: ExecutionOperationIntent,
@@ -1410,6 +1603,10 @@ function independentlyInspect(
     receipt.observedExecutionId !== intent.executionId || receipt.backendExecutionId !== backendExecutionId ||
     receipt.threadId !== threadId || receipt.observationNumber < intent.lastObservationNumber
   ) return Object.freeze({ ok: false, error: null, ambiguous: true });
+  const authoritativeState = readApplicationStateForOwner(store);
+  if (!authoritativeManualObservationMatches(authoritativeState, intent, receipt)) {
+    return Object.freeze({ ok: false, error: null, ambiguous: true });
+  }
   return Object.freeze({ ok: true, receipt, authorization });
 }
 
@@ -1510,7 +1707,12 @@ function finalizeVerified(
   intentId: string,
   context: TrustedContext,
   options: BindExecutionOptions = Object.freeze({}),
-): ReliableExecutionSuccess {
+): ReliableExecutionResult {
+  const preflight = readApplicationStateForOwner(store);
+  const preflightIntent = preflight.executionIntents.find((candidate) => candidate.intentId === intentId);
+  if (preflightIntent === undefined) return failed("RECONCILIATION_REQUIRED", "Verified execution intent is absent");
+  const runtimeFailure = runtimeActorFailure(store, preflight, context, preflightIntent.actorId);
+  if (runtimeFailure !== null) return runtimeFailure;
   return withApplicationTransaction(store, (transaction) => {
     const state = transaction.read();
     const intent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
@@ -1518,7 +1720,7 @@ function finalizeVerified(
     if (intent.state === "finalized") return successForIntent(state, intent, true);
     if (intent.state !== "verified") throw new TypeError("Execution intent is not verified");
     const semantic = semanticForIntent(state, intent, context, options);
-    if ("ok" in semantic) throw new TypeError("Verified finalization has a stale fence or revision");
+    if ("ok" in semantic) return semantic;
     const observation = latestObservation(state, intent.intentId);
     const receipt = state.executionReceipts.find((candidate) => candidate.intentId === intent.intentId);
     const task = state.domain.tasks.find((candidate) => candidate.id === intent.taskId);
@@ -1527,6 +1729,8 @@ function finalizeVerified(
       receipt.fencingToken !== intent.fencingToken || receipt.adapterReceiptId !== observation.adapterReceiptId) {
       throw new TypeError("Verified execution evidence is incomplete");
     }
+    const stage = persistStageAuthorization(transaction, state, intent, context, "finalize", observation.code);
+    if (!stage.allowed) return stage.failure ?? failed("AUTHORIZATION_DENIED", "Finalize authorization was denied");
     const preTaskRevision = task.revision;
     let postTaskRevision = task.revision;
     const expiredReconciliation = options.allowExpiredLease === true && execution.leaseExpiresAt <= context.now;
@@ -1543,29 +1747,55 @@ function finalizeVerified(
     }
     if (observation.lifecycle === "cancelled") {
       const turn = state.manualTurns.find((candidate) => candidate.backendExecutionId === observation.backendExecutionId);
-      const cancellationWasRequested = turn?.cancellationRequestRevision !== null &&
-        state.manualBackendOperations.some((candidate) =>
-          candidate.backendExecutionId === observation.backendExecutionId && candidate.operationKind === "request_cancel"
-        );
-      if (!cancellationWasRequested || task.state !== "running") {
-        throw new TypeError("Cancellation observation lacks a prior exact request or current running Task");
+      const cancellationRequest = state.manualBackendOperations.find((candidate) =>
+        candidate.backendExecutionId === observation.backendExecutionId &&
+        candidate.operationKind === "request_cancel" && candidate.postRevision === turn?.cancellationRequestRevision
+      );
+      const confirmation = state.manualBackendOperations.find((candidate) =>
+        candidate.backendExecutionId === observation.backendExecutionId &&
+        candidate.operationKind === "manual_report" && candidate.reportOperation === "confirm_cancelled" &&
+        candidate.postRevision === turn?.revision && candidate.resultLifecycle === "cancelled"
+      );
+      if (turn?.cancellationRequestRevision === null || turn?.cancellationRequestRevision === undefined ||
+        cancellationRequest === undefined || confirmation === undefined ||
+        confirmation.expectedPreRevision === null ||
+        confirmation.expectedPreRevision < turn.cancellationRequestRevision ||
+        (task.state !== "running" && task.state !== "waiting")) {
+        throw new TypeError("Cancellation observation lacks an exact request/confirmation lineage or cancellable Task");
       }
-      const transition = transitionTask(state.domain, {
-        taskId: task.id,
-        event: "interruption_verified",
-        targetState: "cancelled",
-        payload: {
-          reason: intent.reasonCode ?? "manual_cancelled",
-          verification: {
-            receiptId: receipt.verifiedReceiptId,
-            taskId: task.id,
-            taskRevision: task.revision,
-            executionId: intent.executionId,
-            status: "stopped",
+      const transition = task.state === "running"
+        ? transitionTask(state.domain, {
+          taskId: task.id,
+          event: "interruption_verified",
+          targetState: "cancelled",
+          payload: {
+            reason: intent.reasonCode ?? "manual_cancelled",
+            verification: {
+              receiptId: receipt.verifiedReceiptId,
+              taskId: task.id,
+              taskRevision: task.revision,
+              executionId: intent.executionId,
+              status: "stopped",
+            },
+            dependentWaiting: dependentWaiting(state, task.id),
           },
-          dependentWaiting: dependentWaiting(state, task.id),
-        },
-      });
+        })
+        : transitionTask(state.domain, {
+          taskId: task.id,
+          event: "cancel",
+          targetState: "cancelled",
+          payload: {
+            reason: intent.reasonCode ?? "manual_cancelled",
+            executionDisposition: {
+              receiptId: receipt.verifiedReceiptId,
+              taskId: task.id,
+              taskRevision: task.revision,
+              executionId: intent.executionId,
+              status: "stopped",
+            },
+            dependentWaiting: dependentWaiting(state, task.id),
+          },
+        });
       if (!transition.ok) throw new TypeError("Verified interruption Domain transition was rejected");
       transaction.writeDomain(state.domain, transition.value);
       postTaskRevision += 1;
@@ -1580,6 +1810,7 @@ function finalizeVerified(
       finalizationId,
       intentId: intent.intentId,
       verifiedReceiptId: receipt.verifiedReceiptId,
+      authorizationDecisionId: stage.decisionId,
       outcome,
       code: observation.code,
       taskRevision: postTaskRevision,
@@ -1601,10 +1832,17 @@ function finalizeVerified(
         createdAt: finalizedAt,
       }));
     }
-    transaction.transitionExecutionIntent(intent.intentId, "verified", intent.revision, "finalized", finalizedAt);
-    insertStageAudit(transaction, state, intent, "execution.operation.finalized", observation.code, finalizedAt);
+    transaction.bindExecutionIntentAuthorization(
+      intent.intentId, "verified", intent.revision, "finalized",
+      intent.currentAuthorizationDecisionId, intent.authorizationBindingRevision,
+      stage.decisionId, stage.bindingRevision, finalizedAt,
+    );
     if (observation.lifecycle === "cancelled") {
-      insertStageAudit(transaction, state, intent, "execution.interruption.verified", "manual_cancelled", finalizedAt);
+      transaction.insertExecutionOperationAudit(auditRecord(
+        stableId("audit", intent.intentId, "interruption", stage.bindingRevision),
+        stage.requestId, stage.decisionId, intent.actorId, stage.correlationId, execution,
+        "execution.interruption.verified", true, "manual_cancelled", finalizedAt,
+      ));
     }
     const readback = transaction.read();
     const terminalIntent = readback.executionIntents.find((candidate) => candidate.intentId === intent.intentId);
@@ -1626,9 +1864,34 @@ function markAdapterFailure(
     if (intent === undefined) throw new TypeError("Executing intent is absent at adapter failure");
     if (intent.state === "ambiguous" || intent.state === "retry_wait" || intent.state === "failed") return intent;
     if (intent.state !== "executing") throw new TypeError("Adapter failure does not bind an executing intent");
-    const nextState = ambiguous || error?.ambiguous === true ? "ambiguous" : error?.retryable === true ? "retry_wait" : "failed";
+    const normalized: ExecutionAdapterError = ambiguous && error?.ambiguous !== true ? Object.freeze({
+      code: "ambiguous_external_state",
+      category: "ambiguous_external_state",
+      retryable: false,
+      ambiguous: true,
+      message: "Authoritative inspection could not prove the external state",
+      correlationId: stableId("correlation", intent.intentId, "ambiguous", intent.retryCount + 1),
+      externalReference: null,
+      retryAfter: null,
+    }) : error ?? Object.freeze({
+      code: "ambiguous_external_state",
+      category: "ambiguous_external_state",
+      retryable: false,
+      ambiguous: true,
+      message: "Adapter state is not authoritative",
+      correlationId: stableId("correlation", intent.intentId, "ambiguous", intent.retryCount + 1),
+      externalReference: null,
+      retryAfter: null,
+    });
+    const nextState = normalized.ambiguous ? "ambiguous" : normalized.retryable ? "retry_wait" : "failed";
     const updatedAt = afterTimestamp(intent.updatedAt, now);
-    transaction.transitionExecutionIntent(intent.intentId, "executing", intent.revision, nextState, updatedAt);
+    transaction.recordExecutionIntentFailure(intent.intentId, intent.revision, nextState, Object.freeze({
+      category: normalized.category,
+      code: normalized.code,
+      retryable: normalized.retryable,
+      ambiguous: normalized.ambiguous,
+      retryAfter: normalized.retryAfter,
+    }), updatedAt);
     const readback = transaction.read().executionIntents.find((candidate) => candidate.intentId === intent.intentId);
     if (readback === undefined || readback.state !== nextState) throw new TypeError("Adapter failure state readback failed");
     return readback;
@@ -1639,14 +1902,19 @@ function finalizeAdapterFailure(
   store: PersistenceStore,
   intentId: string,
   context: TrustedContext,
-  error: ExecutionAdapterError | null,
-): ReliableExecutionSuccess {
+  options: BindExecutionOptions = Object.freeze({}),
+): ReliableExecutionResult {
+  const preflight = readApplicationStateForOwner(store);
+  const preflightIntent = preflight.executionIntents.find((candidate) => candidate.intentId === intentId);
+  if (preflightIntent === undefined) return failed("RECONCILIATION_REQUIRED", "Failed execution intent is absent");
+  const runtimeFailure = runtimeActorFailure(store, preflight, context, preflightIntent.actorId);
+  if (runtimeFailure !== null) return runtimeFailure;
   return withApplicationTransaction(store, (transaction) => {
     const state = transaction.read();
     const intent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
     if (intent === undefined) throw new TypeError("Failed execution intent is absent");
     if (intent.state === "finalized") return successForIntent(state, intent, true);
-    if (intent.state !== "ambiguous" && intent.state !== "retry_wait" && intent.state !== "failed") {
+    if (intent.state !== "ambiguous" && intent.state !== "failed") {
       throw new TypeError("Execution intent is not in a finalizable failure state");
     }
     const task = state.domain.tasks.find((candidate) => candidate.id === intent.taskId);
@@ -1654,7 +1922,11 @@ function finalizeAdapterFailure(
     if (task === undefined || execution === undefined || execution.fencingToken !== intent.fencingToken) {
       throw new TypeError("Adapter failure fence or Task is stale");
     }
-    const code = error?.code ?? (intent.state === "ambiguous" ? "ambiguous_external_state" : "adapter_failure");
+    const semantic = semanticForIntent(state, intent, context, options);
+    if ("ok" in semantic) return semantic;
+    const code = intent.lastErrorCode ?? (intent.state === "ambiguous" ? "ambiguous_external_state" : "adapter_failure");
+    const stage = persistStageAuthorization(transaction, state, intent, context, "finalize", code);
+    if (!stage.allowed) return stage.failure ?? failed("AUTHORIZATION_DENIED", "Failure finalization authorization was denied");
     let postTaskRevision = task.revision;
     const transition = executionWaitTransition(
       state, task, intent, intent.state === "ambiguous" ? "unknown" : "adapter_failure", code,
@@ -1670,14 +1942,18 @@ function finalizeAdapterFailure(
       finalizationId: stableId("finalization", intent.intentId),
       intentId: intent.intentId,
       verifiedReceiptId: null,
+      authorizationDecisionId: stage.decisionId,
       outcome: "waiting",
       code,
       taskRevision: postTaskRevision,
       executionRevision: execution.revision,
       finalizedAt,
     }));
-    transaction.transitionExecutionIntent(intent.intentId, intent.state, intent.revision, "finalized", finalizedAt);
-    insertStageAudit(transaction, state, intent, "execution.operation.finalized", code, finalizedAt);
+    transaction.bindExecutionIntentAuthorization(
+      intent.intentId, intent.state, intent.revision, "finalized",
+      intent.currentAuthorizationDecisionId, intent.authorizationBindingRevision,
+      stage.decisionId, stage.bindingRevision, finalizedAt,
+    );
     const readback = transaction.read();
     const terminalIntent = readback.executionIntents.find((candidate) => candidate.intentId === intent.intentId);
     if (terminalIntent === undefined || terminalIntent.state !== "finalized") throw new TypeError("Failed intent finalization readback failed");
@@ -1702,7 +1978,7 @@ function baseMutationRequest(intent: ExecutionOperationIntent, correlationId: st
     intentId: intent.intentId,
     idempotencyKey: intent.idempotencyKey,
     actorId: intent.actorId,
-    authorizationDecisionId: intent.decisionId,
+    authorizationDecisionId: intent.currentAuthorizationDecisionId,
   });
 }
 
@@ -1765,7 +2041,7 @@ function invokeEffect(
         intentId: intent.intentId,
         idempotencyKey: intent.idempotencyKey,
         actorId: intent.actorId,
-        authorizationDecisionId: intent.decisionId,
+        authorizationDecisionId: intent.currentAuthorizationDecisionId,
         confirmationId: intent.confirmationId,
         correlationId,
         semantic,
@@ -1842,10 +2118,117 @@ function effectReflected(
   return state.manualBackendOperations.some((candidate) => candidate.intentId === intent.intentId);
 }
 
-function processIntent(
+function refreshProcessContext(
+  store: PersistenceStore,
+  ingress: ReliableExecutionIngress,
+  expectedActorId: string,
+): TrustedContext | ReliableExecutionFailure {
+  const context = trustedContext(ingress);
+  if (context === null) return failed("INVALID_INPUT", "Trusted execution ingress is invalid");
+  let state: ApplicationState;
+  try {
+    state = readApplicationStateForOwner(store);
+  } catch {
+    return failed("PERSISTENCE_FAILURE", "Reliable execution state could not be read");
+  }
+  return runtimeActorFailure(store, state, context, expectedActorId) ?? context;
+}
+
+function markReconciliationExecuting(
   store: PersistenceStore,
   intentId: string,
   context: TrustedContext,
+  options: BindExecutionOptions,
+): ExecutionOperationIntent | ReliableExecutionFailure {
+  return withApplicationTransaction(store, (transaction) => {
+    const state = transaction.read();
+    const intent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
+    if (intent === undefined || intent.state !== "pending") {
+      throw new TypeError("Pending reconciliation intent is absent");
+    }
+    const semantic = semanticForIntent(state, intent, context, options);
+    if ("ok" in semantic) throw new TypeError("Pending reconciliation tuple is stale");
+    const stage = persistStageAuthorization(
+      transaction, state, intent, context, "act", "reconcile_without_effect",
+    );
+    if (!stage.allowed) {
+      return stage.failure ?? failed("AUTHORIZATION_DENIED", "Reconciliation authorization was denied");
+    }
+    const updatedAt = afterTimestamp(intent.updatedAt, context.now);
+    transaction.bindExecutionIntentAuthorization(
+      intent.intentId, "pending", intent.revision, "executing",
+      intent.currentAuthorizationDecisionId, intent.authorizationBindingRevision,
+      stage.decisionId, stage.bindingRevision, updatedAt,
+    );
+    insertStageAudit(transaction, state, intent, "execution.reconciled", "reconcile_without_effect", updatedAt);
+    const readback = transaction.read().executionIntents.find((candidate) => candidate.intentId === intentId);
+    if (readback === undefined || readback.state !== "executing") {
+      throw new TypeError("Reconciliation intent readback failed");
+    }
+    return readback;
+  });
+}
+
+function finalizeProvenNoEffect(
+  store: PersistenceStore,
+  intentId: string,
+  context: TrustedContext,
+  options: BindExecutionOptions,
+): ReliableExecutionResult {
+  const preflight = readApplicationStateForOwner(store);
+  const preflightIntent = preflight.executionIntents.find((candidate) => candidate.intentId === intentId);
+  if (preflightIntent === undefined) return failed("RECONCILIATION_REQUIRED", "No-effect intent is absent");
+  const runtimeFailure = runtimeActorFailure(store, preflight, context, preflightIntent.actorId);
+  if (runtimeFailure !== null) return runtimeFailure;
+  return withApplicationTransaction(store, (transaction) => {
+    const state = transaction.read();
+    const intent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
+    if (intent === undefined || (intent.state !== "pending" && intent.state !== "executing")) {
+      throw new TypeError("No-effect finalization requires pending or executing intent");
+    }
+    const semantic = semanticForIntent(state, intent, context, options);
+    if ("ok" in semantic) return semantic;
+    if (intent.operationKind !== "start" ||
+      state.manualTurns.some((candidate) => candidate.executionId === intent.executionId) ||
+      state.manualBackendOperations.some((candidate) => candidate.intentId === intent.intentId)) {
+      throw new TypeError("No-effect finalization lacks exact Manual absence proof");
+    }
+    const execution = state.executions.find((candidate) => candidate.executionId === intent.executionId);
+    const task = state.domain.tasks.find((candidate) => candidate.id === intent.taskId);
+    if (execution === undefined || task === undefined) throw new TypeError("No-effect lineage is absent");
+    const code = "expired_before_effect";
+    const stage = persistStageAuthorization(transaction, state, intent, context, "finalize", code);
+    if (!stage.allowed) return stage.failure ?? failed("AUTHORIZATION_DENIED", "No-effect finalization authorization was denied");
+    const finalizedAt = afterTimestamp(intent.updatedAt, context.now);
+    transaction.insertExecutionFinalization(Object.freeze({
+      finalizationId: stableId("finalization", intent.intentId),
+      intentId: intent.intentId,
+      verifiedReceiptId: null,
+      authorizationDecisionId: stage.decisionId,
+      outcome: "rejected" as const,
+      code,
+      taskRevision: task.revision,
+      executionRevision: execution.revision,
+      finalizedAt,
+    }));
+    transaction.bindExecutionIntentAuthorization(
+      intent.intentId, intent.state, intent.revision, "finalized",
+      intent.currentAuthorizationDecisionId, intent.authorizationBindingRevision,
+      stage.decisionId, stage.bindingRevision, finalizedAt,
+    );
+    const readback = transaction.read();
+    const finalized = readback.executionIntents.find((candidate) => candidate.intentId === intent.intentId);
+    if (finalized === undefined || finalized.state !== "finalized") {
+      throw new TypeError("No-effect finalization readback failed");
+    }
+    return successForIntent(readback, finalized, false);
+  });
+}
+
+function processIntent(
+  store: PersistenceStore,
+  intentId: string,
+  ingress: ReliableExecutionIngress,
   backend: ExecutionBackend,
   control: ManualOutcomeControl,
   hooks: ReliableExecutionTestHooks,
@@ -1855,38 +2238,68 @@ function processIntent(
     let state = readApplicationStateForOwner(store);
     let intent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
     if (intent === undefined) return failed("RECONCILIATION_REQUIRED", "Execution intent is absent");
+    let refreshed = refreshProcessContext(store, ingress, intent.actorId);
+    if ("ok" in refreshed) return refreshed;
+    let context = refreshed;
     if (intent.state === "finalized") return successForIntent(state, intent, true);
     if (intent.state === "observed") {
       intent = verifyObservation(store, intent.intentId, context.now);
       hooks.afterStage?.("receipt");
       hooks.afterStage?.("verified");
+      refreshed = refreshProcessContext(store, ingress, intent.actorId);
+      if ("ok" in refreshed) return refreshed;
+      context = refreshed;
     }
     if (intent.state === "verified") {
       const result = finalizeVerified(store, intent.intentId, context, options);
-      hooks.afterStage?.("finalized");
+      if (result.ok) hooks.afterStage?.("finalized");
       return result;
     }
-    if (intent.state === "ambiguous" || intent.state === "retry_wait" || intent.state === "failed") {
-      const result = finalizeAdapterFailure(store, intent.intentId, context, null);
-      hooks.afterStage?.("failure-finalized");
+    if (intent.state === "retry_wait") {
+      if (intent.retryAfter !== null && intent.retryAfter > context.now) {
+        return successForIntent(state, intent, true);
+      }
+    } else if (intent.state === "ambiguous" || intent.state === "failed") {
+      const result = finalizeAdapterFailure(store, intent.intentId, context, options);
+      if (result.ok) hooks.afterStage?.("failure-finalized");
       return result;
     }
-    const wasPending = intent.state === "pending";
-    if (wasPending) {
-      intent = markExecuting(store, intent.intentId, context.now);
+    const entryState = intent.state;
+    const executionAtEntry = state.executions.find((candidate) => candidate.executionId === intent?.executionId);
+    if (executionAtEntry === undefined) return failed("EXECUTION_NOT_FOUND", "Execution intent target is absent");
+    const reconciliationLease = options.allowExpiredLease === true && executionAtEntry.leaseExpiresAt <= context.now;
+    const reconciliationOwner = options.allowDifferentOwner === true && executionAtEntry.ownerId !== context.ownerId;
+    const reconciliationOnly = reconciliationLease || reconciliationOwner;
+    if (intent.state === "pending" && reconciliationOnly) {
+      const startAbsent = intent.operationKind === "start" &&
+        !state.manualTurns.some((candidate) => candidate.executionId === intent?.executionId) &&
+        !state.manualBackendOperations.some((candidate) => candidate.intentId === intent?.intentId);
+      if (startAbsent) return finalizeProvenNoEffect(store, intent.intentId, context, options);
+      const markedForReconciliation = markReconciliationExecuting(store, intent.intentId, context, options);
+      if ("ok" in markedForReconciliation) return markedForReconciliation;
+      intent = markedForReconciliation;
+      hooks.afterStage?.("reconciliation-executing");
+    } else if (intent.state === "pending" || intent.state === "retry_wait") {
+      const marked = markExecuting(store, intent.intentId, context);
+      if ("ok" in marked) return marked;
+      intent = marked;
       hooks.afterStage?.("executing");
+      refreshed = refreshProcessContext(store, ingress, intent.actorId);
+      if ("ok" in refreshed) return refreshed;
+      context = refreshed;
     }
     if (intent.state !== "executing") return failed("RECONCILIATION_REQUIRED", "Execution intent state cannot progress");
     state = readApplicationStateForOwner(store);
-    const persistedIntent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
+    let persistedIntent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
     if (persistedIntent === undefined) return failed("RECONCILIATION_REQUIRED", "Executing intent disappeared");
     intent = persistedIntent;
-    const effectIntent = persistedIntent;
-    const semantic = semanticForIntent(state, effectIntent, context, options);
+    let effectIntent = persistedIntent;
+    let semantic = semanticForIntent(state, effectIntent, context, options);
     if ("ok" in semantic) return semantic;
-    let priorInspection: InspectionResult | null = null;
-    if (!wasPending) {
-      priorInspection = independentlyInspect(store, effectIntent, context, backend, null, options);
+    const recoveryRequired = entryState === "executing" ||
+      (entryState === "retry_wait" && effectIntent.lastErrorAmbiguous !== false) || reconciliationOnly;
+    if (recoveryRequired) {
+      const priorInspection = independentlyInspect(store, effectIntent, context, backend, null, options);
       hooks.afterStage?.("recovery-inspected");
       if (priorInspection.ok && effectReflected(state, effectIntent, priorInspection.receipt)) {
         intent = persistObservation(
@@ -1901,66 +2314,138 @@ function processIntent(
         intent = verifyObservation(store, intent.intentId, context.now);
         hooks.afterStage?.("receipt");
         hooks.afterStage?.("verified");
+        refreshed = refreshProcessContext(store, ingress, intent.actorId);
+        if ("ok" in refreshed) return refreshed;
+        context = refreshed;
         const result = finalizeVerified(store, intent.intentId, context, options);
-        hooks.afterStage?.("finalized");
+        if (result.ok) hooks.afterStage?.("finalized");
         return result;
       }
-      if (options.allowExpiredLease === true && effectIntent.operationKind !== "inspect") {
+      if (reconciliationOnly) {
         const startIsProvenAbsent = effectIntent.operationKind === "start" &&
           !state.manualTurns.some((candidate) => candidate.executionId === effectIntent.executionId) &&
           !state.manualBackendOperations.some((candidate) => candidate.intentId === effectIntent.intentId);
-        if (!startIsProvenAbsent) {
-          const error = priorInspection.ok ? null : priorInspection.error;
-          intent = markAdapterFailure(store, effectIntent.intentId, error, true, context.now);
-          hooks.afterStage?.("adapter-failure-recorded");
-          const result = finalizeAdapterFailure(store, intent.intentId, context, error);
-          hooks.afterStage?.("failure-finalized");
+        if (startIsProvenAbsent) return finalizeProvenNoEffect(store, effectIntent.intentId, context, options);
+        if (priorInspection.ok) {
+          intent = persistObservation(
+            store, effectIntent.intentId, priorInspection.receipt,
+            priorInspection.authorization, context, options,
+          );
+          hooks.afterStage?.("observed");
+          intent = verifyObservation(store, intent.intentId, context.now);
+          hooks.afterStage?.("receipt");
+          hooks.afterStage?.("verified");
+          refreshed = refreshProcessContext(store, ingress, intent.actorId);
+          if ("ok" in refreshed) return refreshed;
+          context = refreshed;
+          const result = finalizeVerified(store, intent.intentId, context, options);
+          if (result.ok) hooks.afterStage?.("finalized");
           return result;
         }
+        intent = markAdapterFailure(store, effectIntent.intentId, priorInspection.error, true, context.now);
+        hooks.afterStage?.("adapter-failure-recorded");
+        refreshed = refreshProcessContext(store, ingress, intent.actorId);
+        if ("ok" in refreshed) return refreshed;
+        context = refreshed;
+        const result = finalizeAdapterFailure(store, intent.intentId, context, options);
+        if (result.ok) hooks.afterStage?.("failure-finalized");
+        return result;
+      }
+      if (!priorInspection.ok && entryState !== "executing") {
+        intent = markAdapterFailure(
+          store, effectIntent.intentId, priorInspection.error,
+          priorInspection.ambiguous || priorInspection.error === null, context.now,
+        );
+        hooks.afterStage?.("adapter-failure-recorded");
+        if (intent.state === "retry_wait") {
+          return successForIntent(readApplicationStateForOwner(store), intent, false);
+        }
+        refreshed = refreshProcessContext(store, ingress, intent.actorId);
+        if ("ok" in refreshed) return refreshed;
+        context = refreshed;
+        const result = finalizeAdapterFailure(store, intent.intentId, context, options);
+        if (result.ok) hooks.afterStage?.("failure-finalized");
+        return result;
       }
     }
+    refreshed = refreshProcessContext(store, ingress, effectIntent.actorId);
+    if ("ok" in refreshed) return refreshed;
+    context = refreshed;
+    const rebound = markExecuting(store, effectIntent.intentId, context);
+    if ("ok" in rebound) return rebound;
+    effectIntent = rebound;
+    state = readApplicationStateForOwner(store);
+    persistedIntent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
+    if (persistedIntent === undefined || persistedIntent.currentAuthorizationDecisionId !== effectIntent.currentAuthorizationDecisionId) {
+      return failed("RECONCILIATION_REQUIRED", "Act authorization readback is stale");
+    }
+    semantic = semanticForIntent(state, effectIntent, context);
+    if ("ok" in semantic) return semantic;
     let effect = Object.freeze({ error: null, ambiguous: false, identity: null }) as EffectAttempt;
     if (effectIntent.operationKind !== "inspect") {
-      const request = state.executionOperationRequests.find((candidate) => candidate.requestId === effectIntent.requestId);
-      if (request === undefined) throw new TypeError("Execution intent request is absent");
+      const decision = state.executionAuthorizationDecisions.find(
+        (candidate) => candidate.decisionId === effectIntent.currentAuthorizationDecisionId,
+      );
+      const request = decision === undefined ? undefined : state.executionOperationRequests.find(
+        (candidate) => candidate.requestId === decision.requestId,
+      );
+      if (request === undefined) throw new TypeError("Current Act authorization request is absent");
       effect = invokeEffect(effectIntent, semantic, request.correlationId, backend, control);
       hooks.afterStage?.("adapter-effect");
     }
-    const inspection = independentlyInspect(store, effectIntent, context, backend, effect.identity, options);
+    refreshed = refreshProcessContext(store, ingress, effectIntent.actorId);
+    if ("ok" in refreshed) return refreshed;
+    context = refreshed;
+    const currentState = readApplicationStateForOwner(store);
+    const currentIntent = currentState.executionIntents.find((candidate) => candidate.intentId === effectIntent.intentId);
+    if (currentIntent === undefined) return failed("RECONCILIATION_REQUIRED", "Post-effect intent is absent");
+    const currentSemantic = semanticForIntent(currentState, currentIntent, context);
+    if ("ok" in currentSemantic) return currentSemantic;
+    const inspection = independentlyInspect(store, currentIntent, context, backend, effect.identity);
     hooks.afterStage?.("independent-inspect");
     if (!inspection.ok) {
       const error = inspection.error ?? effect.error;
-      const ambiguous = inspection.ambiguous || effect.ambiguous || error === null;
-      intent = markAdapterFailure(store, effectIntent.intentId, error, ambiguous, context.now);
+      const ambiguous = effect.ambiguous || (error === null && inspection.ambiguous);
+      intent = markAdapterFailure(store, currentIntent.intentId, error, ambiguous, context.now);
       hooks.afterStage?.("adapter-failure-recorded");
-      const result = finalizeAdapterFailure(store, intent.intentId, context, error);
-      hooks.afterStage?.("failure-finalized");
+      if (intent.state === "retry_wait") {
+        return successForIntent(readApplicationStateForOwner(store), intent, false);
+      }
+      refreshed = refreshProcessContext(store, ingress, intent.actorId);
+      if ("ok" in refreshed) return refreshed;
+      context = refreshed;
+      const result = finalizeAdapterFailure(store, intent.intentId, context);
+      if (result.ok) hooks.afterStage?.("failure-finalized");
       return result;
     }
     const postEffectState = readApplicationStateForOwner(store);
-    if (!effectReflected(postEffectState, effectIntent, inspection.receipt)) {
+    if (!effectReflected(postEffectState, currentIntent, inspection.receipt)) {
       const error = effect.error;
       const ambiguous = effect.ambiguous || error === null;
-      intent = markAdapterFailure(store, effectIntent.intentId, error, ambiguous, context.now);
+      intent = markAdapterFailure(store, currentIntent.intentId, error, ambiguous, context.now);
       hooks.afterStage?.("adapter-failure-recorded");
-      const result = finalizeAdapterFailure(store, intent.intentId, context, error);
-      hooks.afterStage?.("failure-finalized");
+      if (intent.state === "retry_wait") {
+        return successForIntent(readApplicationStateForOwner(store), intent, false);
+      }
+      refreshed = refreshProcessContext(store, ingress, intent.actorId);
+      if ("ok" in refreshed) return refreshed;
+      context = refreshed;
+      const result = finalizeAdapterFailure(store, intent.intentId, context);
+      if (result.ok) hooks.afterStage?.("failure-finalized");
       return result;
     }
     intent = persistObservation(
-      store,
-      effectIntent.intentId,
-      inspection.receipt,
-      inspection.authorization,
-      context,
-      options,
+      store, currentIntent.intentId, inspection.receipt, inspection.authorization, context,
     );
     hooks.afterStage?.("observed");
     intent = verifyObservation(store, intent.intentId, context.now);
     hooks.afterStage?.("receipt");
     hooks.afterStage?.("verified");
-    const result = finalizeVerified(store, intent.intentId, context, options);
-    hooks.afterStage?.("finalized");
+    refreshed = refreshProcessContext(store, ingress, intent.actorId);
+    if ("ok" in refreshed) return refreshed;
+    context = refreshed;
+    const result = finalizeVerified(store, intent.intentId, context);
+    if (result.ok) hooks.afterStage?.("finalized");
     return result;
   } catch (error) {
     if (error instanceof PersistenceError) return failed("PERSISTENCE_FAILURE", "Reliable execution persistence failed closed");
@@ -2010,11 +2495,14 @@ function runOperation(
     if (!intentTupleMatches(state, replay, command)) return failed("IDEMPOTENCY_CONFLICT", "Idempotency identity is bound to another operation tuple");
     const context = trustedContext(ingress);
     if (context === null) return failed("INVALID_INPUT", "Trusted execution ingress is invalid");
-    if (context.actor.actorId !== replay.actorId) return failed("AUTHORIZATION_DENIED", "Replay actor differs from the durable operation actor");
-    return processIntent(store, replay.intentId, context, backend, control, hooks, options);
+    const runtimeFailure = runtimeActorFailure(store, state, context, replay.actorId);
+    if (runtimeFailure !== null) return runtimeFailure;
+    return processIntent(store, replay.intentId, ingress, backend, control, hooks, options);
   }
   let context = trustedContext(ingress);
   if (context === null) return failed("INVALID_INPUT", "Trusted execution ingress is invalid");
+  const runtimeFailure = runtimeActorFailure(store, state, context);
+  if (runtimeFailure !== null) return runtimeFailure;
   let identity = operationIdentity(context, ingress);
   if (identity === null) return failed("INVALID_INPUT", "Trusted execution identities are invalid");
   let useSuccessor = false;
@@ -2054,7 +2542,7 @@ function runOperation(
     : prepareOperation(store, command, identity, backend, namedConfirmation, options);
   if ("ok" in prepared) return prepared;
   hooks.afterStage?.("prepared");
-  return processIntent(store, prepared.intent.intentId, context, backend, control, hooks, options);
+  return processIntent(store, prepared.intent.intentId, ingress, backend, control, hooks, options);
 }
 
 function completionResult(
@@ -2109,14 +2597,22 @@ function acceptCompletion(
   } catch {
     return failed("PERSISTENCE_FAILURE", "Manual completion state could not be read");
   }
+  let context = trustedContext(ingress);
+  if (context === null) return failed("INVALID_INPUT", "Trusted completion ingress is invalid");
+  const initialRuntimeFailure = runtimeActorFailure(store, state, context);
+  if (initialRuntimeFailure !== null) return initialRuntimeFailure;
   const replay = state.manualCompletionDecisions.find((candidate) => candidate.idempotencyKey === command.idempotencyKey);
   if (replay !== undefined) {
+    const replayDecision = state.executionAuthorizationDecisions.find(
+      (candidate) => candidate.decisionId === replay.decisionId,
+    );
+    if (replayDecision?.actorId !== context.actor.actorId) {
+      return failed("AUTHORIZATION_DENIED", "Completion replay actor differs from its durable decision");
+    }
     return completionTupleMatches(state, command, replay)
       ? completionResult(state, replay.completionDecisionId, true)
       : failed("IDEMPOTENCY_CONFLICT", "Completion idempotency identity is bound to another tuple");
   }
-  let context = trustedContext(ingress);
-  if (context === null) return failed("INVALID_INPUT", "Trusted completion ingress is invalid");
   let identity = operationIdentity(context, ingress);
   if (identity === null) return failed("INVALID_INPUT", "Trusted completion identities are invalid");
   const completionOptions = Object.freeze({ allowExpiredLease: true, allowDifferentOwner: true });
@@ -2134,6 +2630,9 @@ function acceptCompletion(
   }
   context = refreshed;
   identity = Object.freeze({ ...identity, ...refreshed });
+  const refreshedState = readApplicationStateForOwner(store);
+  const refreshedRuntimeFailure = runtimeActorFailure(store, refreshedState, context);
+  if (refreshedRuntimeFailure !== null) return refreshedRuntimeFailure;
   try {
     const result = withApplicationTransaction(store, (transaction) => {
       const current = transaction.read();
@@ -2270,6 +2769,8 @@ function createReliableExecutionServiceInternal(
     if (context === null) return failed("INVALID_INPUT", "Trusted reconciliation ingress is invalid");
     let state: ApplicationState;
     try { state = readApplicationStateForOwner(store); } catch { return failed("PERSISTENCE_FAILURE", "Reconciliation state could not be read"); }
+    const runtimeFailure = runtimeActorFailure(store, state, context);
+    if (runtimeFailure !== null) return runtimeFailure;
     const reconciliationOptions = Object.freeze({ allowExpiredLease: true, allowDifferentOwner: true });
     const bound = bindExecution(state, command, context, reconciliationOptions);
     if ("ok" in bound) return bound;
@@ -2297,7 +2798,7 @@ function createReliableExecutionServiceInternal(
       unfinished.attemptNumber !== command.expectedAttemptNumber || unfinished.fencingToken !== command.expectedFencingToken ||
       unfinished.policyBindingReference !== command.policyBindingReference
     ) return failed("STALE_REVISION", "Reconciliation command does not match the unfinished intent");
-    return processIntent(store, unfinished.intentId, context, backend, control, hooks, reconciliationOptions);
+    return processIntent(store, unfinished.intentId, ingress, backend, control, hooks, reconciliationOptions);
   };
   return Object.freeze({
     start: (command: ExecutionLoopStartCommand) => runOperation(store, command, "execution.start", ingress, backend, control, hooks),

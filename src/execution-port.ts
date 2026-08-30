@@ -442,7 +442,6 @@ export function parseExecutionAdapterError(value: unknown): ExecutionAdapterErro
   if (record.retryable !== flags[0] || record.ambiguous !== flags[1]) return null;
   if (record.externalReference !== null && !operationalIdentifier(record.externalReference)) return null;
   if (record.retryAfter !== null && !timestamp(record.retryAfter)) return null;
-  if (category !== "rate_limited" && record.retryAfter !== null) return null;
   return Object.freeze(record as unknown as ExecutionAdapterError);
 }
 

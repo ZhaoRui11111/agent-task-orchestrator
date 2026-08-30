@@ -6,9 +6,9 @@
 {
   "schema_version": 3,
   "lifecycle": {
-    "status": "active",
+    "status": "completed",
     "created_at": "2026-08-30 21:02:48+08:00",
-    "updated_at": "2026-08-31 00:02:20+08:00",
+    "updated_at": "2026-08-31 02:24:00+08:00",
     "authorization": {
       "implementation": {
         "authorized": true,
@@ -476,8 +476,107 @@
       "current_material_base": "d8afb79090906c263c7b91eca5234e613e066d04",
       "base_transitions": []
     },
-    "milestone_progress": [],
-    "validation_results": [],
+    "milestone_progress": [
+      {"id": "M1", "status": "complete", "updated_at": "2026-08-31 02:24:00+08:00"},
+      {"id": "M2", "status": "complete", "updated_at": "2026-08-31 02:24:00+08:00"},
+      {"id": "M3", "status": "complete", "updated_at": "2026-08-31 02:24:00+08:00"},
+      {"id": "M4", "status": "complete", "updated_at": "2026-08-31 02:24:00+08:00"},
+      {"id": "M5", "status": "complete", "updated_at": "2026-08-31 02:24:00+08:00"},
+      {"id": "M6", "status": "complete", "updated_at": "2026-08-31 02:24:00+08:00"}
+    ],
+    "validation_results": [
+      {
+        "id": "V1",
+        "status": "passed",
+        "method": "Schema-v3 trace, terminal-resolve, chain-check, coordinator evidence and fresh independent A0",
+        "evidence": "Unique pushed EP-02A predecessor, exact d8afb79090906c263c7b91eca5234e613e066d04 base, current approval digest, task ownership and activation lineage were reproduced with no base, scope, overlap or pre-existing-dirty error.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      },
+      {
+        "id": "V2",
+        "status": "passed",
+        "method": "Migration registry, fresh/prefix upgrade, historical decode, doctor and backup/restore/recovery tests",
+        "evidence": "Canonical migration 0006, zero-authority migration, exact schema-v6 23+6 grant partition, all released-prefix upgrades, lifecycle digest history, typed corruption refusal, restart, authorized backup, restore and recovery pass; migration SHA-256 is 3D27258B3C9FB4B11B56B989CA2F341CB4DC68C96168D864D3763D93A4799153.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      },
+      {
+        "id": "V3",
+        "status": "passed",
+        "method": "ato.execution/v1 contract vectors and Manual/Fake shared exchange suite",
+        "evidence": "Corrected-before-first-implementation actions, closed fields, workspace_mode=none, identities, lifecycles, receipt and error taxonomy accept canonical vectors and reject missing, extra, cross-class, version, action, accessor and proxy drift before backend invocation.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      },
+      {
+        "id": "V4",
+        "status": "passed",
+        "method": "Manual backend/control contract, competing-writer, restart, terminal immutability and packed-export tests",
+        "evidence": "Production Manual journal operations and the sole confirmed outcome writer are tuple-idempotent, restart durable, independently inspectable and exact-CAS; response loss, drift, terminal rewrite and competing writers fail safely; Fake remains test-only and absent from 105 packed files.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      },
+      {
+        "id": "V5",
+        "status": "passed",
+        "method": "Vocabulary-4-to-5-to-6 authorization, confirmation, failpoint, corruption and atomic readback tests",
+        "evidence": "Migration/bootstrap/renewal and vocabulary 5 expose no Manual authority; separately confirmed 5-to-6 creates exactly 29 origin grants in a decoder-enforced 23-linked-legacy plus 6-v6 partition; denials and every failpoint leave no unauthorized effect or partial authority.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      },
+      {
+        "id": "V6",
+        "status": "passed",
+        "method": "Durable checkpoint, response-loss, replay, restart and verified-not-finalized recovery matrix",
+        "evidence": "Start, resume, retry, cancel and Manual report reopen from every protocol checkpoint; exact retries retain one semantic key/effect/finalization, executing state inspects first, and ambiguous state never blindly replays or succeeds.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      },
+      {
+        "id": "V7",
+        "status": "passed",
+        "method": "Execution-loop lifecycle, continuation, cancellation and interruption tests",
+        "evidence": "Verified start/inspect/resume/retry paths preserve exact identities and observations; cancellation request does not terminate Task, and only authoritative independently verified interruption closes cancelled state, including waiting cancellation through explicit stopped disposition.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      },
+      {
+        "id": "V8",
+        "status": "passed",
+        "method": "Expired pending/executing reconciliation, takeover, stale-owner and stale-fence regressions",
+        "evidence": "Expired or foreign-owner intents never invoke old-fence effects; reconciliation finalizes proven absence or preserves ambiguity before a strictly greater successor attempt/fence, and stale writes leave no partial state.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      },
+      {
+        "id": "V9",
+        "status": "passed",
+        "method": "Manual turn-success and separate completion-decision end-to-end tests",
+        "evidence": "turn_succeeded and verified report finalization leave Task running and dependencies locked; only a distinct current execution.completion.accept grant and fresh completion confirmation atomically record completion decision, Domain completion, terminal execution, audit and exact replay.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      },
+      {
+        "id": "V10",
+        "status": "passed",
+        "method": "Manual architecture/contracts/package/public-version review plus docs and package smoke",
+        "evidence": "Ownership and dependency direction remain singular; persistence does not authorize or select Domain work; Fake is test-only; ato.api/v1 is unchanged; docs and package claim only the library Manual loop and retain all dispatcher/scheduler/MCP/Codex/workspace/Git/gate non-goals.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      },
+      {
+        "id": "V11",
+        "status": "passed",
+        "method": "Security, malformed-input, trusted-identity, authorization freshness, forgery and redaction tests",
+        "evidence": "Malformed/overlong/accessor/proxy/injection inputs stop before ingress/effect; principal/root and Prepare/Act/Finalize authorization remain current; forged receipts and content-derived authority fail; durable/public records exclude sentinel path, prompt, environment, credential, raw error, SQL and stack material.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      },
+      {
+        "id": "V12",
+        "status": "passed",
+        "method": "Repeated frozen verify:offline, focused 24/24 and 115/115 routes, diff-check and task inventory",
+        "evidence": "Exact final material state passed lint 168/25, strict typecheck/build, 384/384 tests with no failure/skip/todo and artifact hygiene 14-to-14, docs 77/248/21/0, zero-production-dependency shape, 105-file packed install, Windows SQLite with zero survivor and blocked Codex boundary; git diff --check passed and every changed path is task-owned with an empty index.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      },
+      {
+        "id": "V13",
+        "status": "passed",
+        "method": "Fresh independent non-fail-fast A1 and three fresh A2 attempts with schema-v3 finding routing",
+        "evidence": "A1's nine findings and A2 attempts 1-2 residuals are preserved; fresh independent A2 attempt 3 binds the exact final material state, closes all required A1 findings and prior A2-001..004, reports no new finding and is closure-safe. No EP-02C file exists in the task diff.",
+        "state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07"
+      }
+    ],
     "ownership_receipts": [],
     "audits": {
       "a0": {
@@ -491,6 +590,149 @@
         "reviewed_material_base": "d8afb79090906c263c7b91eca5234e613e066d04",
         "evidence": "Complete reread covered the active plan, repository guidance, schema/A0/persistence-audit rules and every directly relevant authorization, Domain, adapter, persistence, reliability, completion/workspace, versioning, ownership, validation, toolchain, CLI, Git-flow, privacy and threat contract. Independent compact sorted-key UTF-8 canonicalization produced exactly 28,194 bytes and SHA-256 0DDE3D4D2C6E7F006D3DDF0D0E2B239DF4D91F9F5E63E6EEEA2AF63EE076BFA8. Removing exactly the two new test ownership entries reconstructed the previous 28,060-byte contract and digest EE416953040AD2C7E60FD53F55492B58D0F004C357DB321DCD9AA3A9F0FED95E. Fresh inventory found 40 tracked dirty plus 13 untracked paths, all 53 covered by 62 scope entries with outside_scope empty and index unstaged. Both added tests are validation-only and directly required by unchanged V5/V12. Attempts 1-4 and all revisions remain truthful. Trace reproduced exact base/digest with no warning and only the expected missing-current-A0 lifecycle gate; HEAD/master/origin/master and predecessor terminal all matched d8afb79090906c263c7b91eca5234e613e066d04. Full non-fail-fast review reconfirmed additive schema-v6 lineage, explicit no-auto-grant vocabulary upgrade, corrected-before-first-implementation ato.execution/v1, the sole confirmed Manual outcome writer, intent/effect/observation/receipt/finalization recovery, distinct completion ownership, closed non-goals and binary validations. No current finding remained.",
         "parent_disposition": "complete",
+        "findings": []
+      },
+      "a1": {
+        "report_status": "complete",
+        "reviewer": "/root/ep02a_a1",
+        "independence": "Fresh independent non-fail-fast read-only A1 by a reviewer that did not implement or repair EP-02B. The reviewer received no parent candidate disclosure before review and made no file, Git, ExecPlan, coordinator, permission, network, test-artifact, or external-state mutation.",
+        "scope": "Exact stable pre-repair EP-02B state git-sha1:652319afa456ffbeec6c7175728485849ccec0c7 at result head e2db1b3e94fd314a777f03b347dd79dc6b8c9cc2 and base d8afb79090906c263c7b91eca5234e613e066d04; complete 54-path committed diff, schema-v6 persistence, historical vocabulary/schema readability, authorization and trusted identity, semantic CAS/idempotency, intent/effect/receipt/finalization, Manual cancellation/completion, crash/reconcile/fence behavior, retry/waiting propagation, port/package/CLI compatibility, redaction, ownership, dependency direction and non-goals.",
+        "reviewed_at": "2026-08-31 00:26:50+08:00",
+        "evidence": "Independent trace at the reviewed state reported exact head/base, approval digest 0DDE3D4D2C6E7F006D3DDF0D0E2B239DF4D91F9F5E63E6EEEA2AF63EE076BFA8, clean worktree/index, outside_scope=[], errors=[] and warnings=[]. The reviewer read the complete plan, audit methods, authoritative contracts, changed implementation and relevant tests, and confirmed five HIGH, three MEDIUM and one LOW finding. The parent independently reproduced and accepted every finding as in-scope and task-diff-changing; all require fresh independent A2 after repair.",
+        "reviewed_state_id": "git-sha1:652319afa456ffbeec6c7175728485849ccec0c7",
+        "parent_disposition": "complete",
+        "closes": [],
+        "findings": [
+          {
+            "id": "F-EP02B-A1-001",
+            "severity": "HIGH",
+            "summary": "Effect invocation and finalization reused a stale prepare-time authorization decision.",
+            "confirmed": true,
+            "in_scope": true,
+            "changes_task_diff": true,
+            "disposition": "a2_required",
+            "resolution": "Add an immutable prepare/act/finalize authorization-binding chain with intent CAS revision; revalidate trusted identity, policy and current grant immediately before every effect and inside every finalization transaction, recording the consumed decision on Manual operations and finalizations.",
+            "closure_evidence": "Schema-v6 bindings and decision references, loop/journal enforcement, authoritative contracts, and four revoke-after-prepared/executing/observed/verified regressions are present at git-sha1:6554f84fb5d8966e6080ccd60710f0ae889f76c9; the 96-test focused suite and typecheck pass.",
+            "closure_state_id": null
+          },
+          {
+            "id": "F-EP02B-A1-002",
+            "severity": "HIGH",
+            "summary": "Reliable execution did not bind the asserted principal or runtime root to persisted local identity.",
+            "confirmed": true,
+            "in_scope": true,
+            "changes_task_diff": true,
+            "disposition": "a2_required",
+            "resolution": "Reuse one authoritative actor/principal/platform/runtime-root validator at operation entry, every authorization refresh and finalization.",
+            "closure_evidence": "The exported shared validator is used by the reliable loop and mismatched-principal plus substituted-root no-effect/no-write regressions pass at git-sha1:6554f84fb5d8966e6080ccd60710f0ae889f76c9.",
+            "closure_state_id": null
+          },
+          {
+            "id": "F-EP02B-A1-003",
+            "severity": "HIGH",
+            "summary": "A well-shaped forged inspect receipt could falsely cancel a Task.",
+            "confirmed": true,
+            "in_scope": true,
+            "changes_task_diff": true,
+            "disposition": "a2_required",
+            "resolution": "Match every Manual inspect receipt against the authoritative durable turn tuple, lifecycle, revision, code/evidence and operation lineage; require exact request-cancel plus confirm-cancelled lineage before cancellation verification.",
+            "closure_evidence": "The authoritative matcher rejects a recomputed-hash forged cancelled receipt, records ambiguity only, leaves the journal nonterminal and creates no execution terminal row in the passing malicious-adapter regression at git-sha1:6554f84fb5d8966e6080ccd60710f0ae889f76c9.",
+            "closure_state_id": null
+          },
+          {
+            "id": "F-EP02B-A1-004",
+            "severity": "HIGH",
+            "summary": "Verified cancellation from an accepted waiting state was unfinalizable.",
+            "confirmed": true,
+            "in_scope": true,
+            "changes_task_diff": true,
+            "disposition": "a2_required",
+            "resolution": "Finalize a waiting Task through Domain cancel with an explicit stopped execution disposition bound to the verified receipt, while retaining interruption_verified for running Tasks.",
+            "closure_evidence": "The full start-to-wait-to-request-cancel-to-confirm-cancelled regression reaches a durable interrupted finalization and cancelled Task/terminal execution at git-sha1:6554f84fb5d8966e6080ccd60710f0ae889f76c9.",
+            "closure_state_id": null
+          },
+          {
+            "id": "F-EP02B-A1-005",
+            "severity": "HIGH",
+            "summary": "Expired reconciliation could initiate a new start with the expired attempt and old fence.",
+            "confirmed": true,
+            "in_scope": true,
+            "changes_task_diff": true,
+            "disposition": "a2_required",
+            "resolution": "Never invoke a mutation under an expired or foreign-owner fence; reconcile pending/executing intents by authoritative inspection or durable no-effect finalization, then require a strictly higher successor attempt/fence.",
+            "closure_evidence": "Restart regressions at both prepared and executing crash points prove zero old-fence adapter calls, finalized no-effect evidence, and successful attempt-2/fence-2 takeover at git-sha1:6554f84fb5d8966e6080ccd60710f0ae889f76c9.",
+            "closure_state_id": null
+          },
+          {
+            "id": "F-EP02B-A1-006",
+            "severity": "MEDIUM",
+            "summary": "Adapter failure taxonomy was lost and retry_wait did not durably wait.",
+            "confirmed": true,
+            "in_scope": true,
+            "changes_task_diff": true,
+            "disposition": "a2_required",
+            "resolution": "Persist the closed category/code/retryable/ambiguous/retryAfter/retry-count projection, keep retry_wait durable before its due time, and reauthorize the same semantic operation/key only when due.",
+            "closure_evidence": "Schema, repository, waiting projection and due-gated process logic retain exact rate_limited evidence; the regression proves one pre-due call, same operation/intent/key on due retry, and successful finalization at git-sha1:6554f84fb5d8966e6080ccd60710f0ae889f76c9.",
+            "closure_state_id": null
+          },
+          {
+            "id": "F-EP02B-A1-007",
+            "severity": "MEDIUM",
+            "summary": "The SQL Manual-turn guard allowed same-lifecycle terminal rewrites.",
+            "confirmed": true,
+            "in_scope": true,
+            "changes_task_diff": true,
+            "disposition": "a2_required",
+            "resolution": "Reject every UPDATE whose old Manual lifecycle is terminal, independent of the proposed lifecycle or other CAS fields.",
+            "closure_evidence": "The migration trigger now rejects all terminal updates and a raw-SQL same-lifecycle code/revision rewrite leaves the authoritative turn unchanged in the passing regression at git-sha1:6554f84fb5d8966e6080ccd60710f0ae889f76c9.",
+            "closure_state_id": null
+          },
+          {
+            "id": "F-EP02B-A1-008",
+            "severity": "MEDIUM",
+            "summary": "Historical execution decisions were compared with the current Project config revision.",
+            "confirmed": true,
+            "in_scope": true,
+            "changes_task_diff": true,
+            "disposition": "a2_required",
+            "resolution": "Persist decision-time Project config revision and validate a Project-scoped grant against that historical decision revision while requiring only that historical revisions do not exceed current Project state.",
+            "closure_evidence": "Decision schema/decoder now preserve decision-era config; execution followed by Project config revisions 2 and 3 survives restart, authorized backup, restore and reopened combined-state validation at git-sha1:6554f84fb5d8966e6080ccd60710f0ae889f76c9.",
+            "closure_state_id": null
+          },
+          {
+            "id": "F-EP02B-A1-009",
+            "severity": "LOW",
+            "summary": "ato.execution/v1 rejected canonical retryAfter values outside rate_limited.",
+            "confirmed": true,
+            "in_scope": true,
+            "changes_task_diff": true,
+            "disposition": "a2_required",
+            "resolution": "Accept nullable canonical retryAfter for every closed adapter error category exactly as the authoritative v1 contract specifies.",
+            "closure_evidence": "The undocumented category restriction is removed and a permanent_external non-null retryAfter contract vector passes at git-sha1:6554f84fb5d8966e6080ccd60710f0ae889f76c9.",
+            "closure_state_id": null
+          }
+        ]
+      },
+      "a2": {
+        "report_status": "complete",
+        "reviewer": "/root/ep02a_a2",
+        "independence": "Fresh independent read-only A2 attempt 3. The reviewer did not implement the repairs or rely on the parent agent's conclusions, made no file, Git, ExecPlan, coordinator, permission, network, test-artifact or external-state mutation, and ran no artifact-producing tests.",
+        "scope": "Exact EP-02B material state git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07 over base d8afb79090906c263c7b91eca5234e613e066d04 and result HEAD e2db1b3e94fd314a777f03b347dd79dc6b8c9cc2. Complete task diff, active schema-v3 ExecPlan, validation history, authoritative authorization/persistence/reliability/adapter/CLI/security contracts, migration 0006, application and persistence owners, execution loop, Manual backend, package smoke and directly relevant tests; all nine A1 findings, prior A2-001..003 and the complete A2-004 repair were rechecked under the Tier-2 persistence lens.",
+        "reviewed_at": "2026-08-31 02:23:23+08:00",
+        "evidence": "Independent trace reproduced exact final material state, base, result HEAD and approval digest with outside_scope=[], overlap=[], pre_existing_dirty=[] and warnings=[]; git diff --check passed. F-EP02B-A2-004 is closed: authorization_grants_v6 admits only six Manual actions; symmetric insert guards plus immutable IDs prevent cross-table reuse or update bypass; the decoder retains physical owner/action, rejects global grant and relation collisions, validates relation identity and exact per-epoch inventories, and enforces vocabulary-6 23 linked legacy plus 6 v6. Three corruption tests invoke the combined decoder after real wrong-relation, missing-action and duplicate-ID mutations and require CORRUPT_ROW. Normal upgrade/renew/revoke, legacy application/lifecycle foreign keys, restart, historical decisions, backup/restore and packed verification remain consistent. A1-001..009 and prior A2-001..003 remain closed. The repeated 384/384 full route and 115/115 focused route corroborate but do not replace the review. No adjacent regression or new finding exists; the report is closure-safe.",
+        "reviewed_state_id": "git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07",
+        "parent_disposition": "complete",
+        "closes": [
+          "F-EP02B-A1-001",
+          "F-EP02B-A1-002",
+          "F-EP02B-A1-003",
+          "F-EP02B-A1-004",
+          "F-EP02B-A1-005",
+          "F-EP02B-A1-006",
+          "F-EP02B-A1-007",
+          "F-EP02B-A1-008",
+          "F-EP02B-A1-009"
+        ],
         "findings": []
       }
     },
@@ -526,9 +768,50 @@
         "finding_ids": ["F-EP02B-A0-004"],
         "disposition": "superseded",
         "reason": "Accepted F-EP02B-A0-004: the independent dirty-versus-scope inventory proved that the already-goal-bound claim-foundation and execution-loop authorization tests were missing from task ownership. The minimal ownership-only revision adds exactly those two files and changes no product behavior, authority, compatibility rule or deliverable."
+      },
+      {
+        "audit": "A2",
+        "attempt": 1,
+        "report_status": "complete",
+        "finding_ids": ["F-EP02B-A2-001", "F-EP02B-A2-002", "F-EP02B-A2-003"],
+        "disposition": "reopened",
+        "reason": "Fresh independent A2 at git-sha1:5e2f67f538835f39f265aad5e1e1839a81a2b40b closed A1 findings 003-009 but found three authorization-family residuals: finalized replay returned before principal/runtime-root validation; inspection reused a historical allow or denial when no observation advanced its ordinal; and denied Act/Finalize rows reused the unchanged successful-binding revision identities and blocked later authorized recovery. All three are in-scope task-diff changes and require local repair plus a fresh independent A2."
+      },
+      {
+        "audit": "A2",
+        "attempt": 2,
+        "report_status": "complete",
+        "finding_ids": ["F-EP02B-A2-004"],
+        "disposition": "reopened",
+        "reason": "Fresh independent A2 at git-sha1:3f96209270651943ae6383339321ab1f110263bb closed all nine A1 findings and all three prior A2 residuals, but found one in-scope MEDIUM persistence residual: vocabulary-6 split grant decoding did not preserve or enforce the exact physical 23+6 partition or global cross-table grant identity. The parent accepted and repaired it; fresh independent A2 attempt 3 at git-sha1:a27d0dd5d592bbd4e48e6422a45f30b71b94ad07 independently closed it with no new finding."
       }
     ],
-    "validation_attempts": [],
+    "validation_attempts": [
+      {
+        "validation_id": "V12",
+        "attempt": 1,
+        "classification": "superseded",
+        "at": "2026-08-31 00:18:00+08:00",
+        "evidence": "The pre-A2 candidate at git-sha1:5e2f67f538835f39f265aad5e1e1839a81a2b40b passed the complete offline route with 379/379 tests, package smoke, docs, dependency shape, SQLite and the blocked Codex boundary, but fresh independent A2 subsequently found three authorization-family residuals. That successful route is preserved but superseded and cannot support current closure.",
+        "state_id": "git-sha1:5e2f67f538835f39f265aad5e1e1839a81a2b40b"
+      },
+      {
+        "validation_id": "V12",
+        "attempt": 2,
+        "classification": "deterministic_failure",
+        "at": "2026-08-31 01:20:00+08:00",
+        "evidence": "After repairing the three A2 residuals, the full test phase passed 381/381 but verify:offline exited nonzero at package smoke with bounded PERSISTENCE_FAILURE. Repetition and stage instrumentation at pre-link state git-sha1:85158d596682cb1d1565efd04f1cec7a7403151b proved that a vocabulary-6 origin grant for an already-representable action could be selected by UUID order from authorization_grants_v6 and then be rejected by the unchanged authorization_decisions foreign key to authorization_grants. This was an implementation defect, not a passing or environment result; the diagnostic instrumentation was removed after the additive epoch-link repair.",
+        "state_id": "git-sha1:85158d596682cb1d1565efd04f1cec7a7403151b"
+      },
+      {
+        "validation_id": "V12",
+        "attempt": 3,
+        "classification": "environment_failure",
+        "at": "2026-08-31 02:12:00+08:00",
+        "evidence": "All 115 selected recovery, security, port, Manual backend, migration and backup tests passed, but a previously launched overlapping test runner changed the shared .task-artifacts inventory during this runner's observation window, so artifact hygiene correctly made the command exit nonzero and preserved diagnostics. After the overlapping runner ended, the unchanged test selection passed 115/115 with artifact hygiene preserving the stable baseline exactly from 14 entries to 14. The failed attempt is retained as environment concurrency evidence and is not a passing gate.",
+        "state_id": "git-sha1:a404b72cc7fc8c02e6b59f0d9df34dc6e51e8384"
+      }
+    ],
     "contract_revisions": [
       {
         "at": "2026-08-30 21:22:42+08:00",
@@ -551,7 +834,7 @@
         "previous_approval_sha256": "EE416953040AD2C7E60FD53F55492B58D0F004C357DB321DCD9AA3A9F0FED95E"
       }
     ],
-    "final_summary": null
+    "final_summary": "EP-02B closes a library-only reliable local Manual execution loop on additive schema v6: explicit vocabulary-6 upgrade, ato.execution/v1 contract kit, durable Manual journal and outcome control, ordered authorization-bound intent/observe/verify/finalize recovery, fenced reconciliation, and separately confirmed Manual completion. Exact final material state a27d0dd5d592bbd4e48e6422a45f30b71b94ad07 passed the repeated complete offline route and fresh independent closure-safe A2 with no current finding; dispatcher, scheduler, public Phase-2 CLI and every later-phase integration remain absent."
   }
 }
 ~~~

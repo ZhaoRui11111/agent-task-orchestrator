@@ -85,7 +85,7 @@ const EXPECTED_MIGRATION_IDENTITIES = Object.freeze([
     lineEnding: "lf",
   }),
   Object.freeze({
-    checksumSha256: "5D072BF264E579F011D85FF017EF595B93D9CA6FD18400830AC1E0A1ACCFFD87",
+    checksumSha256: "3D27258B3C9FB4B11B56B989CA2F341CB4DC68C96168D864D3763D93A4799153",
     lineEnding: "lf",
   }),
 ]);
@@ -167,12 +167,14 @@ test("fresh initialization atomically applies the complete staged schema", async
         "authorization_capability_epochs",
         "authorization_capability_epochs_v6",
         "authorization_decisions",
+        "authorization_grant_epoch_v6_links",
         "authorization_grants",
         "authorization_grants_v6",
         "authorization_local_identity",
         "execution_attempts",
         "execution_authorization_decisions",
         "execution_finalizations",
+        "execution_intent_authorization_bindings",
         "execution_observations",
         "execution_operation_audit",
         "execution_operation_intents",

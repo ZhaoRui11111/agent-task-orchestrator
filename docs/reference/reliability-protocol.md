@@ -44,12 +44,21 @@ MUST be compared before reuse. A change to any member creates a new semantic
 identity and cannot reuse an earlier success.
 
 Authorization decision ID is deliberately not a semantic member. The intent
-stores its current final-allow reference and a binding revision. The same
-semantic operation may CAS-bind a fresh allow before a retry or finalization
-only when that decision independently matches the entire tuple and names the
-same intent as its one consumer. Prior decisions and attempt evidence remain
-immutable. A refreshed allow cannot change policy, input, target, adapter,
-workspace, or any other semantic member under the old key.
+stores its current allow reference and a binding revision. An immutable binding
+chain begins with `prepare`; each adapter mutation requires a new `act` binding
+immediately before invocation, and each result mutation requires a new
+`finalize` binding in the finalization transaction. The same semantic operation
+may CAS-bind such a fresh allow only when its request, decision, audit, actor,
+action, Project resource/config revision and execution revision independently
+match the entire tuple and name the same intent as their one consumer. The
+Manual journal operation records the consumed `act` decision and the
+finalization records the consumed `finalize` decision. Prior bindings,
+decisions, and attempt evidence remain immutable. Every authorization
+evaluation has a fresh attempt identity independent of the next successful
+binding revision: denial does not advance the binding, and recovery after
+authority changes must append a new evaluation rather than collide with or
+reuse the denied row. A refreshed allow cannot change policy, input, target,
+adapter, workspace, or any other semantic member under the old key.
 
 An `idempotency_key` is allocated once for a semantic identity and persists
 across safe retries of that same operation. Reusing a key with a different tuple
@@ -166,7 +175,10 @@ The complete durable intent state set is:
 - `ambiguous` may leave only after new authoritative observation or an explicit
   user decision permitted by policy; it is never auto-converted to success.
 - `retry_wait` may return to `executing` only with the same semantic tuple and
-  idempotency key and after its retry condition is satisfied.
+  idempotency key and after its retry condition is satisfied. It durably keeps
+  the exact closed adapter category/code, retryable/ambiguous flags, nullable
+  `retry_after`, and monotonically increasing retry count; it is not immediately
+  finalized or converted to Task success/waiting.
 
 ### Ordered protocol
 
@@ -181,6 +193,9 @@ The complete durable intent state set is:
    decision is no longer current, obtain and CAS-bind a matching fresh allow or
    do not call.
 4. **Observe:** independently inspect the authoritative external post-state.
+   Every invocation appends a fresh current `execution.inspect` evaluation;
+   an earlier allow whose adapter response was lost and an earlier denial are
+   immutable history, not reusable or permanently cached authority.
    Persist an immutable receipt containing exact pre/post identity, observation
    number and time, adapter receipt, and a verification verdict; move to
    `observed`.
@@ -233,11 +248,12 @@ reported; it is not adopted or deleted.
 | --- | --- |
 | No committed intent | No external call is assumed or replayed. Re-run begins with a new or deterministically recovered intent. |
 | `pending` | CAS to `executing` and call once, or abandon with an audited terminal failure before any call. |
-| `executing`, no receipt | Inspect Manual state first. Replay only when exact durable journal evidence proves no effect and the operation's closed rule permits replay; otherwise enter `ambiguous`. |
+| `executing`, no receipt, current live owner/fence | Inspect Manual state first. The same semantic operation may use its unchanged idempotency key only when the port's idempotency rule makes response-loss replay safe; otherwise enter `ambiguous`. |
+| `pending` or `executing`, expired/foreign owner fence | Do not invoke the old-fence mutation. Reconcile by inspection only; an absent local Manual start journal is terminal no-effect evidence, while any unprovable state becomes `ambiguous`. Only after every intent is finalized may takeover allocate a higher attempt/fence. |
 | External effect present, no receipt | Construct a new observation from authoritative external state, verify it, and continue; do not repeat the effect. |
 | `observed` | Re-run verification against the bound tuple and current policy. |
 | `verified`, not finalized | Re-run finalization CAS. A conflict leaves the effect recorded and routes reconciliation; it does not fake rollback. |
-| `finalized` | Return the persisted outcome without another effect. |
+| `finalized` | Revalidate the persisted actor/principal and current runtime-root identity, then return the persisted outcome without another effect. |
 | Expired lease | Fence the old worker, reconcile its intents, then either take over with a higher token or enter `waiting`. |
 | Ambiguous observation | Preserve receipts and actual external state, enter `waiting/ambiguous_external_state`, and require new evidence or an authorized user decision. |
 
@@ -269,7 +285,12 @@ idempotency key and effect. An explicit Task `retry` after verified waiting is a
 new semantic operation: the current Manual loop creates the next execution
 attempt and fence, binds the exact predecessor evidence, and allocates its own
 idempotency key. A changed input, policy, adapter contract, expected revision,
-or replacement execution likewise requires a new semantic identity.
+or replacement execution likewise requires a new semantic identity. A
+retryable, non-ambiguous adapter refusal first persists `retry_wait`; calls
+before its nullable due time return that durable state without another adapter
+call, and a due retry reauthorizes and invokes the same operation/key. The
+adapter's exact bounded category, code, flags, retry time, and count remain
+observable in durable intent evidence.
 
 Non-retryable failures move the intent to `failed` and the owning Task to the
 appropriate domain outcome. Resource, rate, disk, authorization, compatibility,
