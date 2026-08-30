@@ -94,6 +94,13 @@ const MIGRATION_SOURCES = Object.freeze([
     canonicalLineEnding: "lf",
     checksumSha256: "27AB1730F5A56A2127479C02570068E6BA1CA3DB565147FB0325AAA412CD5C81",
   }),
+  Object.freeze({
+    version: 6,
+    id: "phase2-manual-execution",
+    fileName: "0006-phase2-manual-execution.sql",
+    canonicalLineEnding: "lf",
+    checksumSha256: "5D072BF264E579F011D85FF017EF595B93D9CA6FD18400830AC1E0A1ACCFFD87",
+  }),
 ] satisfies readonly MigrationSource[]);
 
 let cachedRegistry: readonly MigrationDescriptor[] | undefined;

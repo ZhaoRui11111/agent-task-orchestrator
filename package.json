@@ -1,7 +1,7 @@
 {
   "name": "agent-task-orchestrator",
   "version": "0.0.0-development",
-  "description": "Local Phase 1 task CLI and durable execution-claim foundation",
+  "description": "Local Phase 1 task CLI and library-only reliable Manual execution loop",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",

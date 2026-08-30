@@ -113,7 +113,7 @@ There is no alias for a command or option. In particular there is no Task
 - `ACTION` is one exact member of the nineteen-action Phase 1 CLI subset of the
   finite vocabulary owned by the
   [authorization contract](authorization-contract.md#exact-action-vocabulary).
-  The four `execution.*`/`execution.lease.*` actions and the non-grantable
+  All ten claim/lease/Manual-loop actions and the non-grantable
   capability-upgrade transition are invalid `ato.api/v1` input. Runtime scope
   rejects Project fields; Project scope requires all three Project fields.
 
@@ -259,7 +259,8 @@ package. It does not create a release or support claim. Unknown fields remain
 rejected; changing a field's meaning, requiredness, error meaning, authorization,
 or state effect requires a new API major under the
 [versioning contract](versioning-compatibility-contract.md#public-api-evolution).
-Schema v5 and the package-root typed execution service do not extend this
-command tree. In particular, the CLI cannot upgrade to, issue, evaluate, claim,
-inspect, renew, or take over an execution capability. `task.cancel` also cannot
-bypass an active execution or act as verified interruption.
+Schema v6 and the package-root claim/Manual execution services do not extend
+this command tree. In particular, the CLI cannot upgrade to, issue, evaluate,
+claim, start, inspect, report, resume, retry, cancel, complete, renew, or take
+over an execution capability. `task.cancel` also cannot bypass an active
+execution or act as verified interruption.

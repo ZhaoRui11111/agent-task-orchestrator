@@ -31,6 +31,7 @@ import {
   validateLifecycleAuthorizationForUse,
   validateLifecycleAuthorizationForUseUntransactional,
   versionFourApplicationStateSha256,
+  versionFiveApplicationStateSha256,
   type ApplicationLifecycleAuthorization,
 } from "./application-repository.ts";
 import { readDomainSnapshot } from "./repository.ts";
@@ -851,7 +852,9 @@ export async function createBackupUnderLock(
       const clonedState = readApplicationState(clonedDatabase);
       const clonedStateSha256 = terminalAuthorization.stateDigestVersion === 1
         ? versionFourApplicationStateSha256(clonedState)
-        : applicationStateSha256(clonedState);
+        : terminalAuthorization.stateDigestVersion === 2
+          ? versionFiveApplicationStateSha256(clonedState)
+          : applicationStateSha256(clonedState);
       if (clonedStateSha256 !== terminalAuthorization.stateSha256) {
         throw persistenceFailure("BACKUP_CONFLICT", "Cloned state does not match lifecycle authorization");
       }

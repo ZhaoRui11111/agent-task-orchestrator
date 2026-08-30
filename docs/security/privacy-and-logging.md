@@ -4,8 +4,8 @@
 
 This file is the sole normative owner of data classification, prompt and secret
 handling, log-content redaction, retention, diagnostic disclosure, and default
-no telemetry. The schema-v5 application owners implement the sanitized
-append-only Phase 1 and execution-claim audit subset, and the local product CLI/read-only doctor implement
+no telemetry. The schema-v6 application owners implement sanitized append-only
+Phase 1, claim, and reliable Manual-loop audit/evidence subsets, and the local product CLI/read-only doctor implement
 the closed display subset described below. No runtime logger, secret provider,
 diagnostic bundle exporter, retention job, or telemetry implementation exists
 today; the corresponding sections remain requirements for later implementations.
@@ -66,13 +66,26 @@ typed library result is likewise bounded to documented opaque execution/Task
 identity, attempt/fence/revision/expiry state, and fixed error codes/messages;
 it is not a general diagnostic surface.
 
+The reliable Manual loop uses separate closed
+`execution_operation_audit` events and bounded intent, observation, verified
+receipt, finalization, execution-terminal, Manual turn/operation, and Manual
+completion records. Their allowlists contain only opaque operational IDs,
+closed lifecycle/action/result/reason codes, positive revisions/fences/counts,
+timestamps, integrity hashes, and nullable bounded evidence references. The
+trusted outcome control accepts only identifier-safe code/reference tokens; raw
+adapter payload/error text is never persisted. `turn_succeeded` is recorded as
+a turn fact, while the distinct completion decision retains only its exact
+authorization/confirmation/evidence lineage.
+
 Task body, Project canonical path, prompts, source/repository content, tool or
 Agent output, free text, raw commands, environment values, credentials, and
 secrets are never copied into audit details. Accepted application operations
 and fully bound authorization denials append audit in the same transaction as
 their request and decision; SQLite triggers reject audit update or deletion.
 Failures before a safe typed/bound envelope produce no audit row rather than
-persisting unclassified input.
+persisting unclassified input. Fully bound Manual-loop denials persist only the
+closed execution request/decision/audit unit and cause no adapter or Task
+mutation.
 
 ### Current CLI and doctor display
 

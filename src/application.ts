@@ -1,6 +1,7 @@
 import {
   AUTHORIZATION_ACTIONS,
   PHASE1_AUTHORIZATION_ACTIONS,
+  PHASE2A_AUTHORIZATION_ACTIONS,
   canIssueGrant,
   evaluateAuthorization,
   isAuthorizationAction,
@@ -584,16 +585,21 @@ function sameLocalIdentity(state: ApplicationState, identity: OperationIdentity,
 }
 
 const PHASE1_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(PHASE1_AUTHORIZATION_ACTIONS));
+const PHASE2A_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(PHASE2A_AUTHORIZATION_ACTIONS));
 const CURRENT_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
 
-function actionsForVocabulary(version: 4 | 5): readonly AuthorizationAction[] {
-  return version === 4 ? PHASE1_AUTHORIZATION_ACTIONS : AUTHORIZATION_ACTIONS;
+function actionsForVocabulary(version: 4 | 5 | 6): readonly AuthorizationAction[] {
+  return version === 4
+    ? PHASE1_AUTHORIZATION_ACTIONS
+    : version === 5
+      ? PHASE2A_AUTHORIZATION_ACTIONS
+      : AUTHORIZATION_ACTIONS;
 }
 
 interface RenewalAssessment {
   readonly mode: "adopted" | "renewed";
   readonly nextEpochRevision: number;
-  readonly vocabularyVersion: 4 | 5;
+  readonly vocabularyVersion: 4 | 5 | 6;
 }
 
 function assessRenewal(
@@ -644,6 +650,8 @@ function assessRenewal(
 
 interface UpgradeAssessment {
   readonly nextEpochRevision: number;
+  readonly currentVocabularyVersion: 4 | 5;
+  readonly targetVocabularyVersion: 5 | 6;
 }
 
 function assessCapabilityUpgrade(
@@ -658,8 +666,8 @@ function assessCapabilityUpgrade(
   }
   const latestEpoch = state.epochs.at(-1);
   const currentVocabulary = latestEpoch?.vocabularyVersion ?? bootstrap.vocabularyVersion;
-  if (currentVocabulary === 5) return "not_eligible";
-  if (currentVocabulary !== 4 || (bootstrap.vocabularyVersion === 3 && latestEpoch === undefined)) {
+  if ((currentVocabulary !== 4 && currentVocabulary !== 5) ||
+      (bootstrap.vocabularyVersion === 3 && latestEpoch === undefined)) {
     return "not_eligible";
   }
   const originCreatedAt = latestEpoch?.createdAt ?? bootstrap.createdAt;
@@ -671,12 +679,17 @@ function assessCapabilityUpgrade(
     grant.notBefore === originCreatedAt &&
     grant.expiresAt === originExpiresAt
   );
+  const currentActions = actionsForVocabulary(currentVocabulary);
   if (
-    currentOrigin.length !== PHASE1_AUTHORIZATION_ACTIONS.length ||
-    !PHASE1_AUTHORIZATION_ACTIONS.every((action) => currentOrigin.some((grant) => grant.action === action)) ||
+    currentOrigin.length !== currentActions.length ||
+    !currentActions.every((action) => currentOrigin.some((grant) => grant.action === action)) ||
     currentOrigin.some((grant) => grant.revokedAt !== null || grant.notBefore > identity.now || grant.expiresAt <= identity.now)
   ) return "not_eligible";
-  return Object.freeze({ nextEpochRevision: (latestEpoch?.epochRevision ?? 0) + 1 });
+  return Object.freeze({
+    nextEpochRevision: (latestEpoch?.epochRevision ?? 0) + 1,
+    currentVocabularyVersion: currentVocabulary,
+    targetVocabularyVersion: currentVocabulary === 4 ? 5 as const : 6 as const,
+  });
 }
 
 function affectedProjectIds(mutation: DomainMutation): readonly string[] {
@@ -1188,11 +1201,12 @@ function createApplicationServiceInternal(
     }
     const preflightStateSha256 = applicationStateSha256(preflightState);
     const preflightEpochRevision = preflightState.epochs.at(-1)?.epochRevision ?? 0;
+    const upgradeActions = actionsForVocabulary(preflightAssessment.targetVocabularyVersion);
     let epochId: string;
     const grantIds: string[] = [];
     try {
       epochId = ingress.nextId("epoch");
-      for (const action of AUTHORIZATION_ACTIONS) {
+      for (const action of upgradeActions) {
         const grantId = ingress.nextId("grant");
         if (!operationalIdentifier(grantId) || grantIds.includes(grantId) || grantId === epochId) {
           return failed("INVALID_INPUT", `Trusted upgrade grant identity is invalid or repeated for ${action}`, identity);
@@ -1222,7 +1236,11 @@ function createApplicationServiceInternal(
             ? failed("AUTHORIZATION_DENIED", "Trusted local identity does not match the initialized runtime", identity)
             : failed("CAPABILITY_UPGRADE_NOT_ELIGIBLE", "Current capability origin is not eligible for upgrade", identity);
       }
-      if (assessment.nextEpochRevision !== preflightAssessment.nextEpochRevision) {
+      if (
+        assessment.nextEpochRevision !== preflightAssessment.nextEpochRevision ||
+        assessment.currentVocabularyVersion !== preflightAssessment.currentVocabularyVersion ||
+        assessment.targetVocabularyVersion !== preflightAssessment.targetVocabularyVersion
+      ) {
         return failed("STALE_REVISION", "Capability upgrade lineage is stale", identity);
       }
       const target: BoundTarget = Object.freeze({ kind: "runtime", id: "runtime", revision: null, project: null });
@@ -1233,14 +1251,16 @@ function createApplicationServiceInternal(
         epochRevision: assessment.nextEpochRevision,
         actorId: identity.actor.actorId,
         runtimeRootKey: runtimeIdentity.rootKey,
-        vocabularyVersion: 5 as const,
-        actionSetSha256: CURRENT_CAPABILITY_ACTION_SET_SHA256,
+        vocabularyVersion: assessment.targetVocabularyVersion,
+        actionSetSha256: assessment.targetVocabularyVersion === 5
+          ? PHASE2A_CAPABILITY_ACTION_SET_SHA256
+          : CURRENT_CAPABILITY_ACTION_SET_SHA256,
         requestId: identity.requestId,
         createdAt: identity.now,
         expiresAt: command.expiresAt,
       }));
       hooks.afterStage?.("epoch");
-      for (const [index, action] of AUTHORIZATION_ACTIONS.entries()) {
+      for (const [index, action] of upgradeActions.entries()) {
         const grantId = grantIds[index];
         if (grantId === undefined) throw new TypeError("Trusted upgrade grant identity is absent");
         transaction.insertGrant(Object.freeze({
@@ -1280,14 +1300,14 @@ function createApplicationServiceInternal(
       const epoch = readback.epochs.find((candidate) => candidate.epochId === epochId);
       if (
         epoch === undefined ||
-        epoch.vocabularyVersion !== 5 ||
+        epoch.vocabularyVersion !== assessment.targetVocabularyVersion ||
         epoch.epochRevision !== assessment.nextEpochRevision ||
         !grantIds.every((grantId) => readback.grants.some((grant) => grant.grantId === grantId))
       ) throw new TypeError("Capability upgrade terminal readback did not match");
       return succeeded(Object.freeze({
         mode: "upgraded" as const,
         expiresAt: epoch.expiresAt,
-        capabilityCount: AUTHORIZATION_ACTIONS.length,
+        capabilityCount: upgradeActions.length,
         epochRevision: epoch.epochRevision,
       }), identity);
     });
@@ -1391,7 +1411,9 @@ function createApplicationServiceInternal(
         vocabularyVersion: assessment.vocabularyVersion,
         actionSetSha256: assessment.vocabularyVersion === 4
           ? PHASE1_CAPABILITY_ACTION_SET_SHA256
-          : CURRENT_CAPABILITY_ACTION_SET_SHA256,
+          : assessment.vocabularyVersion === 5
+            ? PHASE2A_CAPABILITY_ACTION_SET_SHA256
+            : CURRENT_CAPABILITY_ACTION_SET_SHA256,
         requestId: identity.requestId,
         createdAt: identity.now,
         expiresAt: command.expiresAt,

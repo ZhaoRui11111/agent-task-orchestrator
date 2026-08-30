@@ -1,6 +1,6 @@
 export interface ScaffoldStatus {
   readonly packageName: "agent-task-orchestrator";
-  readonly phase: "phase2-execution-claim-foundation";
+  readonly phase: "phase2-reliable-manual-execution-loop";
   readonly domainCoreImplemented: true;
   readonly persistenceFoundationImplemented: true;
   readonly projectRegistryImplemented: true;
@@ -9,14 +9,15 @@ export interface ScaffoldStatus {
   readonly localPhase1ProductCliImplemented: true;
   readonly backupRestoreDoctorImplemented: true;
   readonly durableExecutionClaimFoundationImplemented: true;
+  readonly reliableManualExecutionLoopImplemented: true;
   readonly productRuntimeImplemented: false;
   readonly executionRuntimeImplemented: false;
-  readonly supportedAdapters: readonly [];
+  readonly supportedAdapters: readonly ["manual-local"];
 }
 
 const STATUS: ScaffoldStatus = Object.freeze({
   packageName: "agent-task-orchestrator",
-  phase: "phase2-execution-claim-foundation",
+  phase: "phase2-reliable-manual-execution-loop",
   domainCoreImplemented: true,
   persistenceFoundationImplemented: true,
   projectRegistryImplemented: true,
@@ -25,9 +26,10 @@ const STATUS: ScaffoldStatus = Object.freeze({
   localPhase1ProductCliImplemented: true,
   backupRestoreDoctorImplemented: true,
   durableExecutionClaimFoundationImplemented: true,
+  reliableManualExecutionLoopImplemented: true,
   productRuntimeImplemented: false,
   executionRuntimeImplemented: false,
-  supportedAdapters: Object.freeze([] as const),
+  supportedAdapters: Object.freeze(["manual-local"] as const),
 });
 
 export function getScaffoldStatus(): ScaffoldStatus {
@@ -75,6 +77,9 @@ export type {
   ExecutionLeaseRenewCommand,
   ExecutionTakeoverCommand,
 } from "./execution-application.ts";
+export * from "./execution-port.ts";
+export * from "./manual-execution-backend.ts";
+export * from "./execution-loop.ts";
 export * from "./persistence/index.ts";
 export {
   CLI_API_VERSION,

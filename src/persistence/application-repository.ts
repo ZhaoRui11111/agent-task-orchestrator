@@ -1,6 +1,7 @@
 import {
   AUTHORIZATION_ACTIONS,
   PHASE1_AUTHORIZATION_ACTIONS,
+  PHASE2A_AUTHORIZATION_ACTIONS,
   isHighRiskAction,
   parseAuthorizationGrant,
   type AuthorizationAction,
@@ -67,7 +68,7 @@ export interface AuthorizationCapabilityEpoch {
   readonly epochRevision: number;
   readonly actorId: string;
   readonly runtimeRootKey: string;
-  readonly vocabularyVersion: 4 | 5;
+  readonly vocabularyVersion: 4 | 5 | 6;
   readonly actionSetSha256: string;
   readonly requestId: string;
   readonly createdAt: string;
@@ -93,7 +94,7 @@ export interface ApplicationLifecycleAuthorization {
   readonly expiresAt: string;
 }
 
-type ApplicationStateDigestVersion = 1 | 2;
+type ApplicationStateDigestVersion = 1 | 2 | 3;
 const lifecycleStateDigestVersions = new WeakMap<ApplicationLifecycleAuthorization, ApplicationStateDigestVersion>();
 
 export interface ApplicationRequestRecord {
@@ -201,6 +202,227 @@ export interface ExecutionAttempt {
   readonly updatedAt: string;
 }
 
+export type ExecutionOperationKind = "start" | "inspect" | "resume" | "retry" | "request_cancel" | "manual_report";
+export type ExecutionIntentState = "pending" | "executing" | "observed" | "verified" | "finalized" | "retry_wait" | "ambiguous" | "failed";
+export type ManualTurnLifecycle = "queued" | "active" | "waiting" | "turn_succeeded" | "failed" | "cancelled";
+
+export interface ExecutionOperationRequestRecord {
+  readonly requestId: string;
+  readonly correlationId: string;
+  readonly actorId: string;
+  readonly action: Extract<AuthorizationAction,
+    "execution.start" | "execution.inspect" | "execution.resume" | "execution.retry" | "execution.cancel" | "execution.completion.accept">;
+  readonly targetExecutionId: string;
+  readonly targetRevision: number;
+  readonly result: "allow" | "deny";
+  readonly createdAt: string;
+}
+
+export interface ExecutionAuthorizationDecisionRecord {
+  readonly decisionId: string;
+  readonly requestId: string;
+  readonly actorId: string;
+  readonly action: ExecutionOperationRequestRecord["action"];
+  readonly result: "allow" | "deny";
+  readonly reason: AuthorizationReason;
+  readonly policy: AuthorizationPolicyResult;
+  readonly grantId: string | null;
+  readonly grantRevision: number | null;
+  readonly projectId: string;
+  readonly resourceRevision: number;
+  readonly createdAt: string;
+}
+
+export interface ExecutionOperationAuditRecord {
+  readonly auditId: string;
+  readonly requestId: string;
+  readonly decisionId: string;
+  readonly eventKind:
+    | "execution.operation.prepared" | "execution.operation.denied" | "execution.operation.executing"
+    | "execution.operation.observed" | "execution.operation.verified" | "execution.operation.finalized"
+    | "execution.manual.outcome.recorded" | "execution.completion.accepted"
+    | "execution.interruption.verified" | "execution.reconciled";
+  readonly result: "accepted" | "denied";
+  readonly actorId: string;
+  readonly correlationId: string;
+  readonly executionId: string;
+  readonly executionRevision: number;
+  readonly code: string;
+  readonly createdAt: string;
+}
+
+export interface ExecutionOperationIntent {
+  readonly intentId: string;
+  readonly operationId: string;
+  readonly idempotencyKey: string;
+  readonly operationKind: ExecutionOperationKind;
+  readonly action: Exclude<ExecutionOperationRequestRecord["action"], "execution.completion.accept">;
+  readonly state: ExecutionIntentState;
+  readonly revision: number;
+  readonly actorId: string;
+  readonly requestId: string;
+  readonly decisionId: string;
+  readonly confirmationId: string | null;
+  readonly projectId: string;
+  readonly projectResourceRevision: number;
+  readonly projectConfigRevision: number;
+  readonly taskId: string;
+  readonly taskRevision: number;
+  readonly inputReference: string;
+  readonly executionId: string;
+  readonly executionRevision: number;
+  readonly attemptNumber: number;
+  readonly fencingToken: number;
+  readonly sourceExecutionId: string | null;
+  readonly sourceExecutionRevision: number | null;
+  readonly sourceAttemptNumber: number | null;
+  readonly sourceFencingToken: number | null;
+  readonly sourceObservationNumber: number | null;
+  readonly contractId: "ato.execution/v1";
+  readonly adapterId: string;
+  readonly adapterVersion: string;
+  readonly policyBindingReference: string;
+  readonly workspaceMode: "none";
+  readonly backendExecutionId: string | null;
+  readonly threadId: string | null;
+  readonly previousReceiptId: string | null;
+  readonly expectedJournalRevision: number | null;
+  readonly requestedDeadline: string;
+  readonly continuationReference: string | null;
+  readonly requiredActionReceiptId: string | null;
+  readonly expectedLifecycle: ManualTurnLifecycle | null;
+  readonly reasonCode: string | null;
+  readonly reportId: string | null;
+  readonly reportOperation: "activate" | "wait" | "succeed" | "fail" | "confirm_cancelled" | null;
+  readonly reportCode: string | null;
+  readonly evidenceReference: string | null;
+  readonly lastObservationNumber: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ExecutionObservationRecord {
+  readonly observationId: string;
+  readonly intentId: string;
+  readonly observationNumber: number;
+  readonly adapterReceiptId: string;
+  readonly receiptSha256: string;
+  readonly authorizationDecisionId: string;
+  readonly lifecycle: "unknown" | ManualTurnLifecycle;
+  readonly outcome: "succeeded" | "deferred" | "rejected";
+  readonly code: string;
+  readonly backendExecutionId: string | null;
+  readonly threadId: string | null;
+  readonly journalRevision: number | null;
+  readonly evidenceReference: string | null;
+  readonly observedAt: string;
+}
+
+export interface ExecutionVerifiedReceiptRecord {
+  readonly verifiedReceiptId: string;
+  readonly intentId: string;
+  readonly adapterReceiptId: string;
+  readonly receiptSha256: string;
+  readonly lifecycle: string;
+  readonly backendExecutionId: string;
+  readonly threadId: string | null;
+  readonly observationNumber: number;
+  readonly observedRevision: number;
+  readonly fencingToken: number;
+  readonly verifiedAt: string;
+}
+
+export interface ExecutionFinalizationRecord {
+  readonly finalizationId: string;
+  readonly intentId: string;
+  readonly verifiedReceiptId: string | null;
+  readonly outcome: "accepted" | "deferred" | "rejected" | "waiting" | "interrupted";
+  readonly code: string;
+  readonly taskRevision: number;
+  readonly executionRevision: number;
+  readonly finalizedAt: string;
+}
+
+export interface ExecutionTerminalStateRecord {
+  readonly executionId: string;
+  readonly status: "completed" | "cancelled";
+  readonly attemptNumber: number;
+  readonly fencingToken: number;
+  readonly verifiedReceiptId: string;
+  readonly finalizationId: string;
+  readonly completionDecisionId: string | null;
+  readonly preTaskRevision: number;
+  readonly postTaskRevision: number;
+  readonly executionRevision: number;
+  readonly createdAt: string;
+}
+
+export interface ManualBackendTurnRecord {
+  readonly backendExecutionId: string;
+  readonly threadId: string;
+  readonly startIdempotencyKey: string;
+  readonly projectId: string;
+  readonly projectResourceRevision: number;
+  readonly projectConfigRevision: number;
+  readonly taskId: string;
+  readonly taskRevision: number;
+  readonly inputReference: string;
+  readonly executionId: string;
+  readonly executionRevision: number;
+  readonly attemptNumber: number;
+  readonly fencingToken: number;
+  readonly predecessorBackendExecutionId: string | null;
+  readonly predecessorThreadId: string | null;
+  readonly policyBindingReference: string;
+  readonly workspaceMode: "none";
+  readonly lifecycle: ManualTurnLifecycle;
+  readonly cancellationRequestRevision: number | null;
+  readonly cancellationRequestedAt: string | null;
+  readonly code: string;
+  readonly evidenceReference: string | null;
+  readonly lastReportId: string | null;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ManualBackendOperationRecord {
+  readonly backendOperationId: string;
+  readonly idempotencyKey: string;
+  readonly intentId: string;
+  readonly operationKind: "start" | "resume" | "retry" | "request_cancel" | "manual_report";
+  readonly reportOperation: "activate" | "wait" | "succeed" | "fail" | "confirm_cancelled" | null;
+  readonly backendExecutionId: string;
+  readonly threadId: string;
+  readonly sourceBackendExecutionId: string | null;
+  readonly sourceThreadId: string | null;
+  readonly expectedFencingToken: number;
+  readonly expectedPreRevision: number | null;
+  readonly postRevision: number;
+  readonly resultLifecycle: ManualTurnLifecycle;
+  readonly receiptId: string;
+  readonly createdAt: string;
+}
+
+export interface ManualCompletionDecisionRecord {
+  readonly completionDecisionId: string;
+  readonly operationId: string;
+  readonly idempotencyKey: string;
+  readonly taskId: string;
+  readonly executionId: string;
+  readonly attemptNumber: number;
+  readonly fencingToken: number;
+  readonly verifiedReceiptId: string;
+  readonly finalizationId: string;
+  readonly preTaskRevision: number;
+  readonly postTaskRevision: number;
+  readonly requestId: string;
+  readonly decisionId: string;
+  readonly auditId: string;
+  readonly confirmationId: string;
+  readonly createdAt: string;
+}
+
 export interface ApplicationState {
   readonly domain: DomainSnapshot;
   readonly projects: readonly RegisteredProject[];
@@ -213,6 +435,17 @@ export interface ApplicationState {
   readonly audit: readonly ApplicationAuditRecord[];
   readonly executionSequences: readonly TaskExecutionSequence[];
   readonly executions: readonly ExecutionAttempt[];
+  readonly executionOperationRequests: readonly ExecutionOperationRequestRecord[];
+  readonly executionAuthorizationDecisions: readonly ExecutionAuthorizationDecisionRecord[];
+  readonly executionOperationAudit: readonly ExecutionOperationAuditRecord[];
+  readonly executionIntents: readonly ExecutionOperationIntent[];
+  readonly executionObservations: readonly ExecutionObservationRecord[];
+  readonly executionReceipts: readonly ExecutionVerifiedReceiptRecord[];
+  readonly executionFinalizations: readonly ExecutionFinalizationRecord[];
+  readonly executionTerminalStates: readonly ExecutionTerminalStateRecord[];
+  readonly manualTurns: readonly ManualBackendTurnRecord[];
+  readonly manualBackendOperations: readonly ManualBackendOperationRecord[];
+  readonly manualCompletionDecisions: readonly ManualCompletionDecisionRecord[];
   readonly lifecycle: readonly ApplicationLifecycleAuthorization[];
 }
 
@@ -326,6 +559,7 @@ export function applicationAuditKind(value: AuthorizationAction): AuditKind {
     case "execution.claim.inspect": return "execution.claim.inspected";
     case "execution.lease.renew": return "execution.lease.renewed";
     case "execution.lease.takeover": return "execution.lease.taken_over";
+    default: throw new TypeError("Manual execution actions use the execution-operation audit owner");
   }
 }
 
@@ -369,6 +603,8 @@ function requestTargetIsValid(request: ApplicationRequestRecord): boolean {
     case "execution.lease.renew":
     case "execution.lease.takeover":
       return request.targetKind === "execution" && request.targetRevision !== null;
+    default:
+      return false;
   }
 }
 
@@ -505,6 +741,16 @@ function enumText<T extends string>(value: unknown, label: string, allowed: Read
   return result as T;
 }
 
+function nonnegative(value: unknown, label: string): number {
+  const parsed = integer(value, label);
+  if (parsed < 0) throw persistenceFailure("CORRUPT_ROW", `${label} must be nonnegative`);
+  return parsed;
+}
+
+function tableExists(database: SqliteDatabase, name: string): boolean {
+  return database.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name) !== undefined;
+}
+
 function readProjects(database: SqliteDatabase): readonly RegisteredProject[] {
   const rows = database.prepare(
     `SELECT project_id, canonical_root, root_key, platform, root_device, root_inode, root_mode,
@@ -596,13 +842,17 @@ function readIdentity(database: SqliteDatabase): AuthorizationLocalIdentity | nu
 }
 
 function readEpochs(database: SqliteDatabase): readonly AuthorizationCapabilityEpoch[] {
+  const union = tableExists(database, "authorization_capability_epochs_v6")
+    ? ` UNION ALL SELECT epoch_id, epoch_revision, actor_id, runtime_root_key, vocabulary_version,
+        action_set_sha256, request_id, created_at, expires_at FROM authorization_capability_epochs_v6`
+    : "";
   return Object.freeze(database.prepare(
     `SELECT epoch_id, epoch_revision, actor_id, runtime_root_key, vocabulary_version,
       action_set_sha256, request_id, created_at, expires_at
-    FROM authorization_capability_epochs ORDER BY epoch_revision`,
+    FROM authorization_capability_epochs${union} ORDER BY epoch_revision`,
   ).all().map((row) => {
     const vocabularyVersion = integer(row.vocabulary_version, "authorization_capability_epochs.vocabulary_version");
-    if (vocabularyVersion !== 4 && vocabularyVersion !== 5) {
+    if (vocabularyVersion !== 4 && vocabularyVersion !== 5 && vocabularyVersion !== 6) {
       throw persistenceFailure("CORRUPT_ROW", "Capability epoch vocabulary is unsupported");
     }
     return Object.freeze({
@@ -625,7 +875,9 @@ function readLifecycle(
 ): readonly ApplicationLifecycleAuthorization[] {
   const operations = new Set(["runtime.backup", "runtime.restore"] as const);
   const digestVersionColumn = schemaShape === "current"
-    ? "state_digest_version"
+    ? tableExists(database, "application_lifecycle_digest_v6")
+      ? "COALESCE((SELECT state_digest_version FROM application_lifecycle_digest_v6 d WHERE d.authorization_id=application_lifecycle_authorizations.authorization_id), state_digest_version) AS state_digest_version"
+      : "state_digest_version"
     : "1 AS state_digest_version";
   return Object.freeze(database.prepare(
     `SELECT authorization_id, operation, backup_generation_id, actor_id, runtime_root_key,
@@ -638,7 +890,7 @@ function readLifecycle(
       row.state_digest_version,
       "application_lifecycle_authorizations.state_digest_version",
     );
-    if (digestVersion !== 1 && digestVersion !== 2) {
+    if (digestVersion !== 1 && digestVersion !== 2 && digestVersion !== 3) {
       throw persistenceFailure("CORRUPT_ROW", "Lifecycle state digest version is unsupported");
     }
     const record: ApplicationLifecycleAuthorization = {
@@ -724,6 +976,354 @@ function readExecutionAttempts(database: SqliteDatabase): readonly ExecutionAtte
   })));
 }
 
+function readExecutionOperationRequests(database: SqliteDatabase): readonly ExecutionOperationRequestRecord[] {
+  if (!tableExists(database, "execution_operation_requests")) return Object.freeze([]);
+  const actions = new Set<ExecutionOperationRequestRecord["action"]>([
+    "execution.start", "execution.inspect", "execution.resume", "execution.retry",
+    "execution.cancel", "execution.completion.accept",
+  ]);
+  const results = new Set<ExecutionOperationRequestRecord["result"]>(["allow", "deny"]);
+  return Object.freeze(database.prepare(
+    `SELECT request_id, correlation_id, actor_id, action, target_execution_id,
+      target_revision, result, created_at FROM execution_operation_requests ORDER BY request_id`,
+  ).all().map((row) => Object.freeze({
+    requestId: sqliteText(row.request_id, "execution_operation_requests.request_id"),
+    correlationId: sqliteText(row.correlation_id, "execution_operation_requests.correlation_id"),
+    actorId: sqliteText(row.actor_id, "execution_operation_requests.actor_id"),
+    action: enumText(row.action, "execution_operation_requests.action", actions),
+    targetExecutionId: sqliteText(row.target_execution_id, "execution_operation_requests.target_execution_id"),
+    targetRevision: positive(row.target_revision, "execution_operation_requests.target_revision"),
+    result: enumText(row.result, "execution_operation_requests.result", results),
+    createdAt: timestamp(row.created_at, "execution_operation_requests.created_at"),
+  })));
+}
+
+function readExecutionAuthorizationDecisions(database: SqliteDatabase): readonly ExecutionAuthorizationDecisionRecord[] {
+  if (!tableExists(database, "execution_authorization_decisions")) return Object.freeze([]);
+  const actions = new Set<ExecutionOperationRequestRecord["action"]>([
+    "execution.start", "execution.inspect", "execution.resume", "execution.retry",
+    "execution.cancel", "execution.completion.accept",
+  ]);
+  return Object.freeze(database.prepare(
+    `SELECT decision_id, request_id, actor_id, action, result, reason, policy_result,
+      grant_id, grant_revision, project_id, resource_revision, created_at
+    FROM execution_authorization_decisions ORDER BY decision_id`,
+  ).all().map((row) => Object.freeze({
+    decisionId: sqliteText(row.decision_id, "execution_authorization_decisions.decision_id"),
+    requestId: sqliteText(row.request_id, "execution_authorization_decisions.request_id"),
+    actorId: sqliteText(row.actor_id, "execution_authorization_decisions.actor_id"),
+    action: enumText(row.action, "execution_authorization_decisions.action", actions),
+    result: enumText(row.result, "execution_authorization_decisions.result", DECISION_RESULTS),
+    reason: enumText(row.reason, "execution_authorization_decisions.reason", AUTHORIZATION_REASONS),
+    policy: enumText(row.policy_result, "execution_authorization_decisions.policy_result", POLICY_RESULTS),
+    grantId: sqliteNullableText(row.grant_id, "execution_authorization_decisions.grant_id"),
+    grantRevision: nullablePositive(row.grant_revision, "execution_authorization_decisions.grant_revision"),
+    projectId: sqliteText(row.project_id, "execution_authorization_decisions.project_id"),
+    resourceRevision: positive(row.resource_revision, "execution_authorization_decisions.resource_revision"),
+    createdAt: timestamp(row.created_at, "execution_authorization_decisions.created_at"),
+  })));
+}
+
+function readExecutionOperationAudit(database: SqliteDatabase): readonly ExecutionOperationAuditRecord[] {
+  if (!tableExists(database, "execution_operation_audit")) return Object.freeze([]);
+  const events = new Set<ExecutionOperationAuditRecord["eventKind"]>([
+    "execution.operation.prepared", "execution.operation.denied", "execution.operation.executing",
+    "execution.operation.observed", "execution.operation.verified", "execution.operation.finalized",
+    "execution.manual.outcome.recorded", "execution.completion.accepted",
+    "execution.interruption.verified", "execution.reconciled",
+  ]);
+  const results = new Set<ExecutionOperationAuditRecord["result"]>(["accepted", "denied"]);
+  return Object.freeze(database.prepare(
+    `SELECT audit_id, request_id, decision_id, event_kind, result, actor_id,
+      correlation_id, execution_id, execution_revision, code, created_at
+    FROM execution_operation_audit ORDER BY audit_id`,
+  ).all().map((row) => Object.freeze({
+    auditId: sqliteText(row.audit_id, "execution_operation_audit.audit_id"),
+    requestId: sqliteText(row.request_id, "execution_operation_audit.request_id"),
+    decisionId: sqliteText(row.decision_id, "execution_operation_audit.decision_id"),
+    eventKind: enumText(row.event_kind, "execution_operation_audit.event_kind", events),
+    result: enumText(row.result, "execution_operation_audit.result", results),
+    actorId: sqliteText(row.actor_id, "execution_operation_audit.actor_id"),
+    correlationId: sqliteText(row.correlation_id, "execution_operation_audit.correlation_id"),
+    executionId: sqliteText(row.execution_id, "execution_operation_audit.execution_id"),
+    executionRevision: positive(row.execution_revision, "execution_operation_audit.execution_revision"),
+    code: sqliteText(row.code, "execution_operation_audit.code"),
+    createdAt: timestamp(row.created_at, "execution_operation_audit.created_at"),
+  })));
+}
+
+function readExecutionIntents(database: SqliteDatabase): readonly ExecutionOperationIntent[] {
+  if (!tableExists(database, "execution_operation_intents")) return Object.freeze([]);
+  const kinds = new Set<ExecutionOperationKind>(["start", "inspect", "resume", "retry", "request_cancel", "manual_report"]);
+  const actions = new Set<ExecutionOperationIntent["action"]>([
+    "execution.start", "execution.inspect", "execution.resume", "execution.retry", "execution.cancel",
+  ]);
+  const states = new Set<ExecutionIntentState>([
+    "pending", "executing", "observed", "verified", "finalized", "retry_wait", "ambiguous", "failed",
+  ]);
+  const manualLifecycles = new Set<ManualTurnLifecycle>(["queued", "active", "waiting", "turn_succeeded", "failed", "cancelled"]);
+  const reportOperations = new Set<NonNullable<ExecutionOperationIntent["reportOperation"]>>(["activate", "wait", "succeed", "fail", "confirm_cancelled"]);
+  return Object.freeze(database.prepare(
+    `SELECT intent_id, operation_id, idempotency_key, operation_kind, action, state,
+      revision, actor_id, request_id, decision_id, confirmation_id, project_id,
+      project_resource_revision, project_config_revision, task_id, task_revision,
+      input_reference, execution_id, execution_revision, attempt_number, fencing_token,
+      source_execution_id, source_execution_revision, source_attempt_number, source_fencing_token,
+      source_observation_number,
+      contract_id, adapter_id, adapter_version, policy_binding_reference, workspace_mode,
+      backend_execution_id, thread_id, previous_receipt_id, expected_journal_revision,
+      requested_deadline, continuation_reference, required_action_receipt_id, expected_lifecycle,
+      reason_code, report_id, report_operation, report_code, evidence_reference, last_observation_number,
+      created_at, updated_at FROM execution_operation_intents ORDER BY intent_id`,
+  ).all().map((row) => {
+    const contractId = sqliteText(row.contract_id, "execution_operation_intents.contract_id");
+    const workspaceMode = sqliteText(row.workspace_mode, "execution_operation_intents.workspace_mode");
+    if (contractId !== "ato.execution/v1" || workspaceMode !== "none") {
+      throw persistenceFailure("CORRUPT_ROW", "Execution intent contract/workspace identity is invalid");
+    }
+    return Object.freeze({
+      intentId: sqliteText(row.intent_id, "execution_operation_intents.intent_id"),
+      operationId: sqliteText(row.operation_id, "execution_operation_intents.operation_id"),
+      idempotencyKey: sqliteText(row.idempotency_key, "execution_operation_intents.idempotency_key"),
+      operationKind: enumText(row.operation_kind, "execution_operation_intents.operation_kind", kinds),
+      action: enumText(row.action, "execution_operation_intents.action", actions),
+      state: enumText(row.state, "execution_operation_intents.state", states),
+      revision: positive(row.revision, "execution_operation_intents.revision"),
+      actorId: sqliteText(row.actor_id, "execution_operation_intents.actor_id"),
+      requestId: sqliteText(row.request_id, "execution_operation_intents.request_id"),
+      decisionId: sqliteText(row.decision_id, "execution_operation_intents.decision_id"),
+      confirmationId: sqliteNullableText(row.confirmation_id, "execution_operation_intents.confirmation_id"),
+      projectId: sqliteText(row.project_id, "execution_operation_intents.project_id"),
+      projectResourceRevision: positive(row.project_resource_revision, "execution_operation_intents.project_resource_revision"),
+      projectConfigRevision: positive(row.project_config_revision, "execution_operation_intents.project_config_revision"),
+      taskId: sqliteText(row.task_id, "execution_operation_intents.task_id"),
+      taskRevision: positive(row.task_revision, "execution_operation_intents.task_revision"),
+      inputReference: sqliteText(row.input_reference, "execution_operation_intents.input_reference"),
+      executionId: sqliteText(row.execution_id, "execution_operation_intents.execution_id"),
+      executionRevision: positive(row.execution_revision, "execution_operation_intents.execution_revision"),
+      attemptNumber: positive(row.attempt_number, "execution_operation_intents.attempt_number"),
+      fencingToken: positive(row.fencing_token, "execution_operation_intents.fencing_token"),
+      sourceExecutionId: sqliteNullableText(row.source_execution_id, "execution_operation_intents.source_execution_id"),
+      sourceExecutionRevision: nullablePositive(row.source_execution_revision, "execution_operation_intents.source_execution_revision"),
+      sourceAttemptNumber: nullablePositive(row.source_attempt_number, "execution_operation_intents.source_attempt_number"),
+      sourceFencingToken: nullablePositive(row.source_fencing_token, "execution_operation_intents.source_fencing_token"),
+      sourceObservationNumber: row.source_observation_number === null
+        ? null : nonnegative(row.source_observation_number, "execution_operation_intents.source_observation_number"),
+      contractId, adapterId: sqliteText(row.adapter_id, "execution_operation_intents.adapter_id"),
+      adapterVersion: sqliteText(row.adapter_version, "execution_operation_intents.adapter_version"),
+      policyBindingReference: sqliteText(row.policy_binding_reference, "execution_operation_intents.policy_binding_reference"),
+      workspaceMode,
+      backendExecutionId: sqliteNullableText(row.backend_execution_id, "execution_operation_intents.backend_execution_id"),
+      threadId: sqliteNullableText(row.thread_id, "execution_operation_intents.thread_id"),
+      previousReceiptId: sqliteNullableText(row.previous_receipt_id, "execution_operation_intents.previous_receipt_id"),
+      expectedJournalRevision: nullablePositive(row.expected_journal_revision, "execution_operation_intents.expected_journal_revision"),
+      requestedDeadline: timestamp(row.requested_deadline, "execution_operation_intents.requested_deadline"),
+      continuationReference: sqliteNullableText(row.continuation_reference, "execution_operation_intents.continuation_reference"),
+      requiredActionReceiptId: sqliteNullableText(row.required_action_receipt_id, "execution_operation_intents.required_action_receipt_id"),
+      expectedLifecycle: row.expected_lifecycle === null ? null : enumText(row.expected_lifecycle, "execution_operation_intents.expected_lifecycle", manualLifecycles),
+      reasonCode: sqliteNullableText(row.reason_code, "execution_operation_intents.reason_code"),
+      reportId: sqliteNullableText(row.report_id, "execution_operation_intents.report_id"),
+      reportOperation: row.report_operation === null ? null : enumText(row.report_operation, "execution_operation_intents.report_operation", reportOperations),
+      reportCode: sqliteNullableText(row.report_code, "execution_operation_intents.report_code"),
+      evidenceReference: sqliteNullableText(row.evidence_reference, "execution_operation_intents.evidence_reference"),
+      lastObservationNumber: nonnegative(row.last_observation_number, "execution_operation_intents.last_observation_number"),
+      createdAt: timestamp(row.created_at, "execution_operation_intents.created_at"),
+      updatedAt: timestamp(row.updated_at, "execution_operation_intents.updated_at"),
+    });
+  }));
+}
+
+function readExecutionObservations(database: SqliteDatabase): readonly ExecutionObservationRecord[] {
+  if (!tableExists(database, "execution_observations")) return Object.freeze([]);
+  const lifecycles = new Set<ExecutionObservationRecord["lifecycle"]>([
+    "unknown", "queued", "active", "waiting", "turn_succeeded", "failed", "cancelled",
+  ]);
+  const outcomes = new Set<ExecutionObservationRecord["outcome"]>(["succeeded", "deferred", "rejected"]);
+  return Object.freeze(database.prepare(
+    `SELECT observation_id, intent_id, observation_number, adapter_receipt_id, receipt_sha256,
+      authorization_decision_id, lifecycle, outcome, code,
+      backend_execution_id, thread_id, journal_revision, evidence_reference, observed_at
+    FROM execution_observations ORDER BY intent_id, observation_number`,
+  ).all().map((row) => Object.freeze({
+    observationId: sqliteText(row.observation_id, "execution_observations.observation_id"),
+    intentId: sqliteText(row.intent_id, "execution_observations.intent_id"),
+    observationNumber: positive(row.observation_number, "execution_observations.observation_number"),
+    adapterReceiptId: sqliteText(row.adapter_receipt_id, "execution_observations.adapter_receipt_id"),
+    receiptSha256: uppercaseSha256(row.receipt_sha256, "execution_observations.receipt_sha256"),
+    authorizationDecisionId: sqliteText(row.authorization_decision_id, "execution_observations.authorization_decision_id"),
+    lifecycle: enumText(row.lifecycle, "execution_observations.lifecycle", lifecycles),
+    outcome: enumText(row.outcome, "execution_observations.outcome", outcomes),
+    code: sqliteText(row.code, "execution_observations.code"),
+    backendExecutionId: sqliteNullableText(row.backend_execution_id, "execution_observations.backend_execution_id"),
+    threadId: sqliteNullableText(row.thread_id, "execution_observations.thread_id"),
+    journalRevision: nullablePositive(row.journal_revision, "execution_observations.journal_revision"),
+    evidenceReference: sqliteNullableText(row.evidence_reference, "execution_observations.evidence_reference"),
+    observedAt: timestamp(row.observed_at, "execution_observations.observed_at"),
+  })));
+}
+
+function readExecutionReceipts(database: SqliteDatabase): readonly ExecutionVerifiedReceiptRecord[] {
+  if (!tableExists(database, "execution_verified_receipts")) return Object.freeze([]);
+  return Object.freeze(database.prepare(
+    `SELECT verified_receipt_id, intent_id, adapter_receipt_id, receipt_sha256, lifecycle,
+      backend_execution_id, thread_id, observation_number, observed_revision, fencing_token, verified_at
+    FROM execution_verified_receipts ORDER BY verified_receipt_id`,
+  ).all().map((row) => Object.freeze({
+    verifiedReceiptId: sqliteText(row.verified_receipt_id, "execution_verified_receipts.verified_receipt_id"),
+    intentId: sqliteText(row.intent_id, "execution_verified_receipts.intent_id"),
+    adapterReceiptId: sqliteText(row.adapter_receipt_id, "execution_verified_receipts.adapter_receipt_id"),
+    receiptSha256: uppercaseSha256(row.receipt_sha256, "execution_verified_receipts.receipt_sha256"),
+    lifecycle: sqliteText(row.lifecycle, "execution_verified_receipts.lifecycle"),
+    backendExecutionId: sqliteText(row.backend_execution_id, "execution_verified_receipts.backend_execution_id"),
+    threadId: sqliteNullableText(row.thread_id, "execution_verified_receipts.thread_id"),
+    observationNumber: positive(row.observation_number, "execution_verified_receipts.observation_number"),
+    observedRevision: positive(row.observed_revision, "execution_verified_receipts.observed_revision"),
+    fencingToken: positive(row.fencing_token, "execution_verified_receipts.fencing_token"),
+    verifiedAt: timestamp(row.verified_at, "execution_verified_receipts.verified_at"),
+  })));
+}
+
+function readExecutionFinalizations(database: SqliteDatabase): readonly ExecutionFinalizationRecord[] {
+  if (!tableExists(database, "execution_finalizations")) return Object.freeze([]);
+  const outcomes = new Set<ExecutionFinalizationRecord["outcome"]>(["accepted", "deferred", "rejected", "waiting", "interrupted"]);
+  return Object.freeze(database.prepare(
+    `SELECT finalization_id, intent_id, verified_receipt_id, outcome, code,
+      task_revision, execution_revision, finalized_at FROM execution_finalizations ORDER BY finalization_id`,
+  ).all().map((row) => Object.freeze({
+    finalizationId: sqliteText(row.finalization_id, "execution_finalizations.finalization_id"),
+    intentId: sqliteText(row.intent_id, "execution_finalizations.intent_id"),
+    verifiedReceiptId: sqliteNullableText(row.verified_receipt_id, "execution_finalizations.verified_receipt_id"),
+    outcome: enumText(row.outcome, "execution_finalizations.outcome", outcomes),
+    code: sqliteText(row.code, "execution_finalizations.code"),
+    taskRevision: positive(row.task_revision, "execution_finalizations.task_revision"),
+    executionRevision: positive(row.execution_revision, "execution_finalizations.execution_revision"),
+    finalizedAt: timestamp(row.finalized_at, "execution_finalizations.finalized_at"),
+  })));
+}
+
+function readExecutionTerminalStates(database: SqliteDatabase): readonly ExecutionTerminalStateRecord[] {
+  if (!tableExists(database, "execution_terminal_states")) return Object.freeze([]);
+  const statuses = new Set<ExecutionTerminalStateRecord["status"]>(["completed", "cancelled"]);
+  return Object.freeze(database.prepare(
+    `SELECT execution_id, status, attempt_number, fencing_token, verified_receipt_id,
+      finalization_id, completion_decision_id, pre_task_revision, post_task_revision,
+      execution_revision, created_at FROM execution_terminal_states ORDER BY execution_id`,
+  ).all().map((row) => Object.freeze({
+    executionId: sqliteText(row.execution_id, "execution_terminal_states.execution_id"),
+    status: enumText(row.status, "execution_terminal_states.status", statuses),
+    attemptNumber: positive(row.attempt_number, "execution_terminal_states.attempt_number"),
+    fencingToken: positive(row.fencing_token, "execution_terminal_states.fencing_token"),
+    verifiedReceiptId: sqliteText(row.verified_receipt_id, "execution_terminal_states.verified_receipt_id"),
+    finalizationId: sqliteText(row.finalization_id, "execution_terminal_states.finalization_id"),
+    completionDecisionId: sqliteNullableText(row.completion_decision_id, "execution_terminal_states.completion_decision_id"),
+    preTaskRevision: positive(row.pre_task_revision, "execution_terminal_states.pre_task_revision"),
+    postTaskRevision: positive(row.post_task_revision, "execution_terminal_states.post_task_revision"),
+    executionRevision: positive(row.execution_revision, "execution_terminal_states.execution_revision"),
+    createdAt: timestamp(row.created_at, "execution_terminal_states.created_at"),
+  })));
+}
+
+function readManualTurns(database: SqliteDatabase): readonly ManualBackendTurnRecord[] {
+  if (!tableExists(database, "manual_backend_turns")) return Object.freeze([]);
+  const lifecycles = new Set<ManualTurnLifecycle>(["queued", "active", "waiting", "turn_succeeded", "failed", "cancelled"]);
+  return Object.freeze(database.prepare(
+    `SELECT backend_execution_id, thread_id, start_idempotency_key, project_id,
+      project_resource_revision, project_config_revision, task_id, task_revision,
+      input_reference, execution_id, execution_revision, attempt_number, fencing_token,
+      predecessor_backend_execution_id, predecessor_thread_id,
+      policy_binding_reference, workspace_mode, lifecycle, cancellation_request_revision,
+      cancellation_requested_at, code, evidence_reference, last_report_id, revision,
+      created_at, updated_at FROM manual_backend_turns ORDER BY backend_execution_id`,
+  ).all().map((row) => {
+    const workspaceMode = sqliteText(row.workspace_mode, "manual_backend_turns.workspace_mode");
+    if (workspaceMode !== "none") throw persistenceFailure("CORRUPT_ROW", "Manual turn workspace mode is invalid");
+    return Object.freeze({
+      backendExecutionId: sqliteText(row.backend_execution_id, "manual_backend_turns.backend_execution_id"),
+      threadId: sqliteText(row.thread_id, "manual_backend_turns.thread_id"),
+      startIdempotencyKey: sqliteText(row.start_idempotency_key, "manual_backend_turns.start_idempotency_key"),
+      projectId: sqliteText(row.project_id, "manual_backend_turns.project_id"),
+      projectResourceRevision: positive(row.project_resource_revision, "manual_backend_turns.project_resource_revision"),
+      projectConfigRevision: positive(row.project_config_revision, "manual_backend_turns.project_config_revision"),
+      taskId: sqliteText(row.task_id, "manual_backend_turns.task_id"),
+      taskRevision: positive(row.task_revision, "manual_backend_turns.task_revision"),
+      inputReference: sqliteText(row.input_reference, "manual_backend_turns.input_reference"),
+      executionId: sqliteText(row.execution_id, "manual_backend_turns.execution_id"),
+      executionRevision: positive(row.execution_revision, "manual_backend_turns.execution_revision"),
+      attemptNumber: positive(row.attempt_number, "manual_backend_turns.attempt_number"),
+      fencingToken: positive(row.fencing_token, "manual_backend_turns.fencing_token"),
+      predecessorBackendExecutionId: sqliteNullableText(row.predecessor_backend_execution_id, "manual_backend_turns.predecessor_backend_execution_id"),
+      predecessorThreadId: sqliteNullableText(row.predecessor_thread_id, "manual_backend_turns.predecessor_thread_id"),
+      policyBindingReference: sqliteText(row.policy_binding_reference, "manual_backend_turns.policy_binding_reference"),
+      workspaceMode, lifecycle: enumText(row.lifecycle, "manual_backend_turns.lifecycle", lifecycles),
+      cancellationRequestRevision: nullablePositive(row.cancellation_request_revision, "manual_backend_turns.cancellation_request_revision"),
+      cancellationRequestedAt: row.cancellation_requested_at === null ? null : timestamp(row.cancellation_requested_at, "manual_backend_turns.cancellation_requested_at"),
+      code: sqliteText(row.code, "manual_backend_turns.code"),
+      evidenceReference: sqliteNullableText(row.evidence_reference, "manual_backend_turns.evidence_reference"),
+      lastReportId: sqliteNullableText(row.last_report_id, "manual_backend_turns.last_report_id"),
+      revision: positive(row.revision, "manual_backend_turns.revision"),
+      createdAt: timestamp(row.created_at, "manual_backend_turns.created_at"),
+      updatedAt: timestamp(row.updated_at, "manual_backend_turns.updated_at"),
+    });
+  }));
+}
+
+function readManualBackendOperations(database: SqliteDatabase): readonly ManualBackendOperationRecord[] {
+  if (!tableExists(database, "manual_backend_operations")) return Object.freeze([]);
+  const kinds = new Set<ManualBackendOperationRecord["operationKind"]>(["start", "resume", "retry", "request_cancel", "manual_report"]);
+  const reports = new Set<Exclude<ManualBackendOperationRecord["reportOperation"], null>>(["activate", "wait", "succeed", "fail", "confirm_cancelled"]);
+  const lifecycles = new Set<ManualTurnLifecycle>(["queued", "active", "waiting", "turn_succeeded", "failed", "cancelled"]);
+  return Object.freeze(database.prepare(
+    `SELECT backend_operation_id, idempotency_key, intent_id, operation_kind, report_operation,
+      backend_execution_id, thread_id, source_backend_execution_id, source_thread_id,
+      expected_fencing_token, expected_pre_revision,
+      post_revision, result_lifecycle, receipt_id, created_at
+    FROM manual_backend_operations ORDER BY backend_operation_id`,
+  ).all().map((row) => Object.freeze({
+    backendOperationId: sqliteText(row.backend_operation_id, "manual_backend_operations.backend_operation_id"),
+    idempotencyKey: sqliteText(row.idempotency_key, "manual_backend_operations.idempotency_key"),
+    intentId: sqliteText(row.intent_id, "manual_backend_operations.intent_id"),
+    operationKind: enumText(row.operation_kind, "manual_backend_operations.operation_kind", kinds),
+    reportOperation: row.report_operation === null ? null : enumText(row.report_operation, "manual_backend_operations.report_operation", reports),
+    backendExecutionId: sqliteText(row.backend_execution_id, "manual_backend_operations.backend_execution_id"),
+    threadId: sqliteText(row.thread_id, "manual_backend_operations.thread_id"),
+    sourceBackendExecutionId: sqliteNullableText(row.source_backend_execution_id, "manual_backend_operations.source_backend_execution_id"),
+    sourceThreadId: sqliteNullableText(row.source_thread_id, "manual_backend_operations.source_thread_id"),
+    expectedFencingToken: positive(row.expected_fencing_token, "manual_backend_operations.expected_fencing_token"),
+    expectedPreRevision: nullablePositive(row.expected_pre_revision, "manual_backend_operations.expected_pre_revision"),
+    postRevision: positive(row.post_revision, "manual_backend_operations.post_revision"),
+    resultLifecycle: enumText(row.result_lifecycle, "manual_backend_operations.result_lifecycle", lifecycles),
+    receiptId: sqliteText(row.receipt_id, "manual_backend_operations.receipt_id"),
+    createdAt: timestamp(row.created_at, "manual_backend_operations.created_at"),
+  })));
+}
+
+function readManualCompletionDecisions(database: SqliteDatabase): readonly ManualCompletionDecisionRecord[] {
+  if (!tableExists(database, "manual_completion_decisions")) return Object.freeze([]);
+  return Object.freeze(database.prepare(
+    `SELECT completion_decision_id, operation_id, idempotency_key, task_id, execution_id,
+      attempt_number, fencing_token, verified_receipt_id, finalization_id,
+      pre_task_revision, post_task_revision, request_id, decision_id, audit_id,
+      confirmation_id, created_at FROM manual_completion_decisions ORDER BY completion_decision_id`,
+  ).all().map((row) => Object.freeze({
+    completionDecisionId: sqliteText(row.completion_decision_id, "manual_completion_decisions.completion_decision_id"),
+    operationId: sqliteText(row.operation_id, "manual_completion_decisions.operation_id"),
+    idempotencyKey: sqliteText(row.idempotency_key, "manual_completion_decisions.idempotency_key"),
+    taskId: sqliteText(row.task_id, "manual_completion_decisions.task_id"),
+    executionId: sqliteText(row.execution_id, "manual_completion_decisions.execution_id"),
+    attemptNumber: positive(row.attempt_number, "manual_completion_decisions.attempt_number"),
+    fencingToken: positive(row.fencing_token, "manual_completion_decisions.fencing_token"),
+    verifiedReceiptId: sqliteText(row.verified_receipt_id, "manual_completion_decisions.verified_receipt_id"),
+    finalizationId: sqliteText(row.finalization_id, "manual_completion_decisions.finalization_id"),
+    preTaskRevision: positive(row.pre_task_revision, "manual_completion_decisions.pre_task_revision"),
+    postTaskRevision: positive(row.post_task_revision, "manual_completion_decisions.post_task_revision"),
+    requestId: sqliteText(row.request_id, "manual_completion_decisions.request_id"),
+    decisionId: sqliteText(row.decision_id, "manual_completion_decisions.decision_id"),
+    auditId: sqliteText(row.audit_id, "manual_completion_decisions.audit_id"),
+    confirmationId: sqliteText(row.confirmation_id, "manual_completion_decisions.confirmation_id"),
+    createdAt: timestamp(row.created_at, "manual_completion_decisions.created_at"),
+  })));
+}
+
 function readRequests(database: SqliteDatabase): readonly ApplicationRequestRecord[] {
   const rows = database.prepare(
     `SELECT request_id, correlation_id, actor_id, action, target_kind, target_id,
@@ -743,10 +1343,15 @@ function readRequests(database: SqliteDatabase): readonly ApplicationRequestReco
 }
 
 function readGrants(database: SqliteDatabase): readonly AuthorizationGrant[] {
+  const union = tableExists(database, "authorization_grants_v6")
+    ? ` UNION ALL SELECT grant_id, revision, actor_id, action, scope_kind, scope_project_id,
+        scope_resource_revision, scope_config_revision, not_before, expires_at,
+        revoked_at, issuer_grant_id, source_grant_id FROM authorization_grants_v6`
+    : "";
   const rows = database.prepare(
     `SELECT grant_id, revision, actor_id, action, scope_kind, scope_project_id,
       scope_resource_revision, scope_config_revision, not_before, expires_at,
-      revoked_at, issuer_grant_id, source_grant_id FROM authorization_grants ORDER BY grant_id`,
+      revoked_at, issuer_grant_id, source_grant_id FROM authorization_grants${union} ORDER BY grant_id`,
   ).all();
   return Object.freeze(rows.map((row) => {
     const parsed = parseAuthorizationGrant({
@@ -866,8 +1471,22 @@ function readApplicationStateUntransactional(
   const lifecycle = schemaShape === "version-three" ? Object.freeze([]) : readLifecycle(database, schemaShape);
   const executionSequences = schemaShape === "current" ? readExecutionSequences(database) : Object.freeze([]);
   const executions = schemaShape === "current" ? readExecutionAttempts(database) : Object.freeze([]);
+  const executionOperationRequests = schemaShape === "current" ? readExecutionOperationRequests(database) : Object.freeze([]);
+  const executionAuthorizationDecisions = schemaShape === "current" ? readExecutionAuthorizationDecisions(database) : Object.freeze([]);
+  const executionOperationAudit = schemaShape === "current" ? readExecutionOperationAudit(database) : Object.freeze([]);
+  const executionIntents = schemaShape === "current" ? readExecutionIntents(database) : Object.freeze([]);
+  const executionObservations = schemaShape === "current" ? readExecutionObservations(database) : Object.freeze([]);
+  const executionReceipts = schemaShape === "current" ? readExecutionReceipts(database) : Object.freeze([]);
+  const executionFinalizations = schemaShape === "current" ? readExecutionFinalizations(database) : Object.freeze([]);
+  const executionTerminalStates = schemaShape === "current" ? readExecutionTerminalStates(database) : Object.freeze([]);
+  const manualTurns = schemaShape === "current" ? readManualTurns(database) : Object.freeze([]);
+  const manualBackendOperations = schemaShape === "current" ? readManualBackendOperations(database) : Object.freeze([]);
+  const manualCompletionDecisions = schemaShape === "current" ? readManualCompletionDecisions(database) : Object.freeze([]);
+  const grantRelationUnion = schemaShape === "current" && tableExists(database, "authorization_grants_v6")
+    ? " UNION ALL SELECT grant_id, capability_epoch_id, created_request_id, revoked_request_id FROM authorization_grants_v6"
+    : "";
   const grantRelationRows = database.prepare(schemaShape !== "version-three"
-    ? "SELECT grant_id, capability_epoch_id, created_request_id, revoked_request_id FROM authorization_grants ORDER BY grant_id"
+    ? `SELECT grant_id, capability_epoch_id, created_request_id, revoked_request_id FROM authorization_grants${grantRelationUnion} ORDER BY grant_id`
     : "SELECT grant_id, created_request_id, revoked_request_id FROM authorization_grants ORDER BY grant_id"
   ).all();
   const domainProjectIds = new Set(domain.projects.map((project) => project.id));
@@ -964,15 +1583,19 @@ function readApplicationStateUntransactional(
     }
   }
   const phase1ActionSetSha256 = sha256(canonicalJson(PHASE1_AUTHORIZATION_ACTIONS));
+  const phase2aActionSetSha256 = sha256(canonicalJson(PHASE2A_AUTHORIZATION_ACTIONS));
   const currentActionSetSha256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
   for (let index = 0; index < epochs.length; index += 1) {
     const epoch = epochs[index];
     const request = epoch === undefined ? undefined : requestById.get(epoch.requestId);
     const previousVocabulary = index === 0 ? 4 : epochs[index - 1]?.vocabularyVersion;
-    const isUpgrade = previousVocabulary === 4 && epoch?.vocabularyVersion === 5;
-    const expectedActionSetSha256 = epoch?.vocabularyVersion === 5
+    const isUpgrade = epoch !== undefined && previousVocabulary !== undefined && epoch.vocabularyVersion === previousVocabulary + 1;
+    const isRenewal = epoch?.vocabularyVersion === previousVocabulary;
+    const expectedActionSetSha256 = epoch?.vocabularyVersion === 6
       ? currentActionSetSha256
-      : phase1ActionSetSha256;
+      : epoch?.vocabularyVersion === 5
+        ? phase2aActionSetSha256
+        : phase1ActionSetSha256;
     if (
       epoch === undefined ||
       identity === null ||
@@ -980,7 +1603,7 @@ function readApplicationStateUntransactional(
       epoch.actorId !== identity.actorId ||
       epoch.runtimeRootKey !== identity.runtimeRootKey ||
       previousVocabulary === undefined ||
-      epoch.vocabularyVersion < previousVocabulary ||
+      (!isUpgrade && !isRenewal) ||
       epoch.actionSetSha256 !== expectedActionSetSha256 ||
       epoch.createdAt >= epoch.expiresAt ||
       request === undefined ||
@@ -1148,9 +1771,11 @@ function readApplicationStateUntransactional(
       : request.result === "renewal" || request.result === "upgrade"
         ? (() => {
             const epoch = epochs.find((candidate) => candidate.requestId === request.requestId);
-            return epoch?.vocabularyVersion === 5
+            return epoch?.vocabularyVersion === 6
               ? AUTHORIZATION_ACTIONS.length
-              : PHASE1_AUTHORIZATION_ACTIONS.length;
+              : epoch?.vocabularyVersion === 5
+                ? PHASE2A_AUTHORIZATION_ACTIONS.length
+                : PHASE1_AUTHORIZATION_ACTIONS.length;
           })()
       : request.result === "allow" && request.action === "authorization.grant.issue"
         ? 1
@@ -1294,6 +1919,7 @@ function readApplicationStateUntransactional(
   const taskById = new Map(domain.tasks.map((task) => [task.id, task]));
   const executionById = new Map(executions.map((execution) => [execution.executionId, execution]));
   const sequenceByTask = new Map(executionSequences.map((sequence) => [sequence.taskId, sequence]));
+  const terminalByExecution = new Map(executionTerminalStates.map((terminal) => [terminal.executionId, terminal]));
   if (executionById.size !== executions.length || sequenceByTask.size !== executionSequences.length) {
     throw persistenceFailure("CORRUPT_ROW", "Execution identity inventory is not unique");
   }
@@ -1301,9 +1927,14 @@ function readApplicationStateUntransactional(
     const task = taskById.get(sequence.taskId);
     const attempts = executions.filter((execution) => execution.taskId === sequence.taskId);
     const active = attempts.filter((execution) => execution.status === "active");
+    const terminal = active[0] === undefined ? undefined : terminalByExecution.get(active[0].executionId);
+    const taskStateMatchesExecution = task?.state === "running" || task?.state === "waiting"
+      ? terminal === undefined
+      : (task?.state === "completed" && terminal?.status === "completed") ||
+        (task?.state === "cancelled" && terminal?.status === "cancelled");
     if (
       task === undefined ||
-      task.state !== "running" ||
+      !taskStateMatchesExecution ||
       attempts.length !== sequence.lastAttemptNumber ||
       sequence.revision !== sequence.lastAttemptNumber ||
       active.length !== 1 ||
@@ -1390,9 +2021,242 @@ function readApplicationStateUntransactional(
       throw persistenceFailure("CORRUPT_ROW", "Accepted execution request refers to an absent or stale execution revision");
     }
   }
+  const executionRequestById = new Map(executionOperationRequests.map((request) => [request.requestId, request]));
+  const executionDecisionById = new Map(executionAuthorizationDecisions.map((decision) => [decision.decisionId, decision]));
+  const executionDecisionByRequest = new Map(executionAuthorizationDecisions.map((decision) => [decision.requestId, decision]));
+  const intentById = new Map(executionIntents.map((intent) => [intent.intentId, intent]));
+  const receiptById = new Map(executionReceipts.map((receipt) => [receipt.verifiedReceiptId, receipt]));
+  const finalizationById = new Map(executionFinalizations.map((finalization) => [finalization.finalizationId, finalization]));
+  const manualTurnByBackendId = new Map(manualTurns.map((turn) => [turn.backendExecutionId, turn]));
+  if (
+    executionRequestById.size !== executionOperationRequests.length ||
+    executionDecisionById.size !== executionAuthorizationDecisions.length ||
+    executionDecisionByRequest.size !== executionAuthorizationDecisions.length ||
+    intentById.size !== executionIntents.length || receiptById.size !== executionReceipts.length ||
+    finalizationById.size !== executionFinalizations.length || manualTurnByBackendId.size !== manualTurns.length
+  ) throw persistenceFailure("CORRUPT_ROW", "Phase 2 execution identity inventory is not unique");
+  for (const request of executionOperationRequests) {
+    const execution = executionById.get(request.targetExecutionId);
+    const decision = executionDecisionByRequest.get(request.requestId);
+    const requestAudit = executionOperationAudit.filter((event) => event.requestId === request.requestId);
+    if (
+      execution === undefined || request.targetRevision > execution.revision || decision === undefined ||
+      decision.actorId !== request.actorId || decision.action !== request.action || decision.result !== request.result ||
+      decision.requestId !== request.requestId || decision.createdAt !== request.createdAt ||
+      requestAudit.length === 0 || requestAudit.some((event) =>
+        event.decisionId !== decision.decisionId || event.actorId !== request.actorId ||
+        event.correlationId !== request.correlationId || event.executionId !== request.targetExecutionId ||
+        event.executionRevision < request.targetRevision || event.executionRevision > execution.revision ||
+        event.createdAt < request.createdAt || (event.result === "accepted") !== (request.result === "allow")
+      ) ||
+      (request.result === "allow" && (
+        decision.reason !== "allowed" || decision.grantId === null || decision.grantRevision !== 1
+      )) ||
+      (request.result === "deny" && decision.reason === "allowed")
+    ) throw persistenceFailure("CORRUPT_ROW", "Execution request, decision, audit, and target binding is inconsistent");
+    const project = projects.find((candidate) => candidate.projectId === decision.projectId);
+    if (project === undefined || decision.resourceRevision > project.resourceRevision) {
+      throw persistenceFailure("CORRUPT_ROW", "Execution decision Project binding is impossible");
+    }
+    if (decision.grantId !== null) {
+      const grant = grantById.get(decision.grantId);
+      if (
+        grant === undefined || grant.actorId !== decision.actorId || grant.action !== decision.action ||
+        grant.notBefore > decision.createdAt || grant.expiresAt <= decision.createdAt ||
+        (grant.revokedAt !== null && grant.revokedAt <= decision.createdAt) ||
+        (grant.scope.kind === "project" && (
+          grant.scope.projectId !== decision.projectId || grant.scope.resourceRevision !== decision.resourceRevision ||
+          grant.scope.configRevision !== project.configRevision
+        ))
+      ) throw persistenceFailure("CORRUPT_ROW", "Execution decision grant binding is impossible");
+    }
+  }
+  if (executionAuthorizationDecisions.some((decision) => !executionRequestById.has(decision.requestId)) ||
+      executionOperationAudit.some((event) => !executionRequestById.has(event.requestId) || !executionDecisionById.has(event.decisionId))) {
+    throw persistenceFailure("CORRUPT_ROW", "Execution decision or audit is orphaned");
+  }
+  const operationIds = new Set<string>();
+  const operationIdempotency = new Set<string>();
+  for (const intent of executionIntents) {
+    const request = executionRequestById.get(intent.requestId);
+    const decision = executionDecisionById.get(intent.decisionId);
+    const execution = executionById.get(intent.executionId);
+    const task = taskById.get(intent.taskId);
+    const project = projects.find((candidate) => candidate.projectId === intent.projectId);
+    const sourceExecution = intent.sourceExecutionId === null ? undefined : executionById.get(intent.sourceExecutionId);
+    const hasSuccessorSource = intent.sourceExecutionId !== null;
+    if (
+      operationIds.has(intent.operationId) || operationIdempotency.has(intent.idempotencyKey) ||
+      request === undefined || request.result !== "allow" || request.actorId !== intent.actorId ||
+      request.action !== intent.action || request.targetExecutionId !== intent.executionId ||
+      request.targetRevision !== intent.executionRevision || decision === undefined || decision.requestId !== intent.requestId ||
+      decision.result !== "allow" || decision.action !== intent.action || decision.actorId !== intent.actorId ||
+      execution === undefined || execution.taskId !== intent.taskId || execution.revision < intent.executionRevision ||
+      execution.attemptNumber !== intent.attemptNumber || execution.fencingToken !== intent.fencingToken ||
+      task === undefined || task.revision < intent.taskRevision || task.projectId !== intent.projectId ||
+      project === undefined || project.resourceRevision < intent.projectResourceRevision ||
+      project.configRevision < intent.projectConfigRevision || intent.updatedAt < intent.createdAt ||
+      intent.requestedDeadline <= intent.createdAt ||
+      (intent.operationKind === "retry" && !hasSuccessorSource) ||
+      (hasSuccessorSource && (
+        (intent.operationKind !== "resume" && intent.operationKind !== "retry") || sourceExecution === undefined ||
+        intent.sourceExecutionRevision !== sourceExecution.revision - 1 ||
+        intent.sourceAttemptNumber !== sourceExecution.attemptNumber ||
+        intent.sourceFencingToken !== sourceExecution.fencingToken ||
+        intent.sourceObservationNumber === null ||
+        sourceExecution.status !== "superseded" || execution.supersedesExecutionId !== sourceExecution.executionId ||
+        execution.attemptNumber !== sourceExecution.attemptNumber + 1 ||
+        execution.fencingToken !== sourceExecution.fencingToken + 1
+      )) ||
+      (!hasSuccessorSource && (intent.sourceExecutionRevision !== null || intent.sourceAttemptNumber !== null ||
+        intent.sourceFencingToken !== null || intent.sourceObservationNumber !== null))
+    ) throw persistenceFailure("CORRUPT_ROW", "Execution intent semantic, authorization, or revision binding is inconsistent");
+    operationIds.add(intent.operationId);
+    operationIdempotency.add(intent.idempotencyKey);
+    const observations = executionObservations
+      .filter((observation) => observation.intentId === intent.intentId)
+      .sort((left, right) => left.observationNumber - right.observationNumber);
+    if (observations.some((observation, index) => index > 0 && observation.observationNumber <= (observations[index - 1]?.observationNumber ?? 0))) {
+      throw persistenceFailure("CORRUPT_ROW", "Execution observations are not strictly ordered");
+    }
+    const receipt = executionReceipts.find((candidate) => candidate.intentId === intent.intentId);
+    const finalization = executionFinalizations.find((candidate) => candidate.intentId === intent.intentId);
+    if (
+      (intent.state === "pending" || intent.state === "executing" || intent.state === "retry_wait" || intent.state === "ambiguous" || intent.state === "failed") &&
+        (observations.length !== 0 || receipt !== undefined || finalization !== undefined) ||
+      intent.state === "observed" && (observations.length === 0 || receipt !== undefined || finalization !== undefined) ||
+      intent.state === "verified" && (observations.length === 0 || receipt === undefined || finalization !== undefined) ||
+      intent.state === "finalized" && finalization === undefined
+    ) throw persistenceFailure("CORRUPT_ROW", "Execution intent state is inconsistent with durable evidence stages");
+    if (receipt !== undefined) {
+      const observation = observations.find((candidate) => candidate.adapterReceiptId === receipt.adapterReceiptId);
+      if (
+        observation === undefined || receipt.receiptSha256 !== observation.receiptSha256 ||
+        receipt.lifecycle !== observation.lifecycle || receipt.backendExecutionId !== observation.backendExecutionId ||
+        receipt.threadId !== observation.threadId || receipt.observationNumber !== observation.observationNumber ||
+        receipt.observedRevision !== observation.journalRevision || receipt.fencingToken !== intent.fencingToken
+      ) throw persistenceFailure("CORRUPT_ROW", "Verified execution receipt does not reproduce its observation");
+    }
+    if (finalization !== undefined && (
+      finalization.verifiedReceiptId !== (receipt?.verifiedReceiptId ?? null) ||
+      finalization.executionRevision < intent.executionRevision || finalization.taskRevision < intent.taskRevision ||
+      finalization.finalizedAt < intent.updatedAt
+    )) throw persistenceFailure("CORRUPT_ROW", "Execution finalization is inconsistent with its intent and receipt");
+  }
+  for (const observation of executionObservations) {
+    const intent = intentById.get(observation.intentId);
+    const decision = executionDecisionById.get(observation.authorizationDecisionId);
+    const request = decision === undefined ? undefined : executionRequestById.get(decision.requestId);
+    if (
+      intent === undefined || decision?.result !== "allow" || decision.action !== "execution.inspect" ||
+      request?.result !== "allow" || request.action !== "execution.inspect" ||
+      request.targetExecutionId !== intent.executionId || request.targetRevision !== intent.executionRevision ||
+      observation.observedAt < intent.createdAt
+    ) throw persistenceFailure("CORRUPT_ROW", "Execution observation lacks an exact independent inspect allow");
+  }
+  if (executionReceipts.some((receipt) => !intentById.has(receipt.intentId)) ||
+      executionFinalizations.some((finalization) => !intentById.has(finalization.intentId))) {
+    throw persistenceFailure("CORRUPT_ROW", "Execution receipt or finalization is orphaned");
+  }
+  for (const turn of manualTurns) {
+    const execution = executionById.get(turn.executionId);
+    const task = taskById.get(turn.taskId);
+    const project = projects.find((candidate) => candidate.projectId === turn.projectId);
+    const predecessorTurn = turn.predecessorBackendExecutionId === null
+      ? undefined : manualTurnByBackendId.get(turn.predecessorBackendExecutionId);
+    if (
+      execution === undefined || execution.taskId !== turn.taskId || execution.revision < turn.executionRevision ||
+      execution.attemptNumber !== turn.attemptNumber || execution.fencingToken !== turn.fencingToken ||
+      task === undefined || task.revision < turn.taskRevision || task.projectId !== turn.projectId ||
+      project === undefined || project.resourceRevision < turn.projectResourceRevision ||
+      project.configRevision < turn.projectConfigRevision || turn.updatedAt < turn.createdAt ||
+      (turn.cancellationRequestRevision === null) !== (turn.cancellationRequestedAt === null) ||
+      (turn.predecessorBackendExecutionId === null) !== (turn.predecessorThreadId === null) ||
+      (turn.predecessorBackendExecutionId !== null && (
+        predecessorTurn === undefined || predecessorTurn.threadId !== turn.predecessorThreadId ||
+        execution.supersedesExecutionId !== predecessorTurn.executionId ||
+        execution.attemptNumber !== predecessorTurn.attemptNumber + 1 ||
+        execution.fencingToken !== predecessorTurn.fencingToken + 1
+      ))
+    ) throw persistenceFailure("CORRUPT_ROW", "Manual turn semantic, fence, or revision binding is inconsistent");
+  }
+  for (const operation of manualBackendOperations) {
+    const intent = intentById.get(operation.intentId);
+    const turn = manualTurnByBackendId.get(operation.backendExecutionId);
+    const sourceTurn = operation.sourceBackendExecutionId === null
+      ? undefined : manualTurnByBackendId.get(operation.sourceBackendExecutionId);
+    const hasSourceTurn = operation.sourceBackendExecutionId !== null;
+    const expectedKind = intent?.operationKind;
+    if (
+      intent === undefined || turn === undefined || operation.threadId !== turn.threadId ||
+      operation.expectedFencingToken !== intent.fencingToken || operation.expectedFencingToken !== turn.fencingToken ||
+      operation.operationKind !== expectedKind || operation.idempotencyKey !== intent.idempotencyKey ||
+      operation.postRevision > turn.revision || operation.createdAt < intent.createdAt ||
+      (operation.operationKind === "manual_report") !== (operation.reportOperation !== null) ||
+      (operation.sourceBackendExecutionId === null) !== (operation.sourceThreadId === null) ||
+      (operation.operationKind === "retry" && !hasSourceTurn) ||
+      (hasSourceTurn && (
+        (operation.operationKind !== "resume" && operation.operationKind !== "retry") ||
+        sourceTurn === undefined || sourceTurn.threadId !== operation.sourceThreadId ||
+        turn.predecessorBackendExecutionId !== sourceTurn.backendExecutionId ||
+        turn.predecessorThreadId !== sourceTurn.threadId
+      ))
+    ) throw persistenceFailure("CORRUPT_ROW", "Manual backend operation is not bound to its core intent and turn");
+  }
+  const manualConfirmationIds = new Set(executionIntents
+    .map((intent) => intent.confirmationId)
+    .filter((value): value is string => value !== null));
+  if (manualConfirmationIds.size !== executionIntents.filter((intent) => intent.confirmationId !== null).length) {
+    throw persistenceFailure("CORRUPT_ROW", "Manual outcome confirmation was consumed more than once");
+  }
+  for (const completion of manualCompletionDecisions) {
+    const request = executionRequestById.get(completion.requestId);
+    const decision = executionDecisionById.get(completion.decisionId);
+    const event = executionOperationAudit.find((candidate) => candidate.auditId === completion.auditId);
+    const receipt = receiptById.get(completion.verifiedReceiptId);
+    const finalization = finalizationById.get(completion.finalizationId);
+    const intent = finalization === undefined ? undefined : intentById.get(finalization.intentId);
+    const task = taskById.get(completion.taskId);
+    const terminal = terminalByExecution.get(completion.executionId);
+    if (
+      request?.action !== "execution.completion.accept" || request.result !== "allow" ||
+      decision?.requestId !== completion.requestId || decision.action !== "execution.completion.accept" || decision.result !== "allow" ||
+      event?.requestId !== completion.requestId || event.decisionId !== completion.decisionId ||
+      event.eventKind !== "execution.completion.accepted" || receipt === undefined || finalization === undefined ||
+      finalization.verifiedReceiptId !== receipt.verifiedReceiptId || intent === undefined ||
+      intent.executionId !== completion.executionId || intent.taskId !== completion.taskId ||
+      intent.attemptNumber !== completion.attemptNumber || intent.fencingToken !== completion.fencingToken ||
+      task?.state !== "completed" || task.revision !== completion.postTaskRevision ||
+      task.completion?.decisionId !== completion.completionDecisionId ||
+      terminal?.status !== "completed" || terminal.completionDecisionId !== completion.completionDecisionId ||
+      manualConfirmationIds.has(completion.confirmationId)
+    ) throw persistenceFailure("CORRUPT_ROW", "Manual completion decision lineage is inconsistent");
+  }
+  const completionConfirmationIds = new Set(manualCompletionDecisions.map((completion) => completion.confirmationId));
+  if (completionConfirmationIds.size !== manualCompletionDecisions.length) {
+    throw persistenceFailure("CORRUPT_ROW", "Manual completion confirmation was consumed more than once");
+  }
+  for (const terminal of executionTerminalStates) {
+    const execution = executionById.get(terminal.executionId);
+    const receipt = receiptById.get(terminal.verifiedReceiptId);
+    const finalization = finalizationById.get(terminal.finalizationId);
+    const intent = finalization === undefined ? undefined : intentById.get(finalization.intentId);
+    const task = execution === undefined ? undefined : taskById.get(execution.taskId);
+    if (
+      execution === undefined || receipt === undefined || finalization === undefined || intent === undefined ||
+      intent.executionId !== terminal.executionId || receipt.intentId !== intent.intentId ||
+      execution.attemptNumber !== terminal.attemptNumber || execution.fencingToken !== terminal.fencingToken ||
+      execution.revision !== terminal.executionRevision || task?.revision !== terminal.postTaskRevision ||
+      task.state !== terminal.status || terminal.postTaskRevision !== terminal.preTaskRevision + 1 ||
+      executionIntents.some((candidate) => candidate.executionId === terminal.executionId && candidate.state !== "finalized")
+    ) throw persistenceFailure("CORRUPT_ROW", "Execution terminal state is inconsistent with Task, fence, and verified evidence");
+  }
   const stateWithoutLifecycle = Object.freeze({
     domain, projects, bootstrap, identity, grants, epochs, requests, decisions, audit,
     executionSequences, executions,
+    executionOperationRequests, executionAuthorizationDecisions, executionOperationAudit,
+    executionIntents, executionObservations, executionReceipts, executionFinalizations, executionTerminalStates,
+    manualTurns, manualBackendOperations, manualCompletionDecisions,
     lifecycle: Object.freeze([]) as readonly ApplicationLifecycleAuthorization[],
   });
   for (const authorization of lifecycle) {
@@ -1494,19 +2358,37 @@ function applicationStateSha256ForVersion(
     registry: state.projects,
     requests: state.requests,
   };
-  return sha256(canonicalJson(version === 1 ? phaseOneProjection : {
+  const phaseTwoAProjection = {
     ...phaseOneProjection,
     executionSequences: state.executionSequences,
     executions: state.executions,
+  };
+  return sha256(canonicalJson(version === 1 ? phaseOneProjection : version === 2 ? phaseTwoAProjection : {
+    ...phaseTwoAProjection,
+    executionAuthorizationDecisions: state.executionAuthorizationDecisions,
+    executionFinalizations: state.executionFinalizations,
+    executionTerminalStates: state.executionTerminalStates,
+    executionIntents: state.executionIntents,
+    executionObservations: state.executionObservations,
+    executionOperationAudit: state.executionOperationAudit,
+    executionOperationRequests: state.executionOperationRequests,
+    executionReceipts: state.executionReceipts,
+    manualBackendOperations: state.manualBackendOperations,
+    manualCompletionDecisions: state.manualCompletionDecisions,
+    manualTurns: state.manualTurns,
   }));
 }
 
 export function applicationStateSha256(state: ApplicationState): string {
-  return applicationStateSha256ForVersion(state, 2);
+  return applicationStateSha256ForVersion(state, 3);
 }
 
 export function versionFourApplicationStateSha256(state: ApplicationState): string {
   return applicationStateSha256ForVersion(state, 1);
+}
+
+export function versionFiveApplicationStateSha256(state: ApplicationState): string {
+  return applicationStateSha256ForVersion(state, 2);
 }
 
 function lifecycleAuthorizationDigestVersion(
@@ -1622,7 +2504,7 @@ function validateLifecycleAuthorizationState(
 ): Readonly<{
   authorization: ApplicationLifecycleAuthorization;
   stateSha256: string;
-  stateDigestVersion: 1 | 2;
+  stateDigestVersion: 1 | 2 | 3;
 }> {
   if (!isCanonicalUtcTimestamp(now)) throw persistenceFailure("INVALID_INPUT", "Lifecycle validation time is invalid");
   const authorization = state.lifecycle.find((candidate) => candidate.authorizationId === handoff.authorizationId);
@@ -1667,7 +2549,7 @@ export function validateLifecycleAuthorizationForUse(
 ): Readonly<{
   authorization: ApplicationLifecycleAuthorization;
   stateSha256: string;
-  stateDigestVersion: 1 | 2;
+  stateDigestVersion: 1 | 2 | 3;
 }> {
   return validateLifecycleAuthorizationState(readApplicationState(database), handoff, operation, generationId, now);
 }
@@ -1681,7 +2563,7 @@ export function validateLifecycleAuthorizationForUseUntransactional(
 ): Readonly<{
   authorization: ApplicationLifecycleAuthorization;
   stateSha256: string;
-  stateDigestVersion: 1 | 2;
+  stateDigestVersion: 1 | 2 | 3;
 }> {
   return validateLifecycleAuthorizationState(readApplicationStateUntransactional(database), handoff, operation, generationId, now);
 }
@@ -1793,8 +2675,11 @@ export class ApplicationTransaction {
   }
 
   insertCapabilityEpoch(record: NewCapabilityEpochRecord): void {
+    const table = record.vocabularyVersion === 6
+      ? "authorization_capability_epochs_v6"
+      : "authorization_capability_epochs";
     this.#database.prepare(
-      `INSERT INTO authorization_capability_epochs(
+      `INSERT INTO ${table}(
         epoch_id, epoch_revision, actor_id, runtime_root_key, vocabulary_version,
         action_set_sha256, request_id, created_at, expires_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1806,8 +2691,15 @@ export class ApplicationTransaction {
   }
 
   insertGrant(record: NewGrantRecord): void {
+    const v6Epoch = record.capabilityEpochId === undefined || record.capabilityEpochId === null
+      ? false
+      : this.#database.prepare("SELECT 1 FROM authorization_capability_epochs_v6 WHERE epoch_id=?").get(record.capabilityEpochId) !== undefined;
+    const v6Source = record.issuerGrantId !== null &&
+      this.#database.prepare("SELECT 1 FROM authorization_grants_v6 WHERE grant_id=?").get(record.issuerGrantId) !== undefined;
+    const v6Action = !((PHASE2A_AUTHORIZATION_ACTIONS as readonly string[]).includes(record.action));
+    const table = v6Epoch || v6Source || v6Action ? "authorization_grants_v6" : "authorization_grants";
     this.#database.prepare(
-      `INSERT INTO authorization_grants(
+      `INSERT INTO ${table}(
         grant_id, revision, actor_id, action, scope_kind, scope_project_id,
         scope_resource_revision, scope_config_revision, not_before, expires_at,
         revoked_at, issuer_grant_id, source_grant_id, capability_epoch_id,
@@ -1836,6 +2728,11 @@ export class ApplicationTransaction {
       record.expectedRequestCount, record.expectedDecisionCount, record.expectedAuditCount,
       record.issuedAt, record.expiresAt,
     );
+    if (tableExists(this.#database, "application_lifecycle_digest_v6")) {
+      this.#database.prepare(
+        "INSERT INTO application_lifecycle_digest_v6(authorization_id, state_digest_version) VALUES (?, 3)",
+      ).run(record.authorizationId);
+    }
   }
 
   insertExecutionSequence(record: TaskExecutionSequence): void {
@@ -1898,6 +2795,232 @@ export class ApplicationTransaction {
     );
   }
 
+  insertExecutionOperationRequest(record: ExecutionOperationRequestRecord): void {
+    this.#database.prepare(
+      `INSERT INTO execution_operation_requests(
+        request_id, correlation_id, actor_id, action, target_execution_id,
+        target_revision, result, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.requestId, record.correlationId, record.actorId, record.action,
+      record.targetExecutionId, record.targetRevision, record.result, record.createdAt,
+    );
+  }
+
+  insertExecutionAuthorizationDecision(record: ExecutionAuthorizationDecisionRecord): void {
+    this.#database.prepare(
+      `INSERT INTO execution_authorization_decisions(
+        decision_id, request_id, actor_id, action, result, reason, policy_result,
+        grant_id, grant_revision, project_id, resource_revision, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.decisionId, record.requestId, record.actorId, record.action, record.result,
+      record.reason, record.policy, record.grantId, record.grantRevision,
+      record.projectId, record.resourceRevision, record.createdAt,
+    );
+  }
+
+  insertExecutionOperationAudit(record: ExecutionOperationAuditRecord): void {
+    this.#database.prepare(
+      `INSERT INTO execution_operation_audit(
+        audit_id, request_id, decision_id, event_kind, result, actor_id,
+        correlation_id, execution_id, execution_revision, code, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.auditId, record.requestId, record.decisionId, record.eventKind, record.result,
+      record.actorId, record.correlationId, record.executionId, record.executionRevision,
+      record.code, record.createdAt,
+    );
+  }
+
+  insertExecutionIntent(record: ExecutionOperationIntent): void {
+    this.#database.prepare(
+      `INSERT INTO execution_operation_intents(
+        intent_id, operation_id, idempotency_key, operation_kind, action, state, revision,
+        actor_id, request_id, decision_id, confirmation_id, project_id,
+        project_resource_revision, project_config_revision, task_id, task_revision,
+        input_reference, execution_id, execution_revision, attempt_number, fencing_token,
+        source_execution_id, source_execution_revision, source_attempt_number, source_fencing_token,
+        source_observation_number,
+        contract_id, adapter_id, adapter_version, policy_binding_reference, workspace_mode,
+        backend_execution_id, thread_id, previous_receipt_id, expected_journal_revision,
+        requested_deadline, continuation_reference, required_action_receipt_id, expected_lifecycle,
+        reason_code, report_id, report_operation, report_code, evidence_reference, last_observation_number,
+        created_at, updated_at
+      ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+        ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28,
+        ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42,
+        ?43, ?44, ?45, ?46, ?47)`,
+    ).run(
+      record.intentId, record.operationId, record.idempotencyKey, record.operationKind,
+      record.action, record.state, record.revision, record.actorId, record.requestId,
+      record.decisionId, record.confirmationId, record.projectId,
+      record.projectResourceRevision, record.projectConfigRevision, record.taskId,
+      record.taskRevision, record.inputReference, record.executionId,
+      record.executionRevision, record.attemptNumber, record.fencingToken,
+      record.sourceExecutionId, record.sourceExecutionRevision, record.sourceAttemptNumber,
+      record.sourceFencingToken, record.sourceObservationNumber,
+      record.contractId, record.adapterId, record.adapterVersion,
+      record.policyBindingReference, record.workspaceMode, record.backendExecutionId,
+      record.threadId, record.previousReceiptId, record.expectedJournalRevision,
+      record.requestedDeadline, record.continuationReference, record.requiredActionReceiptId,
+      record.expectedLifecycle, record.reasonCode, record.reportId, record.reportOperation,
+      record.reportCode, record.evidenceReference, record.lastObservationNumber,
+      record.createdAt, record.updatedAt,
+    );
+  }
+
+  transitionExecutionIntent(
+    intentId: string,
+    expectedState: ExecutionIntentState,
+    expectedRevision: number,
+    nextState: ExecutionIntentState,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE execution_operation_intents
+       SET state=?, revision=revision+1, updated_at=?
+       WHERE intent_id=? AND state=? AND revision=?`,
+    ).run(nextState, updatedAt, intentId, expectedState, expectedRevision);
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Execution intent CAS failed", { intentId });
+    }
+  }
+
+  insertExecutionObservation(record: ExecutionObservationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO execution_observations(
+        observation_id, intent_id, observation_number, adapter_receipt_id, receipt_sha256,
+        authorization_decision_id, lifecycle, outcome, code,
+        backend_execution_id, thread_id, journal_revision, evidence_reference, observed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.observationId, record.intentId, record.observationNumber, record.adapterReceiptId,
+      record.receiptSha256, record.authorizationDecisionId, record.lifecycle, record.outcome,
+      record.code, record.backendExecutionId, record.threadId, record.journalRevision,
+      record.evidenceReference, record.observedAt,
+    );
+  }
+
+  insertExecutionVerifiedReceipt(record: ExecutionVerifiedReceiptRecord): void {
+    this.#database.prepare(
+      `INSERT INTO execution_verified_receipts(
+        verified_receipt_id, intent_id, adapter_receipt_id, receipt_sha256, lifecycle,
+        backend_execution_id, thread_id, observation_number, observed_revision,
+        fencing_token, verified_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.verifiedReceiptId, record.intentId, record.adapterReceiptId,
+      record.receiptSha256, record.lifecycle, record.backendExecutionId,
+      record.threadId, record.observationNumber, record.observedRevision,
+      record.fencingToken, record.verifiedAt,
+    );
+  }
+
+  insertExecutionFinalization(record: ExecutionFinalizationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO execution_finalizations(
+        finalization_id, intent_id, verified_receipt_id, outcome, code,
+        task_revision, execution_revision, finalized_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.finalizationId, record.intentId, record.verifiedReceiptId, record.outcome,
+      record.code, record.taskRevision, record.executionRevision, record.finalizedAt,
+    );
+  }
+
+  insertExecutionTerminalState(record: ExecutionTerminalStateRecord): void {
+    this.#database.prepare(
+      `INSERT INTO execution_terminal_states(
+        execution_id, status, attempt_number, fencing_token, verified_receipt_id,
+        finalization_id, completion_decision_id, pre_task_revision, post_task_revision,
+        execution_revision, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.executionId, record.status, record.attemptNumber, record.fencingToken,
+      record.verifiedReceiptId, record.finalizationId, record.completionDecisionId,
+      record.preTaskRevision, record.postTaskRevision, record.executionRevision, record.createdAt,
+    );
+  }
+
+  insertManualTurn(record: ManualBackendTurnRecord): void {
+    this.#database.prepare(
+      `INSERT INTO manual_backend_turns(
+        backend_execution_id, thread_id, start_idempotency_key, project_id,
+        project_resource_revision, project_config_revision, task_id, task_revision,
+        input_reference, execution_id, execution_revision, attempt_number, fencing_token,
+        predecessor_backend_execution_id, predecessor_thread_id,
+        policy_binding_reference, workspace_mode, lifecycle, cancellation_request_revision,
+        cancellation_requested_at, code, evidence_reference, last_report_id, revision,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.backendExecutionId, record.threadId, record.startIdempotencyKey,
+      record.projectId, record.projectResourceRevision, record.projectConfigRevision,
+      record.taskId, record.taskRevision, record.inputReference, record.executionId,
+      record.executionRevision, record.attemptNumber, record.fencingToken,
+      record.predecessorBackendExecutionId, record.predecessorThreadId,
+      record.policyBindingReference, record.workspaceMode, record.lifecycle,
+      record.cancellationRequestRevision, record.cancellationRequestedAt, record.code,
+      record.evidenceReference, record.lastReportId, record.revision,
+      record.createdAt, record.updatedAt,
+    );
+  }
+
+  updateManualTurn(record: ManualBackendTurnRecord, expectedRevision: number): void {
+    const result = this.#database.prepare(
+      `UPDATE manual_backend_turns SET
+        lifecycle=?, cancellation_request_revision=?, cancellation_requested_at=?,
+        code=?, evidence_reference=?, last_report_id=?, revision=?, updated_at=?
+      WHERE backend_execution_id=? AND thread_id=? AND execution_id=?
+        AND fencing_token=? AND revision=?`,
+    ).run(
+      record.lifecycle, record.cancellationRequestRevision, record.cancellationRequestedAt,
+      record.code, record.evidenceReference, record.lastReportId, record.revision,
+      record.updatedAt, record.backendExecutionId, record.threadId, record.executionId,
+      record.fencingToken, expectedRevision,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Manual turn revision/fence CAS failed", {
+        backendExecutionId: record.backendExecutionId,
+      });
+    }
+  }
+
+  insertManualBackendOperation(record: ManualBackendOperationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO manual_backend_operations(
+        backend_operation_id, idempotency_key, intent_id, operation_kind,
+        report_operation, backend_execution_id, thread_id, source_backend_execution_id,
+        source_thread_id, expected_fencing_token,
+        expected_pre_revision, post_revision, result_lifecycle, receipt_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.backendOperationId, record.idempotencyKey, record.intentId,
+      record.operationKind, record.reportOperation, record.backendExecutionId,
+      record.threadId, record.sourceBackendExecutionId, record.sourceThreadId,
+      record.expectedFencingToken, record.expectedPreRevision,
+      record.postRevision, record.resultLifecycle, record.receiptId, record.createdAt,
+    );
+  }
+
+  insertManualCompletionDecision(record: ManualCompletionDecisionRecord): void {
+    this.#database.prepare(
+      `INSERT INTO manual_completion_decisions(
+        completion_decision_id, operation_id, idempotency_key, task_id, execution_id,
+        attempt_number, fencing_token, verified_receipt_id, finalization_id,
+        pre_task_revision, post_task_revision, request_id, decision_id, audit_id,
+        confirmation_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.completionDecisionId, record.operationId, record.idempotencyKey,
+      record.taskId, record.executionId, record.attemptNumber, record.fencingToken,
+      record.verifiedReceiptId, record.finalizationId, record.preTaskRevision,
+      record.postTaskRevision, record.requestId, record.decisionId, record.auditId,
+      record.confirmationId, record.createdAt,
+    );
+  }
+
   renewExecutionLease(
     executionId: string,
     ownerId: string,
@@ -1950,12 +3073,42 @@ export class ApplicationTransaction {
   }
 
   revokeGrant(grantId: string, expectedRevision: number, revokedAt: string, requestId: string): void {
-    const result = this.#database.prepare(
+    let result = this.#database.prepare(
       `UPDATE authorization_grants
        SET revision=revision+1, revoked_at=?, revoked_request_id=?
        WHERE grant_id=? AND revision=? AND revoked_at IS NULL`,
     ).run(revokedAt, requestId, grantId, expectedRevision);
+    if (changes(result.changes) === 0 && tableExists(this.#database, "authorization_grants_v6")) {
+      result = this.#database.prepare(
+        `UPDATE authorization_grants_v6
+         SET revision=revision+1, revoked_at=?, revoked_request_id=?
+         WHERE grant_id=? AND revision=? AND revoked_at IS NULL`,
+      ).run(revokedAt, requestId, grantId, expectedRevision);
+    }
     if (changes(result.changes) !== 1) throw persistenceFailure("REVISION_CONFLICT", "Grant revocation CAS failed", { grantId });
+  }
+
+  supersedeExecutionAttemptAfterReconciliation(
+    executionId: string,
+    supersededByExecutionId: string,
+    expectedOwnerId: string,
+    expectedRevision: number,
+    expectedLeaseRevision: number,
+    expectedFencingToken: number,
+    observedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE execution_attempts
+       SET status='superseded', superseded_by_execution_id=?, revision=revision+1, updated_at=?
+       WHERE execution_id=? AND owner_id=? AND revision=? AND lease_revision=?
+         AND fencing_token=? AND status='active' AND superseded_by_execution_id IS NULL`,
+    ).run(
+      supersededByExecutionId, observedAt, executionId, expectedOwnerId,
+      expectedRevision, expectedLeaseRevision, expectedFencingToken,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Reconciled execution successor CAS or fence check failed", { executionId });
+    }
   }
 
   insertProject(project: RegisteredProject): void {

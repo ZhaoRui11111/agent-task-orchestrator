@@ -2,10 +2,14 @@
 
 ## Status and direction
 
-This file is the sole normative owner of the planned port directions, current
-port identifiers and versions, operation shapes, receipt envelopes, and adapter
-error taxonomy. No adapter or port implementation exists today, and no vendor,
-operating system, or external API is currently supported.
+This file is the sole normative owner of port directions, current port
+identifiers and versions, operation shapes, receipt envelopes, and adapter
+error taxonomy. The package implements the pure `ato.execution/v1` contract
+kit, one production `manual-local` adapter backed by the schema-v6 local Manual
+journal, and its narrow `ato.manual-outcome-control/v1` control. The Fake
+backend is test-only and unexported. Workspace, Scheduler, ProjectPolicy, and
+Completion ports remain planned. No vendor, operating system, external API, or
+released product platform is currently supported.
 
 Business rules remain with their linked owners. An adapter translates a
 versioned port and cannot change Task state semantics, authorize an operation,
@@ -13,7 +17,7 @@ declare an unverified external effect successful, or write SQLite directly.
 
 | Port | Direction relative to core | Current contract ID | Responsibility boundary |
 | --- | --- | --- | --- |
-| Execution | Outbound: dispatcher calls adapter | `ato.execution/v1` | Start, resume, inspect, or request cancellation of an execution turn |
+| Execution | Outbound: reliable application loop calls adapter; a later dispatcher may call the loop | `ato.execution/v1` | Start, resume, inspect, or request cancellation of one no-workspace execution turn |
 | Workspace | Outbound: dispatcher calls adapter | `ato.workspace/v1` | Reserve, create, inspect, recover, or request cleanup of an isolated workspace |
 | Scheduler | Outbound lifecycle plus inbound trigger delivery | `ato.scheduler/v1` | Register/inspect/remove a schedule and deliver a bounded dispatch trigger |
 | ProjectPolicy | Outbound: application calls adapter | `ato.project-policy/v1` | Evaluate mutation, completion requirements, integration, and cleanup policy |
@@ -116,12 +120,26 @@ finalization of mutating effects.
 
 ## ExecutionBackend: `ato.execution/v1`
 
+Before its first implementation, EP-02B corrected the planned `start` shape
+from `execution.claim` plus workspace/working-directory/environment fields to
+the distinct `execution.start` action and `workspace_mode=none`. Repository
+evidence showed no earlier port implementation, export, negotiation, persisted
+receipt, or consumer, so no shipped artifact was reinterpreted. The v1 shape
+below is now implemented and closed: adding a required field, changing an
+action/side effect, or changing receipt/error meaning requires a new major.
+
+Every operation carries the exact contract/adapter/version/correlation/deadline
+envelope and a semantic identity containing Project resource/config revisions,
+Task/input/execution/attempt/fence revisions, local policy binding, and
+`workspace_mode=none`. It contains no workspace receipt, working directory,
+environment, prompt, source content, path, or credential value.
+
 Operations are:
 
-- `start` (mutating-effect, `execution.claim`): input adds execution attempt identity, workspace receipt reference,
-  immutable task-input reference, working-directory identity, and environment
-  reference set. Receipt adds backend execution ID, nullable durable thread ID,
-  accepted working-directory identity, and lifecycle `started|deferred|rejected`.
+- `start` (mutating-effect, `execution.start`): input adds committed
+  operation/intent/idempotency and final-allow identities to the common semantic
+  tuple. Receipt adds backend execution ID, nullable durable thread ID,
+  `workspace_mode=none`, and lifecycle `started|deferred|rejected`.
 - `resume` (mutating-effect, `execution.resume` or `execution.retry`): input adds the existing backend execution/thread ID, continuation
   reference, previous turn receipt, and expected thread identity. Receipt adds
   observed thread ID and lifecycle. Returning a different thread is a conflict,
@@ -136,6 +154,19 @@ Operations are:
 `turn_succeeded` is an execution-turn fact, never a Task completion decision.
 Raw prompt, source content, and credentials follow the
 [privacy and logging contract](../security/privacy-and-logging.md).
+
+The implemented local Manual backend persists an exact idempotent turn and
+operation journal and exposes independent `inspect`; it never authorizes an
+operation, changes a Task, or executes Task content. Its separate
+`ato.manual-outcome-control/v1` accepts only the closed
+`activate|wait|succeed|fail|confirm_cancelled` report set through the
+application-owned, trusted `local_manual_operator` path. Each report binds the
+same semantic identity, current `execution.inspect` allow, a fresh
+`manual.turn.report` confirmation, expected journal revision/lifecycle, and
+bounded code/evidence reference. Terminal Manual lifecycles are immutable, and
+`confirm_cancelled` additionally requires an exact prior cancellation-request
+revision. The loop then inspects through `ato.execution/v1`; the control return
+is not itself finalization or completion evidence.
 
 ## WorkspaceBackend: `ato.workspace/v1`
 

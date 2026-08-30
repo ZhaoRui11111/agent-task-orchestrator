@@ -4,7 +4,6 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
-  AUTHORIZATION_ACTIONS,
   PHASE1_AUTHORIZATION_ACTIONS,
   createApplicationService,
   prepareRuntimeLayout,
@@ -192,7 +191,7 @@ export function createVersionThreeDatabase(layout, applicationVersion = "test-v3
     bootstrapRequestId, createdAt, expiresAt,
   );
 
-  const legacyActions = AUTHORIZATION_ACTIONS.slice(0, 15);
+  const legacyActions = PHASE1_AUTHORIZATION_ACTIONS.slice(0, 15);
   const insertGrant = database.prepare(
     `INSERT INTO authorization_grants(
       grant_id, revision, actor_id, action, scope_kind, scope_project_id,

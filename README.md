@@ -10,20 +10,21 @@ The repository contains a governance and architecture-contract baseline, an
 executable TypeScript/Node toolchain and feasibility harness, a pure in-memory
 Domain Core for Project/Task rules, a safe local ProjectRegistry, a finite
 runtime authorization model, one typed Project/Task/dependency application
-service, schema-v5 SQLite persistence, a composable local Phase 1 `ato` product
-CLI, and a typed library-only durable execution-claim foundation. The
+service, schema-v6 SQLite persistence, a composable local Phase 1 `ato` product
+CLI, and a typed library-only reliable Manual execution loop. The
 application owner remains the sole business command/query owner and atomically
 coordinates Domain snapshots, registry/grant changes, authorization decisions,
-execution attempts, leases/fences, and sanitized audit. The CLI provides initialization,
+execution attempts, leases/fences, durable operation evidence, and sanitized audit. The CLI provides initialization,
 finite grant management, Project/Task/dependency management, status, backup,
 confirmed restore, and read-only doctor surfaces without copying those rules.
-The claim foundation exposes typed package APIs for explicit capability
-upgrade, atomic ready-to-running claim, inspection, lease renewal, safe
-effect-free takeover, and stale-fence refusal. It still has no executable
-orchestrator, MCP server, plugin, dispatcher, scheduler, execution backend,
-durable effect intent/receipt/finalization or completion loop, public Phase 2
-CLI, supported adapter, supported release, or validated product platform
-integration.
+The package exposes explicit capability upgrades, atomic claims, lease/fence
+handling, the strict `ato.execution/v1` contract kit, one durable local Manual
+backend, ordered intent/observation/verified-receipt/finalization recovery,
+resume/retry/cancel paths, verified interruption, and separately confirmed
+Manual completion acceptance. It still has no executable orchestrator, MCP
+server, plugin, dispatcher, scheduler, Codex/Git/workspace adapter,
+ProjectPolicy or CompletionBackend gate, public Phase 2 CLI, supported release,
+or validated product platform integration.
 
 Unimplemented planned capabilities are not current capabilities. Design
 proposals and roadmaps must remain clearly labeled until their implementations
@@ -81,21 +82,28 @@ pnpm verify:offline
 `pnpm dependency:audit` is a separate network-dependent query. Neither the CI
 skeleton nor a command that was not run is evidence of a passing gate.
 
-## Durable execution-claim foundation
+## Reliable Manual execution library
 
-The package exports a provisional typed execution application service for the
-narrow Phase 2 claim boundary. Native or migrated schema-v5 runtimes retain the
-nineteen Phase 1 grants: none of the four execution actions exists as authority
-until the local trust root performs the explicit, fresh-confirmation-bound
-capability upgrade. Claim, renewal, and takeover then require current explicit
-grants and exact revision/fence inputs. Expiry is only an observation; takeover
-is safe here solely because this phase has no adapter or possible external
-effect to reconcile.
+The package exports the provisional typed claim service and reliable Manual
+loop. Schema-v6 migration, bootstrap, and renewal do not create any of the six
+Manual-loop grants. A vocabulary-5 runtime must perform its own fresh,
+identity- and confirmation-bound upgrade to vocabulary 6 before
+`execution.start`, `execution.inspect`, `execution.resume`, `execution.retry`,
+`execution.cancel`, or `execution.completion.accept` can authorize work.
+
+Each effect-capable operation commits its exact semantic intent before calling
+the injected adapter, independently inspects durable Manual state, persists and
+verifies bounded evidence, and finalizes through revision/fence CAS. Recovery
+inspects before uncertain replay; expiry alone cannot justify takeover or a
+second effect. Manual `turn_succeeded` leaves the Task running until a distinct
+current completion grant and fresh confirmation atomically accept the exact
+verified evidence. The production Manual adapter records only no-workspace
+turn state; it does not execute Task content or touch a Project repository.
 
 This service is not reachable through `ato.api/v1` or the `ato` CLI. It neither
-calls a backend nor persists effect intents or receipts, and it must not be used
-as evidence for a product execution loop, adapter, dispatcher, scheduler, or
-platform-support claim. The exact rules are owned by the
+dispatches candidates nor invokes Codex, Git, workspace, scheduler, policy, or
+completion-gate effects, and it must not be used as evidence for an executable
+product runtime or platform-support claim. The exact rules are owned by the
 [authorization contract](docs/reference/authorization-contract.md),
 [persistence contract](docs/reference/persistence-contract.md), and
 [reliability protocol](docs/reference/reliability-protocol.md).

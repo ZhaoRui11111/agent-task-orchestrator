@@ -8,6 +8,12 @@ integration reservation, Git partial-success observation, contained regular
 path and no-follow/reparse checks, and cleanup refusal. No workspace, worktree,
 gate runner, Git integration, or cleanup implementation exists today.
 
+The implemented Phase 2B Manual completion decision is deliberately outside
+this planned gate owner. It consumes only a current verified local Manual
+`turn_succeeded` receipt plus distinct authorization and fresh confirmation; it
+does not evaluate ProjectPolicy, run or inspect a CompletionBackend gate, bind a
+workspace/HEAD, or make any rule in this file current implementation.
+
 The presence of this future product contract does not authorize this
 repository's development process to create a worktree. Adapter call shapes are
 owned by the [adapter contracts](adapter-contracts.md), durable external effects

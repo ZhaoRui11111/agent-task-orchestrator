@@ -5,20 +5,22 @@
 This file is the sole owner of security assets, actors, trust boundaries, abuse
 cases, mitigations, residual risks, negative-test obligations, and explicit
 security non-claims for the planned local-first orchestrator. The repository
-implements the Phase 1 persistence/local task-management subset and the narrow
-Phase 2 execution-claim foundation: validated
+implements the Phase 1 persistence/local task-management subset and the
+library-only reliable Manual execution loop: validated
 runtime and Project roots, identity-bound lifecycle/connection files, strict
-typed schema-v5 SQLite ingress, OS-derived local identity and capability epochs,
+typed schema-v6 SQLite ingress, OS-derived local identity and capability epochs,
 one-time runtime-root-bound bootstrap, finite revision-aware grants, typed
 application commands/queries and lifecycle handoffs, narrowing policy, separate
 high-risk confirmation, append-only decisions/audit, a strict redacted product
 CLI/read-only doctor, verified backup/restore recovery, explicit
-confirmation-bound execution-capability upgrade, atomic claim, lease renewal,
-effect-free expired takeover, and stale-fence refusal. It still has no execution
-port/backend or external-effect runner, MCP server, adapter, dispatcher,
-scheduler, workspace control,
-external-effect protocol, team identity/RBAC, or supported platform security
-boundary.
+confirmation-bound one-step execution-capability upgrades, atomic claim/lease/
+fence handling, strict `ato.execution/v1` ingress, durable authorization-bound
+intent/observation/verified-receipt/finalization, a local no-workspace Manual
+journal/control, reconcile-first recovery, verified interruption, separately
+confirmed Manual completion, redaction, and stale-fence refusal. It still has no
+MCP server, dispatcher, scheduler, workspace control, Codex/Git adapter,
+ProjectPolicy, CompletionBackend/gates, team identity/RBAC, public Phase 2
+interface, or supported platform security boundary.
 
 The model assumes one local operator and treats repository content, Task text,
 prompts, adapter responses, tool output, filesystem entries, Git metadata, MCP
@@ -80,7 +82,7 @@ into a support claim.
 | T6 | SQLite corruption, disabled foreign keys, forged migration history, stale/partial backup, concurrent writer, or newer-schema access causes silent state loss or false completion. | Enforce the [persistence contract](../reference/persistence-contract.md): verified connection settings, one application product ingress, bounded transactions, immutable migration checksums, backup-before-upgrade, combined typed decoding, integrity checks, read-only failure, and restore to a private generation. | SQLite/OS/hardware defects and loss of every valid backup can make recovery impossible. |
 | T7 | Duplicate/missed scheduler triggers or worker death duplicates execution, skips reconciliation, or loses candidate outcomes. | Require the [scheduler contract](../reference/scheduler-contract.md) reconcile-first sequence and the reliability claim/fence/idempotency/fan-out records. Treat delivery as at least once. | Extended scheduler outage delays work; it does not provide availability or deadlines. |
 | T8 | CLI or a future MCP surface exposes arbitrary shell, SQL, filesystem, cleanup, or external actions; malformed/oversized input bypasses application rules. | Offer only narrow versioned command schemas; validate size/type/version before runtime open; call the same application/authorization owners; omit arbitrary shell/SQL/filesystem endpoints; require distinct current grants and confirmation for the implemented high-risk actions. | A compromised local account remains outside the application's checks; no MCP surface exists yet. |
-| T9 | A stale lease holder, replayed receipt, or stale gate writes after takeover or HEAD/policy change. | The current claim service binds execution, owner, lease/execution/Task revisions, Project revisions, and per-Task fence and rejects stale values before mutation. Later effect/workspace/completion operations must also bind policy, workspace generation, HEAD and receipt/gate identity under the [gate freshness owner](../reference/completion-workspace-contract.md#gate-identity-and-freshness). | Phase 2A performs no external effect; when a later phase does, effects already performed by an old worker may still require reconciliation. |
+| T9 | A stale lease holder, replayed receipt, or stale gate writes after takeover or HEAD/policy change. | The current claim and Manual-loop owners bind execution, owner, lease/execution/Task revisions, Project revisions, attempt/fence, intent, independently observed receipt, and finalization; they reconcile before replacement and reject old-fence writes. Future workspace/gate completion must additionally bind workspace generation, HEAD and gate identity under the [gate freshness owner](../reference/completion-workspace-contract.md#gate-identity-and-freshness). | The Manual journal is local and exactly inspectable; effects in a future adapter that cannot prove absence or idempotency may remain ambiguous and require human resolution. |
 | T10 | A policy adapter, dependency, or external API changes behavior/version without detection. | Use exact port/version negotiation, policy revision binding, evidence-bound support claims, and incompatibility errors from the [adapter](../reference/adapter-contracts.md) and [versioning](../reference/versioning-compatibility-contract.md) owners. | A correctly versioned but compromised dependency can still act maliciously within granted OS permissions. |
 
 ## Negative-test obligations
@@ -90,13 +92,13 @@ produce binary evidence for every applicable row.
 
 The current implementation covers the runtime-root and ProjectRegistry
 portions of N1, the local content/authorization portion of N3, the application
-audit plus CLI/doctor disclosure subset of N4, the schema-v5
-SQLite/application/lifecycle/claim portions of N5 and N11, the atomic local
-claim/failpoint/stale-fence subset of N6, and the CLI portion of N8.
-Workspace, operational-logger, external-effect/receipt/finalization, dispatcher,
-scheduler, MCP,
-completion, and adapter portions remain future obligations; passing Phase 1
-tests cannot satisfy them.
+audit plus CLI/doctor disclosure subset of N4, the schema-v6 SQLite/application/
+lifecycle/Manual-loop portions of N5 and N11, the local Manual intent/effect/
+inspection/receipt/finalization/crash/restart/stale-fence subset of N6 and N10,
+and the CLI portion of N8. Workspace, operational logger, dispatcher, scheduler,
+MCP, Codex/Git/external-service adapter, ProjectPolicy, CompletionBackend/gate,
+publication, and public Phase 2 interface portions remain future obligations;
+the local Manual evidence cannot satisfy them.
 
 | ID | Required negative test | Passing outcome |
 | --- | --- | --- |
@@ -110,7 +112,7 @@ tests cannot satisfy them.
 | N8 | Malformed, unknown-version, overlong, control-character, unauthorized, and injection-bearing CLI or future MCP request; request for arbitrary shell/SQL/filesystem operation | Ingress rejects before runtime mutation; excluded endpoints do not exist; the current CLI produces only its stable redacted public error. |
 | N9 | Replay pass receipt after Task, fence, workspace generation, HEAD, policy, gate version, or validity time changes | Completion/integration rejects it as stale and dependency remains locked. |
 | N10 | Timeout, lost adapter response, changed remote ref, or incompatible adapter/API version | No blind retry or support claim; authoritative inspection determines success/absence, otherwise state is ambiguous or incompatible. |
-| N11 | Missing/false trusted bootstrap, renewal, upgrade, grant-management, Project, or restore confirmation; second bootstrap; wrong local identity/action/scope/revision; not-yet-valid, expired, or revoked grant; migration/renewal attempted authority expansion; stale lifecycle handoff; disabled Project policy; replayed request/decision; Project/Task text that claims authority | No unauthorized Project/Task/dependency/grant/backup/restore/execution mutation; migration and never-upgraded renewal create no Phase 2 grant; bounded denials are atomic and sanitized; content never changes actor, action, policy, confirmation, capability epoch, grant, owner, or fence state. |
+| N11 | Missing/false trusted bootstrap, renewal, upgrade, grant-management, Project, restore, Manual-report, or completion confirmation; second bootstrap; skipped vocabulary step; wrong local identity/action/scope/revision; not-yet-valid, expired, or revoked grant; migration/renewal attempted authority expansion; stale lifecycle/effect handoff; disabled Project policy; replayed request/decision/confirmation; Project/Task text that claims authority | No unauthorized Project/Task/dependency/grant/backup/restore/execution/Manual effect or completion; migration and never-upgraded renewal create no newer execution grant; bounded denials are atomic and sanitized; content never changes actor, action, policy, confirmation, capability epoch, grant, owner, fence, receipt, or completion state. |
 
 Test fixtures are untrusted and disposable. Fake/contract tests may prove local
 logic but cannot satisfy a real platform/API support row.
@@ -134,7 +136,7 @@ logic but cannot satisfy a real platform/API support row.
 ## Explicit non-claims
 
 The implemented controls are limited to the Phase 1 local boundaries and
-Phase 2A claim foundation named above. This model does not claim release
+library-only reliable Manual loop named above. This model does not claim release
 readiness, multi-user isolation, RBAC,
 cloud security, remote availability, arbitrary-code sandboxing, malware
 detection, perfect secret/PII detection, guaranteed rollback of external

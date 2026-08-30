@@ -3,19 +3,23 @@
 ## Status and authority
 
 This document is the normative owner of the implemented local runtime
-authorization model through the Phase 2 execution-claim foundation. The
-implementation is deliberately limited to the local Phase 1 application and
-lifecycle surfaces plus four database-local execution claim/lease actions. It
+authorization model through the library-only reliable Manual execution loop.
+The implementation is deliberately limited to the local Phase 1 application
+and lifecycle surfaces, four database-local execution claim/lease actions, and
+six schema-v6 Manual-loop actions. It
 is not an operating-system
 account system, team identity service, RBAC product, cloud identity provider,
 or authorization for development and external actions.
 
 Runtime grants never authorize repository development, network or secret
-access, Git writes, pull requests, release, deployment, an adapter/backend call,
-external effect, workspace mutation, scheduling, arbitrary filesystem access,
-or any action outside the finite vocabulary below. The four execution actions
-authorize only the implemented claim/inspect/renew/effect-free-takeover state
-transitions inside the validated local runtime. The `runtime.backup` and `runtime.restore`
+access, Git writes, pull requests, release, deployment, workspace mutation,
+scheduling, arbitrary filesystem access, or any action outside the finite
+vocabulary below. The four claim actions authorize only claim, claim inspection,
+lease renewal, and reconcile-gated takeover. The six Manual-loop actions
+authorize only the exact local no-workspace port/journal, inspection,
+continuation, cancellation-request, and verified-completion operations defined
+below; they grant no network, Project filesystem, Codex, Git, workspace,
+scheduler, dispatcher, or completion-gate authority. The `runtime.backup` and `runtime.restore`
 actions authorize only the implemented local persistence lifecycle through the
 exact application handoff described below; they grant no external or general
 file authority.
@@ -46,13 +50,16 @@ account discovery, delegation identity, or multiple-user administration. If OS
 identity or runtime-root identity is unavailable, ambiguous, changed, or
 noncanonical, local ingress fails closed rather than accepting actor content.
 
-The typed execution application service uses a narrower `ExecutionIngress`.
-It obtains the same trusted actor/principal and UTC time, fresh request,
+The typed claim application service uses a narrower `ExecutionIngress`. It
+obtains the same trusted actor/principal and UTC time, fresh request,
 correlation, decision, audit, operation, and execution identities, and a trusted
-lease-owner identity outside command content. It has no confirmation callback:
-the separate capability-upgrade ceremony uses `ApplicationIngress`, while each
-execution operation still requires its own current explicit grant. Invalid,
-throwing, repeated, accessor-backed, or ambiguous values fail closed.
+lease-owner identity outside command content. The reliable Manual loop uses a
+separate `ReliableExecutionIngress` for the same trusted facts plus fresh
+operation/intent/observation/receipt/finalization identities. Only its named
+`manual.turn.report` and `execution.completion.accept` paths request a fresh
+confirmation. Capability upgrade still uses `ApplicationIngress`; every
+execution operation independently requires its current explicit grant.
+Invalid, throwing, repeated, accessor-backed, or ambiguous values fail closed.
 
 ## Exact action vocabulary
 
@@ -85,17 +92,27 @@ plus the four Phase 2 execution-foundation actions:
 - `execution.lease.renew`
 - `execution.lease.takeover`
 
+plus the six reliable Manual-loop actions:
+
+- `execution.start`
+- `execution.inspect`
+- `execution.resume`
+- `execution.retry`
+- `execution.cancel`
+- `execution.completion.accept`
+
 There is no wildcard and no prefix expansion. Unknown actions and unimplemented
-commands are invalid input; they are not mapped to a similar action. The four
-execution actions do not imply completion, cancellation, backend/effect,
-scheduler, dispatcher, workspace, adapter, Git, network, secret, arbitrary
-diagnostic, arbitrary CLI/filesystem, MCP, release, or deployment capability.
+commands are invalid input; they are not mapped to a similar action. These
+actions do not imply scheduler, dispatcher, workspace, Codex, Git, network,
+secret, arbitrary diagnostic, arbitrary CLI/filesystem, MCP, release, or
+deployment capability. `execution.completion.accept` accepts only exact current
+verified Manual-turn evidence; it is not CompletionBackend or gate authority.
 `authorization.capability.renew` and `authorization.capability.upgrade` are
 implemented local trust-root transitions but are deliberately non-grantable.
 
 ## One-time bootstrap
 
-A fresh schema-v5 runtime has no grants. Exactly once, a trusted local caller
+A fresh schema-v6 runtime has no grants. Exactly once, a trusted local caller
 may invoke `authorization.bootstrap` with a finite expiry no more than 31 days
 after the trusted ingress time. Bootstrap requires a separate high-risk
 confirmation and atomically:
@@ -132,29 +149,34 @@ An upgraded schema-v3 bootstrap must be adopted through that transition before
 any ordinary command. Adoption preserves the immutable legacy bootstrap and
 grants as history, establishes the schema-v4 local identity, and appends the
 first immutable capability epoch plus nineteen new origin grants. A native
-schema-v4 or schema-v5 bootstrap already establishes local identity and needs no
-adoption. Native schema-v5 bootstrap still establishes a vocabulary-4 bootstrap
-and only the nineteen Phase 1 origin grants; it creates no capability epoch.
+schema-v4, schema-v5, or schema-v6 bootstrap already establishes local identity
+and needs no adoption. Native schema-v6 bootstrap still establishes a
+vocabulary-4 bootstrap and only the nineteen Phase 1 origin grants; it creates
+no capability epoch.
 
-`authorization.capability.upgrade` is the only transition that creates Phase 2
-authority. It is non-grantable and requires the exact current OS-derived actor,
-principal and runtime-root binding, a fresh named high-risk confirmation, a
-finite expiry more than seven and no more than 31 days ahead, and an eligible
-current vocabulary-4 origin. In one transaction it appends the next contiguous
-vocabulary-5 epoch, exactly one new runtime-scoped origin grant for each of the
-twenty-three current actions, its request/allow-decision/audit unit, and terminal
-readback. Migration, bootstrap, an earlier decision, Task readiness, ordinary
-grant issue, and renewal cannot substitute for this ceremony. Repetition or
-concurrent lineage change fails without a partial epoch or grant set.
+`authorization.capability.upgrade` is the only transition that creates a newer
+execution vocabulary. It is non-grantable and requires the exact current
+OS-derived actor, principal and runtime-root binding, a fresh named high-risk
+confirmation, a finite expiry more than seven and no more than 31 days ahead,
+and an eligible current origin. Each call advances exactly one contiguous step:
+vocabulary 4 to 5 appends one origin grant for each of the twenty-three Phase 2A
+actions, while vocabulary 5 to 6 appends one origin grant for each of all
+twenty-nine current actions. A vocabulary-4 runtime cannot skip directly to 6.
+The epoch, exact grant set, request/allow-decision/audit unit, and terminal
+readback commit together. Migration, bootstrap, an earlier decision, Task
+readiness, ordinary grant issue, and renewal cannot substitute for either
+ceremony. Repetition or concurrent lineage change fails without a partial epoch
+or grant set.
 
 After adoption or native bootstrap, renewal is eligible only when the current
 origin expires within seven days or has expired. Revocation of any still-current
 origin grant blocks early renewal; revocation is not a shortcut to replace a
 capability. Each accepted renewal appends a contiguous positive epoch revision,
 the exact vocabulary/version digest, a request/decision/audit unit, and one new
-finite origin grant for every action in the already-current vocabulary: nineteen
-for vocabulary 4 or twenty-three for vocabulary 5. Renewal never upgrades a
-vocabulary-4 runtime. Previous epochs and grants remain immutable history.
+finite origin grant for every action in the already-current vocabulary:
+nineteen for vocabulary 4, twenty-three for vocabulary 5, or twenty-nine for
+vocabulary 6. Renewal never changes a vocabulary version. Previous epochs and
+grants remain immutable history.
 Concurrent state or epoch changes fail atomically as stale.
 
 ## Grant shape
@@ -217,9 +239,13 @@ ingress after a matching grant is found:
 - `project.update`
 - `project.disable`
 - `runtime.restore`
+- `execution.completion.accept`
 
-Capability adoption/renewal and capability upgrade also require a fresh
+Capability adoption/renewal and each capability upgrade also require a fresh
 high-risk confirmation even though they are deliberately not grantable actions.
+The trusted Manual outcome ingress separately requires a fresh named
+`manual.turn.report` confirmation after a current exact `execution.inspect`
+grant is found. That confirmation is not an action or a reusable capability.
 
 Confirmation is bound to actor, action, request, and correlation identities. A
 command field, Project/Task content, or a prior confirmation cannot supply or
@@ -272,7 +298,7 @@ terminal-state, or dependency rules. Stale revisions, uncertain path/identity,
 missing authorization, disabled policy, Domain rejection, duplicate request,
 and injected failure produce no partial accepted mutation.
 
-The execution application owner follows the same preflight/revalidation/short
+The claim application owner follows the same preflight/revalidation/short
 transaction pattern with its narrower trusted ingress. An initial claim
 atomically records request and allow decision, advances the Task execution
 sequence/fence, inserts the active attempt, invokes the Domain
@@ -281,6 +307,28 @@ terminal state. Inspect, renewal, and takeover re-evaluate their exact grant and
 Project binding inside the transaction. Inspect uses
 `read_not_applicable`; claim, renewal, and takeover require an enabled Project.
 No execution operation consumes a prior decision as authority.
+
+The reliable Manual-loop owner extends that sequence without widening it. Each
+operation parses its complete closed command, obtains trusted identities and a
+current exact grant, and persists an authorization-bound semantic intent in a
+short transaction. It marks the intent executing before invoking the injected
+adapter outside SQLite, then obtains a distinct current `execution.inspect`
+allow for independent observation. Observation, verification, and finalization
+use separate short transactions and exact Task/execution/attempt/fence/Project
+CAS. Resume, retry, cancellation, expired-lease recovery, and old-fence refusal
+therefore never derive authority from an adapter receipt, Task text, or lease
+expiry.
+
+Manual outcome reporting additionally requires the trusted actor ID
+`local_manual_operator`, current `execution.inspect` authority for the exact
+scope, and one fresh `manual.turn.report` confirmation. It commits that decision
+and report intent before calling the injected outcome control, then observes the
+result through `ato.execution/v1`. A `turn_succeeded` finalization leaves the
+Task running. Only a distinct `execution.completion.accept` evaluation with a
+different fresh confirmation and the exact current verified
+receipt/finalization can atomically record the Manual completion decision,
+invoke Domain `completion_accepted`, terminalize the execution, append audit,
+and read the completed Task back.
 
 When one Domain command would mutate Tasks owned by more than one Project,
 every affected Project must be covered. In Phase 1 the only such implemented
@@ -349,9 +397,10 @@ reusable capability. A previous decision is history only and cannot authorize a
 later request.
 
 Application requests, bootstrap, local identity, capability epochs, lifecycle
-authorizations, execution attempts, decisions, and audit rows are append-only
-apart from the narrowly constrained lease-renewal and expired-attempt
-supersession transitions. Grant rows are
+authorizations, execution attempts, operation evidence, Manual completion
+decisions, authorization decisions, and audit rows are append-only apart from
+the narrowly constrained lease/attempt, intent-state, and Manual-turn CAS
+transitions. Grant rows are
 insert-only except for the single CAS revocation transition. ProjectRegistry
 rows cannot be deleted. SQLite constraints, foreign keys, triggers, combined
 typed decoding, and terminal readback enforce these shapes.
@@ -365,11 +414,10 @@ command content are not copied into audit records. See
 
 Phase 1 implements the local CLI initialization, finite grant administration,
 status, backup authorization, separately confirmed restore authorization, and
-read-only doctor experience. Phase 2A additionally implements explicit upgrade
-to the four local claim/lease grants and their typed library decisions. It does
-not implement login, credentials, team accounts, RBAC, cloud identity, an
-external policy adapter, completion/cancellation/backend/effect authorization,
+read-only doctor experience. Phase 2A adds the four local claim/lease grants;
+Phase 2B adds one separately confirmed vocabulary-6 step and the six exact
+Manual-loop grants and decisions described above. It does not implement login,
+credentials, team accounts, RBAC, cloud identity, an external policy adapter,
 workspace or scheduler authorization, public Phase 2 CLI, MCP, dispatcher,
-network effects, Git effects, release, deployment, or a platform-support claim.
-A later plan, not this foundation, owns any real Manual ExecutionBackend and
-running/completed execution loop.
+Codex/Git/network effects, ProjectPolicy, CompletionBackend/gates, release,
+deployment, or a platform-support claim.

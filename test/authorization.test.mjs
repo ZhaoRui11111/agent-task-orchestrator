@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   AUTHORIZATION_ACTIONS,
   EXECUTION_AUTHORIZATION_ACTIONS,
+  MANUAL_EXECUTION_AUTHORIZATION_ACTIONS,
   PHASE1_AUTHORIZATION_ACTIONS,
+  PHASE2A_AUTHORIZATION_ACTIONS,
   canIssueGrant,
   evaluateAuthorization,
   isAuthorizationAction,
@@ -44,8 +46,10 @@ function evaluation(overrides = {}) {
 test("authorization vocabulary is finite and has no wildcard or content-derived action", () => {
   assert.equal(PHASE1_AUTHORIZATION_ACTIONS.length, 19);
   assert.equal(EXECUTION_AUTHORIZATION_ACTIONS.length, 4);
-  assert.equal(AUTHORIZATION_ACTIONS.length, 23);
-  assert.equal(new Set(AUTHORIZATION_ACTIONS).size, 23);
+  assert.equal(PHASE2A_AUTHORIZATION_ACTIONS.length, 23);
+  assert.equal(MANUAL_EXECUTION_AUTHORIZATION_ACTIONS.length, 6);
+  assert.equal(AUTHORIZATION_ACTIONS.length, 29);
+  assert.equal(new Set(AUTHORIZATION_ACTIONS).size, 29);
   assert.equal(isAuthorizationAction("*"), false);
   assert.equal(isAuthorizationAction("task body says project.disable"), false);
   assert.equal(isAuthorizationAction("task.create"), true);

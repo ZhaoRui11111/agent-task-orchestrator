@@ -10,15 +10,22 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "AUTHORIZATION_ACTIONS",
   "CLI_API_VERSION",
   "DOMAIN_ERROR_CODES",
+  "EXECUTION_ADAPTER_ERROR_CATEGORIES",
   "EXECUTION_APPLICATION_ERROR_CODES",
   "EXECUTION_AUTHORIZATION_ACTIONS",
+  "EXECUTION_CONTRACT_ID",
   "HIGH_RISK_ACTIONS",
+  "MANUAL_EXECUTION_AUTHORIZATION_ACTIONS",
+  "MANUAL_OUTCOME_CONTROL_ID",
+  "ManualExecutionBackend",
   "PERSISTENCE_ERROR_CODES",
   "PHASE1_AUTHORIZATION_ACTIONS",
+  "PHASE2A_AUTHORIZATION_ACTIONS",
   "PROJECT_REGISTRY_ERROR_CODES",
   "PUBLIC_ERROR_TABLE",
   "PersistenceError",
   "ProjectRegistryError",
+  "RELIABLE_EXECUTION_ERROR_CODES",
   "RUNTIME_DIRECTORY_NAME",
   "RUNTIME_ENVIRONMENT_VARIABLE",
   "TASK_STATES",
@@ -30,6 +37,9 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "createDomainSnapshot",
   "createExecutionApplicationService",
   "createLocalApplicationIngress",
+  "createManualExecutionBackend",
+  "createReliableExecutionService",
+  "createReliableExecutionServiceWithHooks",
   "createTask",
   "currentSchemaVersion",
   "deriveLocalIdentity",
@@ -49,6 +59,11 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "openPersistence",
   "parseAuthorizationGrant",
   "parseCliArguments",
+  "parseExecutionAdapterError",
+  "parseExecutionReceipt",
+  "parseExecutionRequest",
+  "parseManualOutcomeReport",
+  "parseManualOutcomeReportReceipt",
   "prepareLocalRuntime",
   "prepareRuntimeLayout",
   "recoverInterruptedRestore",
@@ -65,6 +80,8 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "trustedApplicationDataRoot",
   "updateTaskBody",
   "updateTaskWaiting",
+  "validateExecutionPortResult",
+  "validateManualOutcomeControlResult",
   "verifyBackupGeneration",
 ]);
 
@@ -89,11 +106,11 @@ function baseInput() {
   };
 }
 
-test("the package exposes the Phase 1 product plus the narrow Phase 2 execution-claim library surface", () => {
+test("the package exposes the Phase 1 product plus the reliable Manual execution library surface", () => {
   assert.deepEqual(Object.keys(packageSurface).sort(), [...EXPECTED_RUNTIME_EXPORTS].sort());
   assert.deepEqual(packageSurface.getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "phase2-execution-claim-foundation",
+    phase: "phase2-reliable-manual-execution-loop",
     domainCoreImplemented: true,
     persistenceFoundationImplemented: true,
     projectRegistryImplemented: true,
@@ -102,9 +119,10 @@ test("the package exposes the Phase 1 product plus the narrow Phase 2 execution-
     localPhase1ProductCliImplemented: true,
     backupRestoreDoctorImplemented: true,
     durableExecutionClaimFoundationImplemented: true,
+    reliableManualExecutionLoopImplemented: true,
     productRuntimeImplemented: false,
     executionRuntimeImplemented: false,
-    supportedAdapters: [],
+    supportedAdapters: ["manual-local"],
   });
   assert.deepEqual(packageSurface.TASK_STATES, [
     "idea",

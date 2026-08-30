@@ -12,10 +12,10 @@ import {
   repoRoot,
 } from "../scripts/repo-utils.mjs";
 
-test("package status exposes the narrow claim foundation without overstating an execution runtime", () => {
+test("package status exposes the reliable Manual loop without overstating a product runtime", () => {
   assert.deepEqual(getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "phase2-execution-claim-foundation",
+    phase: "phase2-reliable-manual-execution-loop",
     domainCoreImplemented: true,
     persistenceFoundationImplemented: true,
     projectRegistryImplemented: true,
@@ -24,9 +24,10 @@ test("package status exposes the narrow claim foundation without overstating an 
     localPhase1ProductCliImplemented: true,
     backupRestoreDoctorImplemented: true,
     durableExecutionClaimFoundationImplemented: true,
+    reliableManualExecutionLoopImplemented: true,
     productRuntimeImplemented: false,
     executionRuntimeImplemented: false,
-    supportedAdapters: [],
+    supportedAdapters: ["manual-local"],
   });
   assert.equal(Object.isFrozen(getScaffoldStatus()), true);
   assert.equal(Object.isFrozen(getScaffoldStatus().supportedAdapters), true);

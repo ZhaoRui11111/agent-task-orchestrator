@@ -7,11 +7,12 @@ repository implements these rules as the pure in-memory TypeScript
 [Domain Core](../../src/domain.ts). `MUST`, `MUST NOT`, and `SHOULD` below
 constrain that implementation and its evidence. The implemented Phase 1
 application service invokes this owner for Project registration/enablement and
-Task/dependency mutations; the Phase 2A execution application service invokes
-it for the accepted `ready`-to-`running` claim transition. The contract does not
-itself authorize those calls or imply a dispatcher, adapter, product execution
-CLI, execution backend, or
-orchestration runtime.
+Task/dependency mutations; the execution application owners invoke it for
+accepted `ready`-to-`running` claims and the reliable Manual loop invokes it for
+accepted waiting, continuation, verified interruption, and Manual completion
+transitions. The contract does not itself authorize those calls or imply a
+dispatcher, product execution CLI, workspace, scheduler, CompletionBackend,
+gate, or executable orchestration runtime.
 
 This contract deliberately contains no SQLite, Git, Codex, CLI, MCP, scheduler,
 or development-plan state. Storage is owned by the
@@ -73,9 +74,11 @@ illegal. A cancellation request while `running` records an execution phase and
 leaves the Task `running`; only `interruption_verified` changes it to
 `cancelled`. A backend turn ending is not `completion_accepted`.
 
-The current Phase 1 `task.cancel` application command refuses any Task that has
-an active execution attempt. It cannot substitute for the future verified
-interruption owner or bypass the transition relation above.
+The Phase 1 `task.cancel` application command refuses any Task that has an
+active execution attempt. The reliable Manual loop is the implemented verified
+interruption owner for its own exact cancellation-request/inspection evidence;
+the Phase 1 command cannot substitute for it or bypass the transition relation
+above.
 
 ### Terminal immutability
 
@@ -162,10 +165,12 @@ Every entry into `waiting` records this complete metadata envelope:
   populated when that identity exists; and
 - the Task revision at which the waiting facts were accepted.
 
-`waiting` is never dispatcher-eligible. Only an explicit resume, retry, or
-cancel command can leave it. The reliability owner defines whether a retry may
-reuse an operation or execution; this contract only governs the resulting Task
-transition.
+`waiting` is never ordinary dispatcher-eligible. Only an explicit resume,
+retry, or cancel command can leave it. In the implemented Manual loop, same-turn
+resume preserves the exact execution/thread, while retry or expired safe
+continuation creates the next attempt/fence bound to its verified predecessor.
+The reliability owner governs those identities; this contract governs the
+resulting Task transition.
 
 Any successful body, parent, dependency, or waiting-metadata mutation that
 leaves the Task in `waiting` MUST revalidate the complete waiting envelope and

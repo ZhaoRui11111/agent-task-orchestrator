@@ -7,20 +7,30 @@ executable toolchain and feasibility harness, a pure in-memory TypeScript
 Domain Core, a filesystem-identity ProjectRegistry, a finite local runtime
 authorization owner, a typed Project/Task/dependency application service, a
 local SQLite persistence foundation, and a composable local Phase 1 product
-CLI. Schema versions `1` through `5` own metadata, exact Domain snapshots,
+CLI. Schema versions `1` through `6` own metadata, exact Domain snapshots,
 ProjectRegistry, local identity and authorization epochs, grants, requests,
 authorization decisions, lifecycle coordination, and append-only application
 audit; schema `5` additionally owns ordered execution attempts, one active
 execution per Task, lease state, per-Task fencing, and claim idempotency/CAS.
+Schema `6` adds only the reliable Manual-loop authorization lineage,
+operation requests/decisions/audit, semantic intents, ordered observations,
+verified receipts, finalizations, execution terminal facts, a durable Manual
+turn/operation journal, and Manual completion decisions.
 The application service orchestrates business owners in one
 transaction; persistence never selects a Domain command or grants authority.
 The CLI is only typed ingress, trusted local identity/confirmation setup,
 presentation, and public error mapping. A separate typed execution application
-service implements library-only claim, inspection, lease renewal, and safe
-effect-free takeover. This foundation is not an execution backend or product
-execution loop. The repository still implements no dispatcher, port, adapter,
-scheduler, MCP component, external effect intent/receipt/finalization,
-completion loop, supported platform integration, or product safety claim.
+service retains claim, inspection, and renewal. The library-only
+`ReliableExecutionLoop` owns prepare/execute/observe/verify/finalize and
+reconcile-first continuation against the pure `ato.execution/v1` port. The
+production `manual-local` adapter implements a durable, independently
+inspectable no-workspace turn journal; a distinct trusted Manual outcome
+control supplies bounded lifecycle facts, and a separately authorized and
+confirmed application decision alone may complete a Task from verified
+`turn_succeeded` evidence. The repository still implements no dispatcher,
+scheduler, MCP component, Codex/Git/workspace adapter, ProjectPolicy,
+CompletionBackend or gates, public Phase 2 CLI, multi-candidate run, supported
+platform integration, or executable orchestration runtime.
 
 ## Authority and ownership
 
@@ -56,25 +66,31 @@ The architecture separates:
 - `application`: the implemented typed Project/Task/dependency command and
   exact-query owner, including trusted ingress, authorization decisions,
   Domain command selection, transaction orchestration, and result mapping; it
-  also owns the typed execution-claim/inspect/renew/effect-free-takeover
-  foundation and the explicit confirmation-bound capability upgrade.
+  also owns typed execution claims/inspection/renewal, explicit
+  confirmation-bound capability upgrades, the reliable Manual operation
+  protocol, reconciliation, verified interruption, and Manual completion
+  acceptance. It depends on injected port/control interfaces, never a concrete
+  backend.
 - `persistence`: the implemented SQLite runtime-root, connection, staged
-  migration, combined schema-v5 repository, transaction, lifecycle handoff,
-  execution attempt/sequence storage, backup, restore, read-only doctor, and
-  typed-corruption owner; later records are added only by their implementing
-  phase.
+  migration, combined schema-v6 repository, transaction, lifecycle handoff,
+  execution attempt/sequence and Manual-loop record storage, backup, restore,
+  read-only doctor, and typed-corruption owner; later records are added only by
+  their implementing phase.
 - `dispatcher`: planned reconcile-first launch and recovery workflows.
-- `ports`: execution, workspace, scheduler, project-policy, and completion contracts.
-- `adapters`: replaceable implementations, including Manual and Codex execution backends.
+- `ports`: the implemented pure `ato.execution/v1` contract kit, plus planned
+  workspace, scheduler, project-policy, and completion contracts.
+- `adapters`: the implemented local Manual execution backend and outcome
+  control; the Fake is test-only, while Codex and every other adapter remain
+  planned.
 - `interfaces`: the implemented local product CLI, plus a planned MCP surface;
   every business operation shares the application layer.
 
-Only `domain`, `project-registry`, `authorization`, `application` (including
-the narrow execution-claim foundation), `persistence`, and the local Phase 1
-CLI portion of `interfaces` as narrowly described above are implemented. Every
-later name in this list remains accepted design direction rather than a current
-runtime component. No implemented boundary invokes or authorizes an external
-effect.
+Only the boundaries explicitly described above are implemented. In particular,
+the Manual adapter mutates only its persistence-owned local journal through a
+committed, authorization-bound intent; it does not execute Task content, invoke
+a vendor, touch a Project/workspace, or establish a product execution runtime.
+Every other later name remains accepted design direction rather than a current
+runtime component.
 
 ## Cross-module dependency constraints
 
@@ -89,7 +105,10 @@ effect.
 - `persistence` depends inward on `domain`, owns SQLite/filesystem storage
   mechanics and typed application records, and neither invokes authorization
   policy nor performs external Project effects.
-- `dispatcher` coordinates application services and ports without embedding project-specific policy.
+- the Manual-loop application coordinator calls injected execution and outcome
+  ports outside writer transactions; it neither imports the concrete Manual
+  adapter nor accepts adapter facts as authority or Domain decisions.
+- `dispatcher` will coordinate application services and ports without embedding project-specific policy.
 - `ports` expose contracts without importing vendor SDKs; `adapters` depend inward on ports and application contracts.
 - `interfaces` call the application layer, and `observability` consumes structured events without becoming a state owner.
 

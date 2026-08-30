@@ -25,7 +25,10 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/cli.ts",
   "src/domain.ts",
   "src/execution-application.ts",
+  "src/execution-loop.ts",
+  "src/execution-port.ts",
   "src/index.ts",
+  "src/manual-execution-backend.ts",
   "src/node-builtins.d.ts",
   "src/persistence/application-repository.ts",
   "src/persistence/backup.ts",
@@ -34,6 +37,7 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/persistence/errors.ts",
   "src/persistence/index.ts",
   "src/persistence/local-ingress.ts",
+  "src/persistence/manual-backend-repository.ts",
   "src/persistence/migrations.ts",
   "src/persistence/repository.ts",
   "src/persistence/runtime.ts",
@@ -48,6 +52,7 @@ export const EXPECTED_MIGRATION_FILES = Object.freeze([
   "migrations/0003-phase1-application.sql",
   "migrations/0004-phase1-cli.sql",
   "migrations/0005-phase2-execution-claim.sql",
+  "migrations/0006-phase2-manual-execution.sql",
 ]);
 
 const ALLOWED_PERSISTENCE_BUILTINS = new Set([
@@ -139,7 +144,8 @@ export function productionBoundaryFailures(inventory, readSource) {
     const registryBuiltin = relative === "src/project-registry.ts" && (builtin === "node:fs" || builtin === "node:path");
     const cliBuiltin = (relative === "src/cli.ts" || relative === "src/cli-api.ts") &&
       (builtin === "node:crypto" || builtin === "node:path" || builtin === "node:url");
-    if (!relative.startsWith("src/persistence/") && !registryBuiltin && !cliBuiltin) {
+    const manualAdapterBuiltin = relative === "src/manual-execution-backend.ts" && builtin === "node:crypto";
+    if (!relative.startsWith("src/persistence/") && !registryBuiltin && !cliBuiltin && !manualAdapterBuiltin) {
         failures.push(`${relative}: Node built-in escaped the persistence owner boundary`);
       } else if (!ALLOWED_PERSISTENCE_BUILTINS.has(builtin)) {
         failures.push(`${relative}: undeclared persistence built-in ${builtin}`);

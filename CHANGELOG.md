@@ -48,11 +48,23 @@ All notable changes to this project will be documented in this file.
   effect-free takeover, stale-fence refusal, restart/corruption/concurrency
   evidence, and typed package exports. This adds no execution backend, external
   effect protocol, dispatcher, completion loop, or public Phase 2 CLI.
+- Added the Phase 2 reliable Manual execution library: additive schema v6,
+  explicit one-step vocabulary-6 upgrade, the corrected-before-first-release
+  `ato.execution/v1` contract kit, one production local no-workspace Manual
+  backend/control and test-only Fake, durable semantic intents, independent
+  observations, verified receipts, CAS finalizations, restart-safe
+  start/inspect/resume/retry/cancel/outcome paths, reconcile-first expired
+  execution handling, verified interruption, complete waiting metadata, stale-
+  fence refusal, and a separate authorization- and confirmation-bound Manual
+  completion decision. The Phase 1 `ato.api/v1` CLI remains unchanged; this
+  adds no dispatcher, scheduler, MCP, Codex/Git/workspace adapter, ProjectPolicy,
+  CompletionBackend/gate, release, deployment, or platform-support claim.
 
 These entries do not announce a release or supported runtime. The executable
 material is limited to the development package, feasibility harness, pure
 in-memory Domain Core, ProjectRegistry, runtime authorization, typed
-application services, local schema-v5 persistence, the Phase 1 product CLI, and
-the library-only durable execution-claim foundation; execution backends,
-effect intent/receipt/finalization, completion, dispatcher, adapter, scheduler,
-MCP, and orchestration runtime behavior remain unimplemented.
+application services, local schema-v6 persistence, the Phase 1 product CLI, and
+the library-only reliable Manual execution loop. Dispatcher, scheduler, MCP,
+Codex/Git/workspace adapters, ProjectPolicy, CompletionBackend/gates, public
+Phase 2 execution ingress, and executable orchestration runtime behavior remain
+unimplemented.

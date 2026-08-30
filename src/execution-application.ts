@@ -42,6 +42,7 @@ export const EXECUTION_APPLICATION_ERROR_CODES = Object.freeze([
   "STALE_FENCE",
   "LEASE_NOT_RENEWABLE",
   "LEASE_NOT_EXPIRED",
+  "RECONCILIATION_REQUIRED",
   "PERSISTENCE_FAILURE",
 ] as const);
 
@@ -534,6 +535,11 @@ function leaseExpiry(now: string, durationSeconds: number): string {
 }
 function executionProjectMatches(state: ApplicationState, attempt: ExecutionAttempt, projectId: string): boolean {
   return state.domain.tasks.find((candidate) => candidate.id === attempt.taskId)?.projectId === projectId;
+}
+function requiresReliabilityReconciliation(state: ApplicationState, executionId: string): boolean {
+  if (state.executionTerminalStates.some((terminal) => terminal.executionId === executionId)) return false;
+  return state.executionIntents.some((intent) => intent.executionId === executionId && intent.state !== "finalized") ||
+    state.manualTurns.some((turn) => turn.executionId === executionId);
 }
 function claimTupleMatches(
   state: ApplicationState,
@@ -1044,6 +1050,9 @@ function createExecutionApplicationServiceInternal(
     ) return failed("STALE_FENCE", "Predecessor execution, Task revision, sequence, or fence is stale", identity);
     if (predecessor.status !== "active") return failed("STALE_FENCE", "Predecessor execution is no longer active", identity);
     if (predecessor.leaseExpiresAt > identity.now) return failed("LEASE_NOT_EXPIRED", "Predecessor execution lease has not expired", identity);
+    if (requiresReliabilityReconciliation(preflight, predecessor.executionId)) {
+      return failed("RECONCILIATION_REQUIRED", "Effect-capable execution state must reconcile before takeover", identity);
+    }
     if (preflightBinding.task.state !== "running") {
       return failed("TASK_NOT_ELIGIBLE", "Only a running Task can be taken over", identity);
     }
@@ -1089,6 +1098,9 @@ function createExecutionApplicationServiceInternal(
         ) return failed("STALE_FENCE", "Predecessor execution, Task, sequence, or fence changed after preflight", identity);
         if (currentAttempt.leaseExpiresAt > identity.now) {
           return failed("LEASE_NOT_EXPIRED", "Predecessor execution lease has not expired", identity);
+        }
+        if (requiresReliabilityReconciliation(state, currentAttempt.executionId)) {
+          return failed("RECONCILIATION_REQUIRED", "Effect-capable execution state must reconcile before takeover", identity);
         }
         const evaluation = authorization(
           state,

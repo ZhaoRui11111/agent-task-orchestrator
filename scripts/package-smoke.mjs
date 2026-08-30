@@ -121,10 +121,22 @@ const expectedEntries = [
   "package/dist/execution-application.d.ts.map",
   "package/dist/execution-application.js",
   "package/dist/execution-application.js.map",
+  "package/dist/execution-loop.d.ts",
+  "package/dist/execution-loop.d.ts.map",
+  "package/dist/execution-loop.js",
+  "package/dist/execution-loop.js.map",
+  "package/dist/execution-port.d.ts",
+  "package/dist/execution-port.d.ts.map",
+  "package/dist/execution-port.js",
+  "package/dist/execution-port.js.map",
   "package/dist/index.d.ts",
   "package/dist/index.d.ts.map",
   "package/dist/index.js",
   "package/dist/index.js.map",
+  "package/dist/manual-execution-backend.d.ts",
+  "package/dist/manual-execution-backend.d.ts.map",
+  "package/dist/manual-execution-backend.js",
+  "package/dist/manual-execution-backend.js.map",
   "package/dist/persistence/application-repository.d.ts",
   "package/dist/persistence/application-repository.d.ts.map",
   "package/dist/persistence/application-repository.js",
@@ -153,6 +165,10 @@ const expectedEntries = [
   "package/dist/persistence/local-ingress.d.ts.map",
   "package/dist/persistence/local-ingress.js",
   "package/dist/persistence/local-ingress.js.map",
+  "package/dist/persistence/manual-backend-repository.d.ts",
+  "package/dist/persistence/manual-backend-repository.d.ts.map",
+  "package/dist/persistence/manual-backend-repository.js",
+  "package/dist/persistence/manual-backend-repository.js.map",
   "package/dist/persistence/migrations.d.ts",
   "package/dist/persistence/migrations.d.ts.map",
   "package/dist/persistence/migrations.js",
@@ -182,6 +198,7 @@ const expectedEntries = [
   "package/migrations/0003-phase1-application.sql",
   "package/migrations/0004-phase1-cli.sql",
   "package/migrations/0005-phase2-execution-claim.sql",
+  "package/migrations/0006-phase2-manual-execution.sql",
   "package/package.json",
 ].sort();
 
@@ -228,12 +245,17 @@ try {
   AUTHORIZATION_ACTIONS,
   createApplicationService,
   createExecutionApplicationService,
+  createManualExecutionBackend,
+  createReliableExecutionService,
   currentSchemaVersion,
   getScaffoldStatus,
   inspectProjectRoot,
   type ApplicationIngress,
   type ExecutionClaimCommand,
   type ExecutionIngress,
+  type ExecutionBackend,
+  type ManualOutcomeControl,
+  type ReliableExecutionIngress,
   type OpenPersistenceOptions,
   type RuntimeRootRequest,
 } from "agent-task-orchestrator";
@@ -251,6 +273,8 @@ void getScaffoldStatus();
 void AUTHORIZATION_ACTIONS;
 void createApplicationService;
 void createExecutionApplicationService;
+void createManualExecutionBackend;
+void createReliableExecutionService;
 void inspectProjectRoot;
 const ingress = null as unknown as ApplicationIngress;
 void ingress;
@@ -258,6 +282,12 @@ const executionIngress = null as unknown as ExecutionIngress;
 const executionClaim = null as unknown as ExecutionClaimCommand;
 void executionIngress;
 void executionClaim;
+const reliableIngress = null as unknown as ReliableExecutionIngress;
+const backend = null as unknown as ExecutionBackend;
+const outcomeControl = null as unknown as ManualOutcomeControl;
+void reliableIngress;
+void backend;
+void outcomeControl;
 `,
     "utf8",
   );
@@ -309,15 +339,19 @@ void executionClaim;
           sourceCheckoutRoot: process.env.ATO_SMOKE_CHECKOUT,
           projectRoots: [process.env.ATO_SMOKE_PROJECT],
         });
-        const store = await m.openPersistence(layout, { applicationVersion: "package-smoke" });
+        let store = await m.openPersistence(layout, { applicationVersion: "package-smoke" });
         const issuedAt = new Date().toISOString();
         const expiresAt = new Date(Date.parse(issuedAt) + 30 * 24 * 60 * 60 * 1000).toISOString();
-        const service = m.createApplicationService(store, {
-          currentActor: () => ({ actorId: "package-actor", principal: "A".repeat(64) }),
-          now: () => issuedAt,
+        let trustedNow = issuedAt;
+        const trusted = {
+          currentActor: () => ({ actorId: "local_manual_operator", principal: "A".repeat(64) }),
+          now: () => trustedNow,
           nextId: () => randomUUID(),
           confirmHighRisk: () => true,
-        });
+          currentLeaseOwner: () => "package-worker",
+          confirmOperation: ({ action }) => ({ confirmationId: action + ":" + randomUUID() }),
+        };
+        let service = m.createApplicationService(store, trusted);
         const bootstrap = service.bootstrap({ kind: "authorization.bootstrap", expiresAt });
         if (!bootstrap.ok) throw new Error("package bootstrap was rejected");
         const project = service.execute({ kind: "project.register", projectId: "project", root: process.env.ATO_SMOKE_PROJECT });
@@ -339,14 +373,20 @@ void executionClaim;
           expectedTaskRevision: 1,
         });
         if (!ready.ok) throw new Error("package Task readiness was rejected");
-        const upgraded = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
-        if (!upgraded.ok) throw new Error("package capability upgrade was rejected");
-        const execution = m.createExecutionApplicationService(store, {
-          currentActor: () => ({ actorId: "package-actor", principal: "A".repeat(64) }),
-          now: () => issuedAt,
-          nextId: () => randomUUID(),
-          currentLeaseOwner: () => "package-worker",
-        });
+        trustedNow = new Date(Date.parse(issuedAt) + 1000).toISOString();
+        const claimUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
+        if (!claimUpgrade.ok || claimUpgrade.value.epochRevision !== 1 ||
+            claimUpgrade.value.capabilityCount !== m.PHASE2A_AUTHORIZATION_ACTIONS.length) {
+          throw new Error("package claim capability upgrade was rejected");
+        }
+        trustedNow = new Date(Date.parse(issuedAt) + 2000).toISOString();
+        const manualUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
+        if (!manualUpgrade.ok || manualUpgrade.value.epochRevision !== 2 ||
+            manualUpgrade.value.capabilityCount !== m.AUTHORIZATION_ACTIONS.length) {
+          throw new Error("package Manual capability upgrade was rejected");
+        }
+        trustedNow = new Date(Date.parse(issuedAt) + 3000).toISOString();
+        const execution = m.createExecutionApplicationService(store, trusted);
         const claimed = execution.claim({
           kind: "execution.claim",
           projectId: "project",
@@ -358,6 +398,71 @@ void executionClaim;
           leaseDurationSeconds: 60,
         });
         if (!claimed.ok) throw new Error("package execution claim was rejected");
+        trustedNow = new Date(Date.parse(issuedAt) + 4000).toISOString();
+        let manualBackend = m.createManualExecutionBackend(store, { ingress: trusted });
+        let manual = m.createReliableExecutionService(store, trusted, manualBackend, manualBackend);
+        const startCommand = {
+          kind: "execution.start",
+          projectId: "project",
+          expectedProjectResourceRevision: 1,
+          expectedProjectConfigRevision: 1,
+          taskId: "task",
+          expectedTaskRevision: 3,
+          inputReference: "package-input",
+          executionId: claimed.value.executionId,
+          expectedExecutionRevision: 1,
+          expectedAttemptNumber: 1,
+          expectedFencingToken: 1,
+          idempotencyKey: "package-start",
+          policyBindingReference: "package-policy",
+          requestedDeadline: new Date(Date.parse(issuedAt) + 60_000).toISOString(),
+        };
+        const started = manual.start(startCommand);
+        if (!started.ok || started.value.lifecycle !== "queued") throw new Error("package Manual start was rejected");
+        trustedNow = new Date(Date.parse(issuedAt) + 5000).toISOString();
+        const reportCommand = {
+          ...startCommand,
+          kind: "manual.turn.report",
+          idempotencyKey: "package-report",
+          reportId: "package-report",
+          backendExecutionId: started.value.backendExecutionId,
+          threadId: started.value.threadId,
+          expectedJournalRevision: 1,
+          expectedLifecycle: "queued",
+          outcomeOperation: "succeed",
+          code: "manual_turn_succeeded",
+          evidenceReference: "package-evidence",
+          lastObservationNumber: 1,
+        };
+        const reported = manual.recordManualOutcome(reportCommand);
+        if (!reported.ok || reported.value.lifecycle !== "turn_succeeded" || reported.value.taskState !== "running") {
+          throw new Error("package Manual outcome was not finalized as a running Task turn fact");
+        }
+        await store.close();
+        store = await m.openPersistence(layout, { applicationVersion: "package-smoke-restart" });
+        service = m.createApplicationService(store, trusted);
+        manualBackend = m.createManualExecutionBackend(store, { ingress: trusted });
+        manual = m.createReliableExecutionService(store, trusted, manualBackend, manualBackend);
+        const reportReplay = manual.recordManualOutcome(reportCommand);
+        if (!reportReplay.ok || !reportReplay.value.replayed) throw new Error("package Manual restart replay was not stable");
+        trustedNow = new Date(Date.parse(issuedAt) + 6000).toISOString();
+        const completed = manual.acceptManualCompletion({
+          kind: "execution.completion.accept",
+          projectId: "project",
+          expectedProjectResourceRevision: 1,
+          expectedProjectConfigRevision: 1,
+          taskId: "task",
+          expectedTaskRevision: 3,
+          inputReference: "package-input",
+          executionId: claimed.value.executionId,
+          expectedExecutionRevision: 1,
+          expectedAttemptNumber: 1,
+          expectedFencingToken: 1,
+          verifiedReceiptId: reported.value.verifiedReceiptId,
+          finalizationId: reported.value.finalizationId,
+          idempotencyKey: "package-completion",
+        });
+        if (!completed.ok || completed.value.taskState !== "completed") throw new Error("package Manual completion was rejected");
         const generationId = randomUUID();
         const backupAuthorization = service.execute({
           kind: "runtime.backup",
@@ -372,6 +477,7 @@ void executionClaim;
           states: m.TASK_STATES,
           snapshot: project.value.projectId === "project" && task.value.id === "task",
           claim: claimed.value.fencingToken === 1 && claimed.value.taskRevision === 3,
+          manual: started.value.lifecycle === "queued" && reported.value.lifecycle === "turn_succeeded" && completed.value.lifecycle === "completed",
           schema: m.currentSchemaVersion(),
           backup: verified.generationId === backup.generationId,
         }));
@@ -392,7 +498,7 @@ void executionClaim;
   invariant(importResult.status === 0, `package export failed: ${importResult.stderr}`);
   const imported = JSON.parse(importResult.stdout.trim());
   invariant(
-    imported.status.phase === "phase2-execution-claim-foundation" &&
+    imported.status.phase === "phase2-reliable-manual-execution-loop" &&
       imported.status.domainCoreImplemented === true &&
       imported.status.persistenceFoundationImplemented === true &&
       imported.status.projectRegistryImplemented === true &&
@@ -401,12 +507,15 @@ void executionClaim;
       imported.status.localPhase1ProductCliImplemented === true &&
       imported.status.backupRestoreDoctorImplemented === true &&
       imported.status.durableExecutionClaimFoundationImplemented === true &&
+      imported.status.reliableManualExecutionLoopImplemented === true &&
       imported.status.productRuntimeImplemented === false &&
       imported.status.executionRuntimeImplemented === false &&
+      JSON.stringify(imported.status.supportedAdapters) === JSON.stringify(["manual-local"]) &&
       JSON.stringify(imported.states) === JSON.stringify(["idea", "ready", "running", "waiting", "completed", "cancelled"]) &&
       imported.snapshot === true &&
       imported.claim === true &&
-      imported.schema === 5 &&
+      imported.manual === true &&
+      imported.schema === 6 &&
       imported.backup === true,
     "package export Domain Core, persistence registry, or capability status drifted",
   );

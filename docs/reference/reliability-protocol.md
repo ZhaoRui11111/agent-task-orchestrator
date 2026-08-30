@@ -5,14 +5,15 @@
 This file is the sole normative owner of the durable operation protocol:
 semantic identity, claims, leases, fencing, idempotency, revision CAS,
 intent/receipt/finalization, publication, recovery, retry propagation, and
-observable fan-out. The Phase 2A library foundation currently implements only
-database-local execution claim semantic identity, ordered attempts, one active
-claim per Task, lease inspection/renewal, per-Task fencing, exact CAS,
-idempotent claim/takeover replay, safe no-effect takeover, restart readback, and
-stale-fence refusal. No execution port/backend, external-operation runner,
-intent/receipt/finalization loop, dispatcher, fan-out run, or scheduler exists
-today; the corresponding rules below remain requirements for their later
-implementing plans.
+observable fan-out. The current library implements execution claims, ordered
+attempts, leases, per-Task fencing, exact CAS, restart readback, the corrected
+`ato.execution/v1` port, one durable local Manual backend/control, and the
+ordered intent/observation/verified-receipt/finalization protocol for start,
+inspect, resume, retry, cancellation, Manual outcome reporting, verified
+interruption, reconcile-first expired execution, and separately accepted Manual
+completion. It has no dispatcher/fan-out run, scheduler, workspace/publication,
+Codex/Git effect, ProjectPolicy, CompletionBackend, or completion gate; those
+sections remain requirements for their implementing plans.
 
 Task-state meaning comes from the [domain contract](domain-contract.md), record
 layout from the [persistence contract](persistence-contract.md), permission from
@@ -56,16 +57,26 @@ or payload is an integrity conflict. Policy results, source revisions, adapter
 versions, or ignored external state MUST NOT be omitted merely because the
 human-readable request looks the same.
 
-The current claim-foundation subset has no adapter, workspace, or external
-resource identity to bind. Its persisted authoritative tuple therefore binds
+The original claim tuple has no adapter, workspace, or external resource
+identity to bind. Its persisted authoritative tuple therefore binds
 operation kind, Task and expected revision, Project resource/config revisions,
 trusted actor and lease owner, requested lease duration, and—only for
 takeover—the exact predecessor execution, execution revision, lease revision,
 and fencing token. The newly allocated execution ID and ordered attempt number
 are the outcome. Claim/takeover reuse returns that persisted outcome only when
 the complete applicable tuple and actor match; otherwise it is an integrity
-conflict. This narrow tuple is not permission to omit later semantic members
-when an adapter or external effect is introduced.
+conflict.
+
+Schema-v6 Manual-loop intents bind their operation kind and action, Project
+resource/config revisions, Task/input revision, execution revision, attempt and
+fence, local Manual policy binding, adapter/contract versions,
+`workspace_mode=none`, authorization binding, requested deadline, and every
+operation-specific backend/thread/continuation/cancellation/report identity.
+Retry or expired safe continuation additionally binds the exact predecessor
+execution/attempt/fence/observation. The stored tuple remains authoritative;
+the semantic key and idempotency key cannot hide drift. The implementation
+stores no workspace receipt, working directory, environment, prompt, source
+content, path, or credential value.
 
 ## Claim, lease, and fencing
 
@@ -76,8 +87,7 @@ A claim transaction MUST, against one database snapshot:
 1. re-evaluate domain eligibility;
 2. obtain a current allow decision from the authorization envelope;
 3. prove there is no valid active execution and no unfinished conflicting
-   operation for the Task (the current Phase 2A schema has no effect-intent
-   writer, so absence is structural as well as decoded);
+   operation for the Task;
 4. compare the caller's expected Task revision;
 5. allocate the next attempt number and a strictly greater per-Task fencing
    token;
@@ -93,8 +103,8 @@ The implemented initial claim performs this unit through the typed application
 owner: request and final authorization decision, sequence/fence allocation,
 attempt insertion, Domain `claim_accepted`, sanitized audit, and terminal
 readback share one short transaction. Competing claims can produce only one
-winner. No adapter call or other external effect occurs before or after this
-transaction in Phase 2A.
+winner. No adapter call occurs in that transaction; a later explicit
+`execution.start` operation must first commit its own intent.
 
 ### Lease rules
 
@@ -116,14 +126,14 @@ transaction in Phase 2A.
   decision from a worker carries its execution ID and fencing token. A value
   lower than or different from the current token is rejected before mutation.
 
-Phase 2A has one deliberately narrower takeover case: because no production
-path can create an effect intent, call an adapter, or perform an external
-effect, an expired active attempt is structurally effect-free. The typed service
-may atomically supersede it and create the next attempt/fence while leaving the
-Task `running`. This exception ends when an effect-capable phase lands; then
-expiry alone is never sufficient and the general reconcile-first rule above is
-mandatory. The old attempt/owner/fence remains immutable history and every late
-write is refused.
+The schema-v5 effect-free takeover shortcut is unavailable when schema-v6 state
+contains an unfinished intent, Manual journal operation, or terminal evidence.
+The typed claim service returns `RECONCILIATION_REQUIRED`; the Manual loop first
+performs authorized independent inspection and persists the result. Only a
+proven safe continuation may atomically supersede the predecessor and create
+the next attempt/fence while preserving source lineage. Unknown state moves the
+Task to complete `waiting/ambiguous_external_state` metadata. The old
+attempt/owner/fence remains immutable history and every late write is refused.
 
 ## Revision CAS
 
@@ -141,8 +151,9 @@ current state is reconciled explicitly.
 
 ## Intent, receipt, verification, and finalization
 
-This entire section is a later-phase requirement; schema v5 allocates none of
-these records and Phase 2A performs no external effect.
+Schema v6 implements this section for the local Manual execution loop. Other
+adapters, publication, workspace, completion gates, and dispatcher fan-out do
+not inherit that evidence.
 
 ### Intent state set
 
@@ -222,7 +233,7 @@ reported; it is not adopted or deleted.
 | --- | --- |
 | No committed intent | No external call is assumed or replayed. Re-run begins with a new or deterministically recovered intent. |
 | `pending` | CAS to `executing` and call once, or abandon with an audited terminal failure before any call. |
-| `executing`, no receipt | Inspect external state first. Replay only when inspection proves no effect or the target independently enforces the same idempotency key; otherwise enter `ambiguous`. |
+| `executing`, no receipt | Inspect Manual state first. Replay only when exact durable journal evidence proves no effect and the operation's closed rule permits replay; otherwise enter `ambiguous`. |
 | External effect present, no receipt | Construct a new observation from authoritative external state, verify it, and continue; do not repeat the effect. |
 | `observed` | Re-run verification against the bound tuple and current policy. |
 | `verified`, not finalized | Re-run finalization CAS. A conflict leaves the effect recorded and routes reconciliation; it does not fake rollback. |
@@ -251,12 +262,14 @@ reported; it is not adopted or deleted.
 
 ## Retry and failure propagation
 
-A retry is allowed only when the adapter error taxonomy marks the result
-retryable, policy permits it, the semantic identity is unchanged, retry budget
-and `retry_after` permit it, and external observation is not ambiguous. It keeps
-the same idempotency key and increments `retry_count` durably before the next
-call. A changed input, policy, adapter contract, expected revision, or replacement
-execution requires a new semantic identity.
+A response-loss retry of one existing operation is allowed only when policy
+permits it, the complete semantic identity is unchanged, and authoritative
+inspection or exact adapter idempotency makes replay safe. It keeps the same
+idempotency key and effect. An explicit Task `retry` after verified waiting is a
+new semantic operation: the current Manual loop creates the next execution
+attempt and fence, binds the exact predecessor evidence, and allocates its own
+idempotency key. A changed input, policy, adapter contract, expected revision,
+or replacement execution likewise requires a new semantic identity.
 
 Non-retryable failures move the intent to `failed` and the owning Task to the
 appropriate domain outcome. Resource, rate, disk, authorization, compatibility,
@@ -267,7 +280,7 @@ successful finalization.
 ## Observable fan-out
 
 This section is a later dispatcher requirement and is not implemented by the
-execution-claim foundation.
+reliable Manual loop.
 
 After reconciliation and before any candidate claim or candidate-bound external
 action, each dispatcher sweep atomically seals its complete finite candidate

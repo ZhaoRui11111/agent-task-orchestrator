@@ -27,9 +27,23 @@ export const EXECUTION_AUTHORIZATION_ACTIONS = Object.freeze([
   "execution.lease.takeover",
 ] as const);
 
-export const AUTHORIZATION_ACTIONS = Object.freeze([
+export const PHASE2A_AUTHORIZATION_ACTIONS = Object.freeze([
   ...PHASE1_AUTHORIZATION_ACTIONS,
   ...EXECUTION_AUTHORIZATION_ACTIONS,
+] as const);
+
+export const MANUAL_EXECUTION_AUTHORIZATION_ACTIONS = Object.freeze([
+  "execution.start",
+  "execution.inspect",
+  "execution.resume",
+  "execution.retry",
+  "execution.cancel",
+  "execution.completion.accept",
+] as const);
+
+export const AUTHORIZATION_ACTIONS = Object.freeze([
+  ...PHASE2A_AUTHORIZATION_ACTIONS,
+  ...MANUAL_EXECUTION_AUTHORIZATION_ACTIONS,
 ] as const);
 
 export const HIGH_RISK_ACTIONS = Object.freeze([
@@ -39,6 +53,7 @@ export const HIGH_RISK_ACTIONS = Object.freeze([
   "project.update",
   "project.disable",
   "runtime.restore",
+  "execution.completion.accept",
 ] as const);
 
 export type AuthorizationAction = (typeof AUTHORIZATION_ACTIONS)[number];

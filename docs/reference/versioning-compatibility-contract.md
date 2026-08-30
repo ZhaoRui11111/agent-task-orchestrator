@@ -5,10 +5,11 @@
 This file is the sole normative owner of schema, planned public API, and adapter
 versioning; forward migration and downgrade-by-restore policy; and the evidence
 required for a platform or external API support claim. The project now has an
-  internal staged SQLite schema at version `5`, a provisional package-root
-  Domain/ProjectRegistry/authorization/application/execution-claim/persistence
-  surface, and an implemented provisional `ato.api/v1` local Phase 1 CLI. It still has no released
-product, adapter, supported platform, or supported external API.
+internal staged SQLite schema at version `6`, a provisional package-root
+Domain/ProjectRegistry/authorization/application/claim/Manual-loop/persistence
+surface, an implemented closed `ato.execution/v1` local port, and an implemented
+provisional `ato.api/v1` local Phase 1 CLI. It still has no released product,
+validated platform, or supported external API.
 
 The [v0.1 matrix](../compatibility/v0.1.md) records evidence only. It cannot
 create or change this policy.
@@ -20,7 +21,7 @@ create or change this policy.
   notes and versioned wire contracts below.
 - SQLite schema versions are strictly increasing non-negative integers, where
   `0` means a genuinely fresh database with no application table and shipped
-  versions begin at `1`. The current target is `5`: version `1` owns migration
+  versions begin at `1`. The current target is `6`: version `1` owns migration
   metadata/history, version `2` owns only Phase 1 Domain Core
   Project/Task/dependency storage, and version `3` owns only the Phase 1
   ProjectRegistry, runtime-grant, application-request/decision, and audit
@@ -28,7 +29,9 @@ create or change this policy.
   lifecycle authorization handoffs, and the finite CLI vocabulary/storage-shape
   expansion; version `5` owns only the closed authorization-vocabulary upgrade
   and Phase 2A execution attempt, sequence, lease, fence, idempotency, and CAS
-  foundation. Exact migration identity, checksum, staged allocation, and mechanics
+  foundation; version `6` owns only vocabulary-6 lineage and the reliable local
+  Manual-loop operation/evidence/journal/completion records. Exact migration
+  identity, checksum, staged allocation, and mechanics
   are owned by the
   [persistence contract](persistence-contract.md#migration-identity-and-atomicity).
 - Each CLI/MCP or other machine-readable public request and response carries
@@ -63,6 +66,7 @@ tests; otherwise it returns a typed incompatibility error.
 The current `ato.api/v1` request and response shapes are closed, have no
 extension map, and reject unknown input. Its exact grammar, fields, key order,
 redaction, errors, and exits are owned by the [CLI/API contract](cli-contract.md).
+EP-02B adds no command or response field to that public major.
 
 ## Adapter evolution and negotiation
 
@@ -78,22 +82,33 @@ authorization boundary requires a new port major. Adapters for different majors
 may coexist behind explicit selection; they cannot reinterpret one another's
 persisted receipts.
 
+Before the first `ato.execution/v1` implementation, EP-02B corrected its
+unshipped planned `start` operation from `execution.claim` plus workspace/
+working-directory/environment requirements to `execution.start` with
+`workspace_mode=none`. No implementation, export, negotiation, persisted
+receipt, or consumer existed, so no compatible reader or artifact was changed.
+The corrected v1 is now implemented and closed. A later required-field,
+authorization, side-effect, lifecycle, receipt, or error-meaning change requires
+`ato.execution/v2`; an adapter version bump alone cannot reinterpret v1.
+
 ## Forward migration
 
 - A runtime may mutate a database only when it recognizes the current schema
   and has a contiguous verified forward-migration chain to its target schema.
 - Physical allocation is staged by approved implementation phase. A future
   contract or roadmap does not reserve a table or column; the plan that
-  implements that owner appends a migration. Versions `1`, `2`, `3`, and `4`
+  implements that owner appends a migration. Versions `1` through `5`
   remain byte-identical, and version `4` does not pre-allocate execution,
   intent/effect, workspace, scheduler, claim/lease/fence, gate, completion,
   adapter, MCP, or dispatcher records. Version `5` allocates only its named
-  execution-claim foundation and no later effect/adapter/dispatcher record.
-- The current migration matrix proves fresh `0` to `5` and shipped prefixes
-  `1`, `2`, `3`, and `4` to `5`, including failed/interrupted migration,
-  checksum drift, historical row preservation, and newer-schema refusal. Adding
-  version `6` or later requires tests from every earlier prefix for which
-  compatibility will be claimed.
+  execution-claim foundation. Version `6` adds only its Manual-loop records and
+  does not pre-allocate workspace, scheduler, gate, ProjectPolicy,
+  CompletionBackend, MCP, or dispatcher-run state.
+- The current migration matrix proves fresh `0` to `6` and shipped prefixes
+  `1`, `2`, `3`, `4`, and `5` to `6`, including failed/interrupted migration,
+  checksum drift, historical row and vocabulary preservation, zero automatic
+  authority expansion, and newer-schema refusal. Adding version `7` or later
+  requires tests from every earlier prefix for which compatibility is claimed.
 - Every released schema in the v0.1 series MUST have a tested forward path to
   the latest v0.1 schema before that release can claim upgrade compatibility.
 - A future v0.2 release must test upgrade from the latest published v0.1 schema;
@@ -114,7 +129,7 @@ A future released downgrade route would mean stopping the newer runtime,
 selecting a verified backup created by the target older schema/application,
 restoring it to a private location, validating it with that target reader, and
 atomically publishing it under the persistence recovery rules. The current
-  current product restore accepts only schema-v5 application-authorized manual
+product restore accepts only schema-v6 application-authorized manual
 backups and therefore provides data rollback, not schema downgrade support.
 
 Data accepted after the backup is not present after downgrade. The operator
