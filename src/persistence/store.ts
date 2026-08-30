@@ -1,6 +1,7 @@
 import {
   bindApplicationDatabase,
   readApplicationState,
+  readVersionFourApplicationState,
   readVersionThreeApplicationState,
   unbindApplicationDatabase,
   type ApplicationLifecycleAuthorization,
@@ -77,7 +78,8 @@ function inspectBeforeWritableOpen(layout: RuntimeLayout): number | null {
   try {
     const evidence = inspectSchemaEvidence(database);
     verifyDatabaseIntegrity(database);
-    if (evidence.schemaVersion >= 4) readApplicationState(database);
+    if (evidence.schemaVersion >= 5) readApplicationState(database);
+    else if (evidence.schemaVersion === 4) readVersionFourApplicationState(database);
     else if (evidence.schemaVersion === 3) readVersionThreeApplicationState(database);
     else if (evidence.schemaVersion >= 2) readDomainSnapshot(database);
     return evidence.schemaVersion;

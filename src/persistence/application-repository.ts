@@ -1,5 +1,6 @@
 import {
   AUTHORIZATION_ACTIONS,
+  PHASE1_AUTHORIZATION_ACTIONS,
   isHighRiskAction,
   parseAuthorizationGrant,
   type AuthorizationAction,
@@ -45,7 +46,10 @@ export interface AuthorizationBootstrap extends ProjectRootIdentity {
   readonly vocabularyVersion: 3 | 4;
 }
 
-export type ApplicationAction = AuthorizationAction | "authorization.capability.renew";
+export type ApplicationAction =
+  | AuthorizationAction
+  | "authorization.capability.renew"
+  | "authorization.capability.upgrade";
 
 export interface AuthorizationLocalIdentity {
   readonly identityVersion: 1;
@@ -63,7 +67,7 @@ export interface AuthorizationCapabilityEpoch {
   readonly epochRevision: number;
   readonly actorId: string;
   readonly runtimeRootKey: string;
-  readonly vocabularyVersion: 4;
+  readonly vocabularyVersion: 4 | 5;
   readonly actionSetSha256: string;
   readonly requestId: string;
   readonly createdAt: string;
@@ -89,15 +93,18 @@ export interface ApplicationLifecycleAuthorization {
   readonly expiresAt: string;
 }
 
+type ApplicationStateDigestVersion = 1 | 2;
+const lifecycleStateDigestVersions = new WeakMap<ApplicationLifecycleAuthorization, ApplicationStateDigestVersion>();
+
 export interface ApplicationRequestRecord {
   readonly requestId: string;
   readonly correlationId: string;
   readonly actorId: string;
   readonly action: ApplicationAction;
-  readonly targetKind: "runtime" | "project" | "task" | "grant" | "backup";
+  readonly targetKind: "runtime" | "project" | "task" | "grant" | "backup" | "execution";
   readonly targetId: string;
   readonly targetRevision: number | null;
-  readonly result: "bootstrap" | "allow" | "deny" | "renewal";
+  readonly result: "bootstrap" | "allow" | "deny" | "renewal" | "upgrade";
   readonly createdAt: string;
 }
 
@@ -139,6 +146,11 @@ export interface ApplicationAuditRecord {
     | "policy.evaluated"
     | "authorization.denied"
     | "capability.renewed"
+    | "capability.upgraded"
+    | "execution.claimed"
+    | "execution.claim.inspected"
+    | "execution.lease.renewed"
+    | "execution.lease.taken_over"
     | "grant.listed"
     | "runtime.status.inspected"
     | "backup.authorized"
@@ -146,11 +158,47 @@ export interface ApplicationAuditRecord {
   readonly result: "accepted" | "denied";
   readonly actorId: string;
   readonly correlationId: string;
-  readonly targetKind: "runtime" | "project" | "task" | "grant" | "backup";
+  readonly targetKind: "runtime" | "project" | "task" | "grant" | "backup" | "execution";
   readonly targetId: string;
   readonly targetRevision: number | null;
   readonly reason: string;
   readonly createdAt: string;
+}
+
+export interface TaskExecutionSequence {
+  readonly taskId: string;
+  readonly lastAttemptNumber: number;
+  readonly currentFencingToken: number;
+  readonly revision: number;
+}
+
+export interface ExecutionAttempt {
+  readonly executionId: string;
+  readonly taskId: string;
+  readonly attemptNumber: number;
+  readonly operationKind: "claim" | "takeover";
+  readonly status: "active" | "superseded";
+  readonly idempotencyKey: string;
+  readonly ownerId: string;
+  readonly requestedLeaseSeconds: number;
+  readonly predecessorExecutionRevision: number | null;
+  readonly predecessorLeaseRevision: number | null;
+  readonly predecessorFencingToken: number | null;
+  readonly leaseRevision: number;
+  readonly leaseExpiresAt: string;
+  readonly fencingToken: number;
+  readonly revision: number;
+  readonly expectedTaskRevision: number;
+  readonly preTaskRevision: number;
+  readonly postTaskRevision: number;
+  readonly projectResourceRevision: number;
+  readonly projectConfigRevision: number;
+  readonly requestId: string;
+  readonly decisionId: string;
+  readonly supersedesExecutionId: string | null;
+  readonly supersededByExecutionId: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
 }
 
 export interface ApplicationState {
@@ -163,6 +211,8 @@ export interface ApplicationState {
   readonly requests: readonly ApplicationRequestRecord[];
   readonly decisions: readonly AuthorizationDecisionRecord[];
   readonly audit: readonly ApplicationAuditRecord[];
+  readonly executionSequences: readonly TaskExecutionSequence[];
+  readonly executions: readonly ExecutionAttempt[];
   readonly lifecycle: readonly ApplicationLifecycleAuthorization[];
 }
 
@@ -174,6 +224,7 @@ export interface NewGrantRecord extends AuthorizationGrant {
 export type NewLocalIdentityRecord = AuthorizationLocalIdentity;
 export type NewCapabilityEpochRecord = AuthorizationCapabilityEpoch;
 export type NewLifecycleAuthorizationRecord = ApplicationLifecycleAuthorization;
+export type NewExecutionAttemptRecord = ExecutionAttempt;
 
 interface ApplicationDatabaseBinding {
   readonly database: SqliteDatabase;
@@ -200,8 +251,8 @@ interface DecodedApplicationAudit {
 }
 
 const boundDatabases = new WeakMap<object, ApplicationDatabaseBinding>();
-const TARGET_KINDS: ReadonlySet<TargetKind> = new Set(["runtime", "project", "task", "grant", "backup"]);
-const REQUEST_RESULTS: ReadonlySet<RequestResult> = new Set(["bootstrap", "allow", "deny", "renewal"]);
+const TARGET_KINDS: ReadonlySet<TargetKind> = new Set(["runtime", "project", "task", "grant", "backup", "execution"]);
+const REQUEST_RESULTS: ReadonlySet<RequestResult> = new Set(["bootstrap", "allow", "deny", "renewal", "upgrade"]);
 const DECISION_RESULTS: ReadonlySet<DecisionResult> = new Set(["allow", "deny"]);
 const POLICY_RESULTS: ReadonlySet<AuthorizationPolicyResult> = new Set(["allow", "deny", "read_not_applicable"]);
 const AUTHORIZATION_REASONS: ReadonlySet<AuthorizationReason> = new Set([
@@ -236,6 +287,11 @@ const AUDIT_KINDS: ReadonlySet<AuditKind> = new Set([
   "policy.evaluated",
   "authorization.denied",
   "capability.renewed",
+  "capability.upgraded",
+  "execution.claimed",
+  "execution.claim.inspected",
+  "execution.lease.renewed",
+  "execution.lease.taken_over",
   "grant.listed",
   "runtime.status.inspected",
   "backup.authorized",
@@ -243,7 +299,7 @@ const AUDIT_KINDS: ReadonlySet<AuditKind> = new Set([
 ]);
 const AUDIT_RESULTS: ReadonlySet<AuditResult> = new Set(["accepted", "denied"]);
 const SCOPE_KINDS: ReadonlySet<AuthorizationScope["kind"]> = new Set(["runtime", "project"]);
-const LEGACY_AUTHORIZATION_ACTIONS = Object.freeze(AUTHORIZATION_ACTIONS.slice(0, 15));
+const LEGACY_AUTHORIZATION_ACTIONS = Object.freeze(PHASE1_AUTHORIZATION_ACTIONS.slice(0, 15));
 
 export function applicationAuditKind(value: AuthorizationAction): AuditKind {
   switch (value) {
@@ -266,6 +322,10 @@ export function applicationAuditKind(value: AuthorizationAction): AuditKind {
     case "runtime.status": return "runtime.status.inspected";
     case "runtime.backup": return "backup.authorized";
     case "runtime.restore": return "restore.authorized";
+    case "execution.claim": return "execution.claimed";
+    case "execution.claim.inspect": return "execution.claim.inspected";
+    case "execution.lease.renew": return "execution.lease.renewed";
+    case "execution.lease.takeover": return "execution.lease.taken_over";
   }
 }
 
@@ -299,15 +359,24 @@ function requestTargetIsValid(request: ApplicationRequestRecord): boolean {
     case "authorization.grant.list":
     case "runtime.status":
     case "authorization.capability.renew":
+    case "authorization.capability.upgrade":
       return request.targetKind === "runtime" && request.targetId === "runtime" && request.targetRevision === null;
     case "runtime.backup":
     case "runtime.restore":
       return request.targetKind === "backup" && request.targetRevision === null;
+    case "execution.claim":
+    case "execution.claim.inspect":
+    case "execution.lease.renew":
+    case "execution.lease.takeover":
+      return request.targetKind === "execution" && request.targetRevision !== null;
   }
 }
 
 function decisionPolicyIsValid(decision: AuthorizationDecisionRecord): boolean {
-  if (decision.action === "authorization.capability.renew") return decision.policy === "allow";
+  if (
+    decision.action === "authorization.capability.renew" ||
+    decision.action === "authorization.capability.upgrade"
+  ) return decision.policy === "allow";
   if (
     decision.action.startsWith("authorization.") ||
     decision.action.endsWith(".inspect") ||
@@ -347,6 +416,10 @@ function decisionTargetIsValid(
     case "task.inspect":
     case "dependency.add":
     case "dependency.remove":
+    case "execution.claim":
+    case "execution.claim.inspect":
+    case "execution.lease.renew":
+    case "execution.lease.takeover":
       return decision.projectId !== null;
     default:
       return true;
@@ -408,7 +481,11 @@ function timestamp(value: unknown, label: string): string {
 
 function action(value: unknown, label: string): ApplicationAction {
   const result = sqliteText(value, label);
-  if (!(AUTHORIZATION_ACTIONS as readonly string[]).includes(result) && result !== "authorization.capability.renew") {
+  if (
+    !(AUTHORIZATION_ACTIONS as readonly string[]).includes(result) &&
+    result !== "authorization.capability.renew" &&
+    result !== "authorization.capability.upgrade"
+  ) {
     throw persistenceFailure("CORRUPT_ROW", `${label} is not an implemented action`);
   }
   return result as ApplicationAction;
@@ -416,7 +493,7 @@ function action(value: unknown, label: string): ApplicationAction {
 
 function grantAction(value: unknown, label: string): AuthorizationAction {
   const result = action(value, label);
-  if (result === "authorization.capability.renew") {
+  if (result === "authorization.capability.renew" || result === "authorization.capability.upgrade") {
     throw persistenceFailure("CORRUPT_ROW", `${label} contains a non-grantable action`);
   }
   return result;
@@ -453,7 +530,7 @@ function readBootstrap(
   database: SqliteDatabase,
   schemaShape: ApplicationSchemaShape,
 ): AuthorizationBootstrap | null {
-  const rows = database.prepare(schemaShape === "current"
+  const rows = database.prepare(schemaShape !== "version-three"
     ? `SELECT singleton, actor_id, trusted_principal, runtime_root, runtime_root_key,
       runtime_platform, runtime_device, runtime_inode, runtime_mode,
       request_id, created_at, expires_at, vocabulary_version FROM authorization_bootstrap ORDER BY singleton`
@@ -466,7 +543,7 @@ function readBootstrap(
     throw persistenceFailure("CORRUPT_ROW", "Authorization bootstrap singleton is invalid");
   }
   const row = rows[0] as Record<string, unknown>;
-  const vocabularyVersion = schemaShape === "current"
+  const vocabularyVersion = schemaShape !== "version-three"
     ? integer(row.vocabulary_version, "authorization_bootstrap.vocabulary_version")
     : 3;
   if (vocabularyVersion !== 3 && vocabularyVersion !== 4) {
@@ -525,13 +602,15 @@ function readEpochs(database: SqliteDatabase): readonly AuthorizationCapabilityE
     FROM authorization_capability_epochs ORDER BY epoch_revision`,
   ).all().map((row) => {
     const vocabularyVersion = integer(row.vocabulary_version, "authorization_capability_epochs.vocabulary_version");
-    if (vocabularyVersion !== 4) throw persistenceFailure("CORRUPT_ROW", "Capability epoch vocabulary is unsupported");
+    if (vocabularyVersion !== 4 && vocabularyVersion !== 5) {
+      throw persistenceFailure("CORRUPT_ROW", "Capability epoch vocabulary is unsupported");
+    }
     return Object.freeze({
       epochId: sqliteText(row.epoch_id, "authorization_capability_epochs.epoch_id"),
       epochRevision: positive(row.epoch_revision, "authorization_capability_epochs.epoch_revision"),
       actorId: sqliteText(row.actor_id, "authorization_capability_epochs.actor_id"),
       runtimeRootKey: sqliteText(row.runtime_root_key, "authorization_capability_epochs.runtime_root_key"),
-      vocabularyVersion: 4 as const,
+      vocabularyVersion,
       actionSetSha256: uppercaseSha256(row.action_set_sha256, "authorization_capability_epochs.action_set_sha256"),
       requestId: sqliteText(row.request_id, "authorization_capability_epochs.request_id"),
       createdAt: timestamp(row.created_at, "authorization_capability_epochs.created_at"),
@@ -540,30 +619,108 @@ function readEpochs(database: SqliteDatabase): readonly AuthorizationCapabilityE
   }));
 }
 
-function readLifecycle(database: SqliteDatabase): readonly ApplicationLifecycleAuthorization[] {
+function readLifecycle(
+  database: SqliteDatabase,
+  schemaShape: Exclude<ApplicationSchemaShape, "version-three">,
+): readonly ApplicationLifecycleAuthorization[] {
   const operations = new Set(["runtime.backup", "runtime.restore"] as const);
+  const digestVersionColumn = schemaShape === "current"
+    ? "state_digest_version"
+    : "1 AS state_digest_version";
   return Object.freeze(database.prepare(
     `SELECT authorization_id, operation, backup_generation_id, actor_id, runtime_root_key,
       grant_id, grant_revision, request_id, decision_id, audit_id, authorized_state_sha256,
-      expected_request_count, expected_decision_count, expected_audit_count, issued_at, expires_at
+      ${digestVersionColumn}, expected_request_count, expected_decision_count, expected_audit_count,
+      issued_at, expires_at
     FROM application_lifecycle_authorizations ORDER BY authorization_id`,
+  ).all().map((row) => {
+    const digestVersion = positive(
+      row.state_digest_version,
+      "application_lifecycle_authorizations.state_digest_version",
+    );
+    if (digestVersion !== 1 && digestVersion !== 2) {
+      throw persistenceFailure("CORRUPT_ROW", "Lifecycle state digest version is unsupported");
+    }
+    const record: ApplicationLifecycleAuthorization = {
+      authorizationId: sqliteText(row.authorization_id, "application_lifecycle_authorizations.authorization_id"),
+      operation: enumText(row.operation, "application_lifecycle_authorizations.operation", operations),
+      backupGenerationId: sqliteText(row.backup_generation_id, "application_lifecycle_authorizations.backup_generation_id"),
+      actorId: sqliteText(row.actor_id, "application_lifecycle_authorizations.actor_id"),
+      runtimeRootKey: sqliteText(row.runtime_root_key, "application_lifecycle_authorizations.runtime_root_key"),
+      grantId: sqliteText(row.grant_id, "application_lifecycle_authorizations.grant_id"),
+      grantRevision: positive(row.grant_revision, "application_lifecycle_authorizations.grant_revision"),
+      requestId: sqliteText(row.request_id, "application_lifecycle_authorizations.request_id"),
+      decisionId: sqliteText(row.decision_id, "application_lifecycle_authorizations.decision_id"),
+      auditId: sqliteText(row.audit_id, "application_lifecycle_authorizations.audit_id"),
+      authorizedStateSha256: uppercaseSha256(row.authorized_state_sha256, "application_lifecycle_authorizations.authorized_state_sha256"),
+      expectedRequestCount: positive(row.expected_request_count, "application_lifecycle_authorizations.expected_request_count"),
+      expectedDecisionCount: positive(row.expected_decision_count, "application_lifecycle_authorizations.expected_decision_count"),
+      expectedAuditCount: positive(row.expected_audit_count, "application_lifecycle_authorizations.expected_audit_count"),
+      issuedAt: timestamp(row.issued_at, "application_lifecycle_authorizations.issued_at"),
+      expiresAt: timestamp(row.expires_at, "application_lifecycle_authorizations.expires_at"),
+    };
+    lifecycleStateDigestVersions.set(record, digestVersion);
+    return Object.freeze(record);
+  }));
+}
+
+function readExecutionSequences(database: SqliteDatabase): readonly TaskExecutionSequence[] {
+  return Object.freeze(database.prepare(
+    `SELECT task_id, last_attempt_number, current_fencing_token, revision
+    FROM task_execution_sequences ORDER BY task_id`,
   ).all().map((row) => Object.freeze({
-    authorizationId: sqliteText(row.authorization_id, "application_lifecycle_authorizations.authorization_id"),
-    operation: enumText(row.operation, "application_lifecycle_authorizations.operation", operations),
-    backupGenerationId: sqliteText(row.backup_generation_id, "application_lifecycle_authorizations.backup_generation_id"),
-    actorId: sqliteText(row.actor_id, "application_lifecycle_authorizations.actor_id"),
-    runtimeRootKey: sqliteText(row.runtime_root_key, "application_lifecycle_authorizations.runtime_root_key"),
-    grantId: sqliteText(row.grant_id, "application_lifecycle_authorizations.grant_id"),
-    grantRevision: positive(row.grant_revision, "application_lifecycle_authorizations.grant_revision"),
-    requestId: sqliteText(row.request_id, "application_lifecycle_authorizations.request_id"),
-    decisionId: sqliteText(row.decision_id, "application_lifecycle_authorizations.decision_id"),
-    auditId: sqliteText(row.audit_id, "application_lifecycle_authorizations.audit_id"),
-    authorizedStateSha256: uppercaseSha256(row.authorized_state_sha256, "application_lifecycle_authorizations.authorized_state_sha256"),
-    expectedRequestCount: positive(row.expected_request_count, "application_lifecycle_authorizations.expected_request_count"),
-    expectedDecisionCount: positive(row.expected_decision_count, "application_lifecycle_authorizations.expected_decision_count"),
-    expectedAuditCount: positive(row.expected_audit_count, "application_lifecycle_authorizations.expected_audit_count"),
-    issuedAt: timestamp(row.issued_at, "application_lifecycle_authorizations.issued_at"),
-    expiresAt: timestamp(row.expires_at, "application_lifecycle_authorizations.expires_at"),
+    taskId: sqliteText(row.task_id, "task_execution_sequences.task_id"),
+    lastAttemptNumber: positive(row.last_attempt_number, "task_execution_sequences.last_attempt_number"),
+    currentFencingToken: positive(row.current_fencing_token, "task_execution_sequences.current_fencing_token"),
+    revision: positive(row.revision, "task_execution_sequences.revision"),
+  })));
+}
+
+function readExecutionAttempts(database: SqliteDatabase): readonly ExecutionAttempt[] {
+  const operationKinds = new Set<ExecutionAttempt["operationKind"]>(["claim", "takeover"]);
+  const statuses = new Set<ExecutionAttempt["status"]>(["active", "superseded"]);
+  return Object.freeze(database.prepare(
+    `SELECT execution_id, task_id, attempt_number, operation_kind, status, idempotency_key,
+      owner_id, requested_lease_seconds, predecessor_execution_revision,
+      predecessor_lease_revision, predecessor_fencing_token,
+      lease_revision, lease_expires_at, fencing_token, revision,
+      expected_task_revision, pre_task_revision, post_task_revision,
+      project_resource_revision, project_config_revision, request_id, decision_id,
+      supersedes_execution_id, superseded_by_execution_id, created_at, updated_at
+    FROM execution_attempts ORDER BY task_id, attempt_number`,
+  ).all().map((row) => Object.freeze({
+    executionId: sqliteText(row.execution_id, "execution_attempts.execution_id"),
+    taskId: sqliteText(row.task_id, "execution_attempts.task_id"),
+    attemptNumber: positive(row.attempt_number, "execution_attempts.attempt_number"),
+    operationKind: enumText(row.operation_kind, "execution_attempts.operation_kind", operationKinds),
+    status: enumText(row.status, "execution_attempts.status", statuses),
+    idempotencyKey: sqliteText(row.idempotency_key, "execution_attempts.idempotency_key"),
+    ownerId: sqliteText(row.owner_id, "execution_attempts.owner_id"),
+    requestedLeaseSeconds: positive(row.requested_lease_seconds, "execution_attempts.requested_lease_seconds"),
+    predecessorExecutionRevision: nullablePositive(
+      row.predecessor_execution_revision, "execution_attempts.predecessor_execution_revision",
+    ),
+    predecessorLeaseRevision: nullablePositive(
+      row.predecessor_lease_revision, "execution_attempts.predecessor_lease_revision",
+    ),
+    predecessorFencingToken: nullablePositive(
+      row.predecessor_fencing_token, "execution_attempts.predecessor_fencing_token",
+    ),
+    leaseRevision: positive(row.lease_revision, "execution_attempts.lease_revision"),
+    leaseExpiresAt: timestamp(row.lease_expires_at, "execution_attempts.lease_expires_at"),
+    fencingToken: positive(row.fencing_token, "execution_attempts.fencing_token"),
+    revision: positive(row.revision, "execution_attempts.revision"),
+    expectedTaskRevision: positive(row.expected_task_revision, "execution_attempts.expected_task_revision"),
+    preTaskRevision: positive(row.pre_task_revision, "execution_attempts.pre_task_revision"),
+    postTaskRevision: positive(row.post_task_revision, "execution_attempts.post_task_revision"),
+    projectResourceRevision: positive(row.project_resource_revision, "execution_attempts.project_resource_revision"),
+    projectConfigRevision: positive(row.project_config_revision, "execution_attempts.project_config_revision"),
+    requestId: sqliteText(row.request_id, "execution_attempts.request_id"),
+    decisionId: sqliteText(row.decision_id, "execution_attempts.decision_id"),
+    supersedesExecutionId: sqliteNullableText(row.supersedes_execution_id, "execution_attempts.supersedes_execution_id"),
+    supersededByExecutionId: sqliteNullableText(row.superseded_by_execution_id, "execution_attempts.superseded_by_execution_id"),
+    createdAt: timestamp(row.created_at, "execution_attempts.created_at"),
+    updatedAt: timestamp(row.updated_at, "execution_attempts.updated_at"),
   })));
 }
 
@@ -690,7 +847,7 @@ function readAudit(database: SqliteDatabase): readonly DecodedApplicationAudit[]
   }));
 }
 
-type ApplicationSchemaShape = "version-three" | "current";
+type ApplicationSchemaShape = "version-three" | "version-four" | "current";
 
 function readApplicationStateUntransactional(
   database: SqliteDatabase,
@@ -699,15 +856,17 @@ function readApplicationStateUntransactional(
   const domain = readDomainSnapshotUntransactional(database);
   const projects = readProjects(database);
   const bootstrap = readBootstrap(database, schemaShape);
-  const identity = schemaShape === "current" ? readIdentity(database) : null;
+  const identity = schemaShape === "version-three" ? null : readIdentity(database);
   const grants = readGrants(database);
-  const epochs = schemaShape === "current" ? readEpochs(database) : Object.freeze([]);
+  const epochs = schemaShape === "version-three" ? Object.freeze([]) : readEpochs(database);
   const requests = readRequests(database);
   const decisions = readDecisions(database);
   const decodedAudit = readAudit(database);
   const audit = Object.freeze(decodedAudit.map((event) => event.record));
-  const lifecycle = schemaShape === "current" ? readLifecycle(database) : Object.freeze([]);
-  const grantRelationRows = database.prepare(schemaShape === "current"
+  const lifecycle = schemaShape === "version-three" ? Object.freeze([]) : readLifecycle(database, schemaShape);
+  const executionSequences = schemaShape === "current" ? readExecutionSequences(database) : Object.freeze([]);
+  const executions = schemaShape === "current" ? readExecutionAttempts(database) : Object.freeze([]);
+  const grantRelationRows = database.prepare(schemaShape !== "version-three"
     ? "SELECT grant_id, capability_epoch_id, created_request_id, revoked_request_id FROM authorization_grants ORDER BY grant_id"
     : "SELECT grant_id, created_request_id, revoked_request_id FROM authorization_grants ORDER BY grant_id"
   ).all();
@@ -722,7 +881,7 @@ function readApplicationStateUntransactional(
   const grantById = new Map(grants.map((grant) => [grant.grantId, grant]));
   const grantRelations = grantRelationRows.map((row) => Object.freeze({
     grantId: sqliteText(row.grant_id, "authorization_grants.grant_id"),
-    capabilityEpochId: schemaShape === "current"
+    capabilityEpochId: schemaShape !== "version-three"
       ? sqliteNullableText(row.capability_epoch_id, "authorization_grants.capability_epoch_id")
       : null,
     createdRequestId: sqliteText(row.created_request_id, "authorization_grants.created_request_id"),
@@ -747,7 +906,7 @@ function readApplicationStateUntransactional(
     ) {
       throw persistenceFailure("CORRUPT_ROW", "Bootstrap request binding is incomplete");
     }
-    const fixedActions = bootstrap.vocabularyVersion === 3 ? LEGACY_AUTHORIZATION_ACTIONS : AUTHORIZATION_ACTIONS;
+    const fixedActions = bootstrap.vocabularyVersion === 3 ? LEGACY_AUTHORIZATION_ACTIONS : PHASE1_AUTHORIZATION_ACTIONS;
     const fixedRelations = grantRelations.filter((relation) => relation.createdRequestId === bootstrap.requestId);
     if (fixedRelations.length !== fixedActions.length) {
       throw persistenceFailure("CORRUPT_ROW", "Bootstrap does not own one fixed grant for every implemented action");
@@ -804,21 +963,29 @@ function readApplicationStateUntransactional(
       throw persistenceFailure("CORRUPT_ROW", "Adopted legacy bootstrap does not bind epoch revision one");
     }
   }
-  const expectedActionSetSha256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
+  const phase1ActionSetSha256 = sha256(canonicalJson(PHASE1_AUTHORIZATION_ACTIONS));
+  const currentActionSetSha256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
   for (let index = 0; index < epochs.length; index += 1) {
     const epoch = epochs[index];
     const request = epoch === undefined ? undefined : requestById.get(epoch.requestId);
+    const previousVocabulary = index === 0 ? 4 : epochs[index - 1]?.vocabularyVersion;
+    const isUpgrade = previousVocabulary === 4 && epoch?.vocabularyVersion === 5;
+    const expectedActionSetSha256 = epoch?.vocabularyVersion === 5
+      ? currentActionSetSha256
+      : phase1ActionSetSha256;
     if (
       epoch === undefined ||
       identity === null ||
       epoch.epochRevision !== index + 1 ||
       epoch.actorId !== identity.actorId ||
       epoch.runtimeRootKey !== identity.runtimeRootKey ||
+      previousVocabulary === undefined ||
+      epoch.vocabularyVersion < previousVocabulary ||
       epoch.actionSetSha256 !== expectedActionSetSha256 ||
       epoch.createdAt >= epoch.expiresAt ||
       request === undefined ||
-      request.action !== "authorization.capability.renew" ||
-      request.result !== "renewal" ||
+      request.action !== (isUpgrade ? "authorization.capability.upgrade" : "authorization.capability.renew") ||
+      request.result !== (isUpgrade ? "upgrade" : "renewal") ||
       request.actorId !== epoch.actorId ||
       request.createdAt !== epoch.createdAt
     ) {
@@ -873,7 +1040,12 @@ function readApplicationStateUntransactional(
     if (
       grant === undefined ||
       createdRequest === undefined ||
-      (createdRequest.result !== "bootstrap" && createdRequest.result !== "allow" && createdRequest.result !== "renewal") ||
+      (
+        createdRequest.result !== "bootstrap" &&
+        createdRequest.result !== "allow" &&
+        createdRequest.result !== "renewal" &&
+        createdRequest.result !== "upgrade"
+      ) ||
       (grant.revokedAt === null) !== (revokedRequestId === null) ||
       (createdRequest.result === "bootstrap" && (
         bootstrap === null ||
@@ -892,8 +1064,10 @@ function readApplicationStateUntransactional(
         createdDecision?.grantId !== grant.issuerGrantId ||
         !issuedGrantMatchesDecision(grant, createdDecision)
       )) ||
-      (createdRequest.result === "renewal" && (
-        createdRequest.action !== "authorization.capability.renew" ||
+      ((createdRequest.result === "renewal" || createdRequest.result === "upgrade") && (
+        createdRequest.action !== (createdRequest.result === "upgrade"
+          ? "authorization.capability.upgrade"
+          : "authorization.capability.renew") ||
         capabilityEpoch === undefined ||
         capabilityEpoch.requestId !== createdRequest.requestId ||
         grant.actorId !== capabilityEpoch.actorId ||
@@ -970,9 +1144,14 @@ function readApplicationStateUntransactional(
     const expectedCreatedCount = request.result === "bootstrap"
       ? bootstrap?.vocabularyVersion === 3
         ? LEGACY_AUTHORIZATION_ACTIONS.length
-        : AUTHORIZATION_ACTIONS.length
-      : request.result === "renewal"
-        ? AUTHORIZATION_ACTIONS.length
+        : PHASE1_AUTHORIZATION_ACTIONS.length
+      : request.result === "renewal" || request.result === "upgrade"
+        ? (() => {
+            const epoch = epochs.find((candidate) => candidate.requestId === request.requestId);
+            return epoch?.vocabularyVersion === 5
+              ? AUTHORIZATION_ACTIONS.length
+              : PHASE1_AUTHORIZATION_ACTIONS.length;
+          })()
       : request.result === "allow" && request.action === "authorization.grant.issue"
         ? 1
         : 0;
@@ -984,10 +1163,12 @@ function readApplicationStateUntransactional(
   for (const decision of decisions) {
     const request = requestById.get(decision.requestId);
     const renewal = request?.action === "authorization.capability.renew" && request.result === "renewal";
+    const upgrade = request?.action === "authorization.capability.upgrade" && request.result === "upgrade";
+    const capabilityTransition = renewal || upgrade;
     if (
       request === undefined ||
-      (!renewal && request.result !== decision.result) ||
-      (renewal && (decision.result !== "allow" || decision.reason !== "allowed" ||
+      (!capabilityTransition && request.result !== decision.result) ||
+      (capabilityTransition && (decision.result !== "allow" || decision.reason !== "allowed" ||
         decision.policy !== "allow" || decision.grantId !== null ||
         decision.grantRevision !== null || decision.projectId !== null || decision.resourceRevision !== null)) ||
       request.actorId !== decision.actorId ||
@@ -996,7 +1177,7 @@ function readApplicationStateUntransactional(
       !decisionPolicyIsValid(decision) ||
       !decisionTargetIsValid(request, decision) ||
       (decision.result === "allow") !== (decision.reason === "allowed") ||
-      (decision.result === "allow" && decision.grantId === null && !renewal) ||
+      (decision.result === "allow" && decision.grantId === null && !capabilityTransition) ||
       (decision.grantId === null) !== (decision.grantRevision === null) ||
       (decision.projectId === null) !== (decision.resourceRevision === null)
     ) {
@@ -1008,7 +1189,11 @@ function readApplicationStateUntransactional(
         decision.result !== "deny" ||
         decision.policy === "deny" ||
         decision.grantId === null ||
-        (decision.action !== "authorization.capability.renew" && !isHighRiskAction(decision.action))
+        (
+          decision.action !== "authorization.capability.renew" &&
+          decision.action !== "authorization.capability.upgrade" &&
+          !isHighRiskAction(decision.action)
+        )
       )) ||
       (
         decision.reason !== "allowed" &&
@@ -1066,7 +1251,9 @@ function readApplicationStateUntransactional(
           ? null
           : request.action === "authorization.capability.renew"
             ? "capability.renewed"
-            : applicationAuditKind(request.action);
+            : request.action === "authorization.capability.upgrade"
+              ? "capability.upgraded"
+              : applicationAuditKind(request.action);
     const expectedReason = request?.result === "bootstrap"
       ? "bootstrap"
       : request?.result === "deny"
@@ -1104,11 +1291,110 @@ function readApplicationStateUntransactional(
   if (auditRequests.size !== requests.length || requests.some((request) => !auditRequests.has(request.requestId))) {
     throw persistenceFailure("CORRUPT_ROW", "Every consumed request must have exactly one audit event");
   }
+  const taskById = new Map(domain.tasks.map((task) => [task.id, task]));
+  const executionById = new Map(executions.map((execution) => [execution.executionId, execution]));
+  const sequenceByTask = new Map(executionSequences.map((sequence) => [sequence.taskId, sequence]));
+  if (executionById.size !== executions.length || sequenceByTask.size !== executionSequences.length) {
+    throw persistenceFailure("CORRUPT_ROW", "Execution identity inventory is not unique");
+  }
+  for (const sequence of executionSequences) {
+    const task = taskById.get(sequence.taskId);
+    const attempts = executions.filter((execution) => execution.taskId === sequence.taskId);
+    const active = attempts.filter((execution) => execution.status === "active");
+    if (
+      task === undefined ||
+      task.state !== "running" ||
+      attempts.length !== sequence.lastAttemptNumber ||
+      sequence.revision !== sequence.lastAttemptNumber ||
+      active.length !== 1 ||
+      active[0]?.attemptNumber !== sequence.lastAttemptNumber ||
+      active[0]?.fencingToken !== sequence.currentFencingToken
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Task execution sequence is incomplete or has no unique active attempt");
+    }
+    for (let index = 0; index < attempts.length; index += 1) {
+      const attempt = attempts[index];
+      const previous = index === 0 ? undefined : attempts[index - 1];
+      const next = attempts[index + 1];
+      const request = attempt === undefined ? undefined : requestById.get(attempt.requestId);
+      const decision = attempt === undefined ? undefined : decisionByRequest.get(attempt.requestId);
+      const project = attempt === undefined
+        ? undefined
+        : projects.find((candidate) => candidate.projectId === task.projectId);
+      if (
+        attempt === undefined ||
+        attempt.attemptNumber !== index + 1 ||
+        attempt.fencingToken !== index + 1 ||
+        attempt.revision < 1 ||
+        attempt.leaseRevision < 1 ||
+        attempt.requestedLeaseSeconds < 30 || attempt.requestedLeaseSeconds > 3600 ||
+        attempt.updatedAt < attempt.createdAt ||
+        (attempt.leaseRevision === 1 && attempt.leaseExpiresAt !== new Date(
+          new Date(attempt.createdAt).valueOf() + attempt.requestedLeaseSeconds * 1000,
+        ).toISOString()) ||
+        (attempt.status === "active" && attempt.leaseExpiresAt <= attempt.updatedAt) ||
+        attempt.expectedTaskRevision !== attempt.preTaskRevision ||
+        task.revision < attempt.postTaskRevision ||
+        project === undefined ||
+        attempt.projectResourceRevision > project.resourceRevision ||
+        attempt.projectConfigRevision > project.configRevision ||
+        request === undefined ||
+        request.requestId !== attempt.requestId ||
+        request.action !== (attempt.operationKind === "claim" ? "execution.claim" : "execution.lease.takeover") ||
+        request.result !== "allow" ||
+        request.targetKind !== "execution" ||
+        request.targetId !== attempt.executionId ||
+        request.targetRevision !== 1 ||
+        request.createdAt !== attempt.createdAt ||
+        decision === undefined ||
+        decision.decisionId !== attempt.decisionId ||
+        decision.requestId !== attempt.requestId ||
+        decision.projectId !== task.projectId ||
+        decision.resourceRevision !== attempt.projectResourceRevision ||
+        (attempt.operationKind === "claim" && (
+          index !== 0 ||
+          attempt.postTaskRevision !== attempt.preTaskRevision + 1 ||
+          attempt.supersedesExecutionId !== null ||
+          attempt.predecessorExecutionRevision !== null ||
+          attempt.predecessorLeaseRevision !== null ||
+          attempt.predecessorFencingToken !== null
+        )) ||
+        (attempt.operationKind === "takeover" && (
+          index === 0 ||
+          attempt.postTaskRevision !== attempt.preTaskRevision ||
+          attempt.supersedesExecutionId !== previous?.executionId ||
+          attempt.predecessorExecutionRevision !== (previous?.revision ?? 0) - 1 ||
+          attempt.predecessorLeaseRevision !== previous?.leaseRevision ||
+          attempt.predecessorFencingToken !== previous?.fencingToken
+        )) ||
+        (attempt.status === "active" && (
+          next !== undefined ||
+          attempt.supersededByExecutionId !== null
+        )) ||
+        (attempt.status === "superseded" && (
+          next === undefined ||
+          attempt.supersededByExecutionId !== next.executionId
+        ))
+      ) {
+        throw persistenceFailure("CORRUPT_ROW", "Execution attempt lineage or authorization binding is inconsistent");
+      }
+    }
+  }
+  if (executions.some((execution) => !sequenceByTask.has(execution.taskId))) {
+    throw persistenceFailure("CORRUPT_ROW", "Execution attempt exists without its Task sequence");
+  }
+  for (const request of requests) {
+    if (!request.action.startsWith("execution.") || request.result !== "allow") continue;
+    const execution = executionById.get(request.targetId);
+    if (execution === undefined || request.targetRevision === null || request.targetRevision > execution.revision) {
+      throw persistenceFailure("CORRUPT_ROW", "Accepted execution request refers to an absent or stale execution revision");
+    }
+  }
   const stateWithoutLifecycle = Object.freeze({
     domain, projects, bootstrap, identity, grants, epochs, requests, decisions, audit,
+    executionSequences, executions,
     lifecycle: Object.freeze([]) as readonly ApplicationLifecycleAuthorization[],
   });
-  const currentStateSha256 = applicationStateSha256(stateWithoutLifecycle);
   for (const authorization of lifecycle) {
     const request = requestById.get(authorization.requestId);
     const decision = decisions.find((candidate) => candidate.decisionId === authorization.decisionId);
@@ -1170,7 +1456,10 @@ function readApplicationStateUntransactional(
       authorization.expectedDecisionCount !== authorization.expectedRequestCount - 1 ||
       !(expiresMillis > issuedMillis && expiresMillis - issuedMillis <= 5 * 60 * 1000) ||
       authorization.expiresAt > grant.expiresAt ||
-      (countsAreCurrent && authorization.authorizedStateSha256 !== currentStateSha256)
+      (countsAreCurrent && authorization.authorizedStateSha256 !== applicationStateSha256ForVersion(
+        stateWithoutLifecycle,
+        lifecycleStateDigestVersions.get(authorization) ?? 2,
+      ))
     ) {
       throw persistenceFailure("CORRUPT_ROW", "Lifecycle authorization lineage is incomplete or inconsistent");
     }
@@ -1186,8 +1475,15 @@ export function readVersionThreeApplicationState(database: SqliteDatabase): Appl
   return runReadSnapshot(database, () => readApplicationStateUntransactional(database, "version-three"));
 }
 
-export function applicationStateSha256(state: ApplicationState): string {
-  return sha256(canonicalJson({
+export function readVersionFourApplicationState(database: SqliteDatabase): ApplicationState {
+  return runReadSnapshot(database, () => readApplicationStateUntransactional(database, "version-four"));
+}
+
+function applicationStateSha256ForVersion(
+  state: ApplicationState,
+  version: ApplicationStateDigestVersion,
+): string {
+  const phaseOneProjection = {
     audit: state.audit,
     bootstrap: state.bootstrap,
     decisions: state.decisions,
@@ -1197,7 +1493,37 @@ export function applicationStateSha256(state: ApplicationState): string {
     identity: state.identity,
     registry: state.projects,
     requests: state.requests,
+  };
+  return sha256(canonicalJson(version === 1 ? phaseOneProjection : {
+    ...phaseOneProjection,
+    executionSequences: state.executionSequences,
+    executions: state.executions,
   }));
+}
+
+export function applicationStateSha256(state: ApplicationState): string {
+  return applicationStateSha256ForVersion(state, 2);
+}
+
+export function versionFourApplicationStateSha256(state: ApplicationState): string {
+  return applicationStateSha256ForVersion(state, 1);
+}
+
+function lifecycleAuthorizationDigestVersion(
+  authorization: ApplicationLifecycleAuthorization,
+): ApplicationStateDigestVersion {
+  const version = lifecycleStateDigestVersions.get(authorization);
+  if (version === undefined) {
+    throw persistenceFailure("CORRUPT_ROW", "Lifecycle state digest provenance is unavailable");
+  }
+  return version;
+}
+
+export function applicationStateSha256ForLifecycleAuthorization(
+  state: ApplicationState,
+  authorization: ApplicationLifecycleAuthorization,
+): string {
+  return applicationStateSha256ForVersion(state, lifecycleAuthorizationDigestVersion(authorization));
 }
 
 function lifecycleAuthorizationProjection(record: ApplicationLifecycleAuthorization): Readonly<Record<string, unknown>> {
@@ -1293,7 +1619,11 @@ function validateLifecycleAuthorizationState(
   operation: ApplicationLifecycleAuthorization["operation"],
   generationId: string,
   now: string,
-): Readonly<{ authorization: ApplicationLifecycleAuthorization; stateSha256: string }> {
+): Readonly<{
+  authorization: ApplicationLifecycleAuthorization;
+  stateSha256: string;
+  stateDigestVersion: 1 | 2;
+}> {
   if (!isCanonicalUtcTimestamp(now)) throw persistenceFailure("INVALID_INPUT", "Lifecycle validation time is invalid");
   const authorization = state.lifecycle.find((candidate) => candidate.authorizationId === handoff.authorizationId);
   if (
@@ -1315,7 +1645,8 @@ function validateLifecycleAuthorizationState(
   ) {
     throw persistenceFailure("AUTHORIZATION_DENIED", "Lifecycle authorization is no longer current");
   }
-  const stateSha256 = applicationStateSha256(state);
+  const stateDigestVersion = lifecycleAuthorizationDigestVersion(authorization);
+  const stateSha256 = applicationStateSha256ForVersion(state, stateDigestVersion);
   if (
     stateSha256 !== authorization.authorizedStateSha256 ||
     state.requests.length !== authorization.expectedRequestCount ||
@@ -1324,7 +1655,7 @@ function validateLifecycleAuthorizationState(
   ) {
     throw persistenceFailure("BACKUP_CONFLICT", "Application state changed after lifecycle authorization");
   }
-  return Object.freeze({ authorization, stateSha256 });
+  return Object.freeze({ authorization, stateSha256, stateDigestVersion });
 }
 
 export function validateLifecycleAuthorizationForUse(
@@ -1333,7 +1664,11 @@ export function validateLifecycleAuthorizationForUse(
   operation: ApplicationLifecycleAuthorization["operation"],
   generationId: string,
   now: string,
-): Readonly<{ authorization: ApplicationLifecycleAuthorization; stateSha256: string }> {
+): Readonly<{
+  authorization: ApplicationLifecycleAuthorization;
+  stateSha256: string;
+  stateDigestVersion: 1 | 2;
+}> {
   return validateLifecycleAuthorizationState(readApplicationState(database), handoff, operation, generationId, now);
 }
 
@@ -1343,7 +1678,11 @@ export function validateLifecycleAuthorizationForUseUntransactional(
   operation: ApplicationLifecycleAuthorization["operation"],
   generationId: string,
   now: string,
-): Readonly<{ authorization: ApplicationLifecycleAuthorization; stateSha256: string }> {
+): Readonly<{
+  authorization: ApplicationLifecycleAuthorization;
+  stateSha256: string;
+  stateDigestVersion: 1 | 2;
+}> {
   return validateLifecycleAuthorizationState(readApplicationStateUntransactional(database), handoff, operation, generationId, now);
 }
 
@@ -1487,8 +1826,9 @@ export class ApplicationTransaction {
       `INSERT INTO application_lifecycle_authorizations(
         authorization_id, operation, backup_generation_id, actor_id, runtime_root_key,
         grant_id, grant_revision, request_id, decision_id, audit_id, authorized_state_sha256,
-        expected_request_count, expected_decision_count, expected_audit_count, issued_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        state_digest_version, expected_request_count, expected_decision_count, expected_audit_count,
+        issued_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?)`,
     ).run(
       record.authorizationId, record.operation, record.backupGenerationId, record.actorId,
       record.runtimeRootKey, record.grantId, record.grantRevision, record.requestId,
@@ -1496,6 +1836,117 @@ export class ApplicationTransaction {
       record.expectedRequestCount, record.expectedDecisionCount, record.expectedAuditCount,
       record.issuedAt, record.expiresAt,
     );
+  }
+
+  insertExecutionSequence(record: TaskExecutionSequence): void {
+    this.#database.prepare(
+      `INSERT INTO task_execution_sequences(
+        task_id, last_attempt_number, current_fencing_token, revision
+      ) VALUES (?, ?, ?, ?)`,
+    ).run(record.taskId, record.lastAttemptNumber, record.currentFencingToken, record.revision);
+  }
+
+  advanceExecutionSequence(
+    taskId: string,
+    expectedAttemptNumber: number,
+    expectedFencingToken: number,
+    expectedRevision: number,
+  ): TaskExecutionSequence {
+    const result = this.#database.prepare(
+      `UPDATE task_execution_sequences
+       SET last_attempt_number=last_attempt_number+1,
+           current_fencing_token=current_fencing_token+1,
+           revision=revision+1
+       WHERE task_id=? AND last_attempt_number=? AND current_fencing_token=? AND revision=?`,
+    ).run(taskId, expectedAttemptNumber, expectedFencingToken, expectedRevision);
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Task execution sequence CAS failed", { taskId });
+    }
+    const row = this.#database.prepare(
+      `SELECT task_id, last_attempt_number, current_fencing_token, revision
+       FROM task_execution_sequences WHERE task_id=?`,
+    ).get(taskId);
+    if (row === undefined) throw persistenceFailure("INTEGRITY_ERROR", "Advanced execution sequence is absent", { taskId });
+    return Object.freeze({
+      taskId: sqliteText(row.task_id, "task_execution_sequences.task_id"),
+      lastAttemptNumber: positive(row.last_attempt_number, "task_execution_sequences.last_attempt_number"),
+      currentFencingToken: positive(row.current_fencing_token, "task_execution_sequences.current_fencing_token"),
+      revision: positive(row.revision, "task_execution_sequences.revision"),
+    });
+  }
+
+  insertExecutionAttempt(record: NewExecutionAttemptRecord): void {
+    this.#database.prepare(
+      `INSERT INTO execution_attempts(
+        execution_id, task_id, attempt_number, operation_kind, status, idempotency_key,
+        owner_id, requested_lease_seconds, predecessor_execution_revision,
+        predecessor_lease_revision, predecessor_fencing_token,
+        lease_revision, lease_expires_at, fencing_token, revision,
+        expected_task_revision, pre_task_revision, post_task_revision,
+        project_resource_revision, project_config_revision, request_id, decision_id,
+        supersedes_execution_id, superseded_by_execution_id, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.executionId, record.taskId, record.attemptNumber, record.operationKind, record.status,
+      record.idempotencyKey, record.ownerId, record.requestedLeaseSeconds,
+      record.predecessorExecutionRevision, record.predecessorLeaseRevision,
+      record.predecessorFencingToken, record.leaseRevision, record.leaseExpiresAt,
+      record.fencingToken, record.revision, record.expectedTaskRevision, record.preTaskRevision,
+      record.postTaskRevision, record.projectResourceRevision, record.projectConfigRevision,
+      record.requestId, record.decisionId, record.supersedesExecutionId,
+      record.supersededByExecutionId, record.createdAt, record.updatedAt,
+    );
+  }
+
+  renewExecutionLease(
+    executionId: string,
+    ownerId: string,
+    expectedRevision: number,
+    expectedLeaseRevision: number,
+    expectedFencingToken: number,
+    expectedTaskRevision: number,
+    now: string,
+    leaseExpiresAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE execution_attempts
+       SET lease_revision=lease_revision+1, revision=revision+1,
+           lease_expires_at=?, updated_at=?
+       WHERE execution_id=? AND owner_id=? AND revision=? AND lease_revision=?
+         AND fencing_token=? AND post_task_revision=? AND status='active'
+         AND lease_expires_at>?`,
+    ).run(
+      leaseExpiresAt, now, executionId, ownerId, expectedRevision, expectedLeaseRevision,
+      expectedFencingToken, expectedTaskRevision, now,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Execution lease CAS or fence check failed", { executionId });
+    }
+  }
+
+  supersedeExecutionAttempt(
+    executionId: string,
+    supersededByExecutionId: string,
+    ownerId: string,
+    expectedRevision: number,
+    expectedLeaseRevision: number,
+    expectedFencingToken: number,
+    expectedTaskRevision: number,
+    observedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE execution_attempts
+       SET status='superseded', superseded_by_execution_id=?, revision=revision+1, updated_at=?
+       WHERE execution_id=? AND owner_id=? AND revision=? AND lease_revision=?
+         AND fencing_token=? AND post_task_revision=? AND status='active'
+         AND superseded_by_execution_id IS NULL AND lease_expires_at<=?`,
+    ).run(
+      supersededByExecutionId, observedAt, executionId, ownerId, expectedRevision,
+      expectedLeaseRevision, expectedFencingToken, expectedTaskRevision, observedAt,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Expired execution takeover CAS or fence check failed", { executionId });
+    }
   }
 
   revokeGrant(grantId: string, expectedRevision: number, revokedAt: string, requestId: string): void {

@@ -78,6 +78,14 @@ test("CLI grammar rejects aliases, equals, response files, positionals, repeated
     ["authorization", "list", "--limit", "1", "--unknown", "x"],
     ["authorization", "list", "--limit"],
     ["status", "--limit", "1"],
+    argsFor(["authorization", "issue"], [
+      "action", "execution.claim", "scope", "runtime", "not-before", NOW,
+      "expires-at", "2026-09-01T00:00:00.000Z", "confirm", "ISSUE LOCAL GRANT",
+    ]),
+    argsFor(["authorization", "evaluate"], [
+      "project-id", "project", "expected-resource-revision", "1",
+      "expected-config-revision", "1", "action", "execution.claim",
+    ]),
   ];
   for (const args of invalid) assert.equal(parseCliArguments(args, NOW).ok, false, JSON.stringify(args));
   assert.deepEqual(parseCliArguments(["--format", "json", "unknown"], NOW), {

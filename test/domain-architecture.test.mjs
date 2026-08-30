@@ -10,8 +10,11 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "AUTHORIZATION_ACTIONS",
   "CLI_API_VERSION",
   "DOMAIN_ERROR_CODES",
+  "EXECUTION_APPLICATION_ERROR_CODES",
+  "EXECUTION_AUTHORIZATION_ACTIONS",
   "HIGH_RISK_ACTIONS",
   "PERSISTENCE_ERROR_CODES",
+  "PHASE1_AUTHORIZATION_ACTIONS",
   "PROJECT_REGISTRY_ERROR_CODES",
   "PUBLIC_ERROR_TABLE",
   "PersistenceError",
@@ -25,6 +28,7 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "canIssueGrant",
   "createApplicationService",
   "createDomainSnapshot",
+  "createExecutionApplicationService",
   "createLocalApplicationIngress",
   "createTask",
   "currentSchemaVersion",
@@ -85,11 +89,11 @@ function baseInput() {
   };
 }
 
-test("the package exposes only the intended local Phase 1 product surface", () => {
+test("the package exposes the Phase 1 product plus the narrow Phase 2 execution-claim library surface", () => {
   assert.deepEqual(Object.keys(packageSurface).sort(), [...EXPECTED_RUNTIME_EXPORTS].sort());
   assert.deepEqual(packageSurface.getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "phase1-local-product-cli",
+    phase: "phase2-execution-claim-foundation",
     domainCoreImplemented: true,
     persistenceFoundationImplemented: true,
     projectRegistryImplemented: true,
@@ -97,6 +101,7 @@ test("the package exposes only the intended local Phase 1 product surface", () =
     applicationServiceImplemented: true,
     localPhase1ProductCliImplemented: true,
     backupRestoreDoctorImplemented: true,
+    durableExecutionClaimFoundationImplemented: true,
     productRuntimeImplemented: false,
     executionRuntimeImplemented: false,
     supportedAdapters: [],

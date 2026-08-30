@@ -7,16 +7,20 @@ executable toolchain and feasibility harness, a pure in-memory TypeScript
 Domain Core, a filesystem-identity ProjectRegistry, a finite local runtime
 authorization owner, a typed Project/Task/dependency application service, a
 local SQLite persistence foundation, and a composable local Phase 1 product
-CLI. Schema versions `1` through `4` own metadata, exact Domain snapshots,
+CLI. Schema versions `1` through `5` own metadata, exact Domain snapshots,
 ProjectRegistry, local identity and authorization epochs, grants, requests,
 authorization decisions, lifecycle coordination, and append-only application
-audit. The application service orchestrates business owners in one
+audit; schema `5` additionally owns ordered execution attempts, one active
+execution per Task, lease state, per-Task fencing, and claim idempotency/CAS.
+The application service orchestrates business owners in one
 transaction; persistence never selects a Domain command or grants authority.
 The CLI is only typed ingress, trusted local identity/confirmation setup,
-presentation, and public error mapping. These Phase 1 components are not an
-execution runtime. The repository still implements no dispatcher, port,
-adapter, scheduler, MCP component, execution claim/completion loop, supported
-platform integration, or product safety claim.
+presentation, and public error mapping. A separate typed execution application
+service implements library-only claim, inspection, lease renewal, and safe
+effect-free takeover. This foundation is not an execution backend or product
+execution loop. The repository still implements no dispatcher, port, adapter,
+scheduler, MCP component, external effect intent/receipt/finalization,
+completion loop, supported platform integration, or product safety claim.
 
 ## Authority and ownership
 
@@ -51,22 +55,26 @@ The architecture separates:
   high-risk classification owner.
 - `application`: the implemented typed Project/Task/dependency command and
   exact-query owner, including trusted ingress, authorization decisions,
-  Domain command selection, transaction orchestration, and result mapping.
+  Domain command selection, transaction orchestration, and result mapping; it
+  also owns the typed execution-claim/inspect/renew/effect-free-takeover
+  foundation and the explicit confirmation-bound capability upgrade.
 - `persistence`: the implemented SQLite runtime-root, connection, staged
-  migration, combined schema-v4 repository, transaction, lifecycle handoff,
-  backup, restore, read-only doctor, and typed-corruption owner; later records
-  are added only by their implementing phase.
-- `dispatcher`: durable claim, launch, reconciliation, and recovery workflows.
+  migration, combined schema-v5 repository, transaction, lifecycle handoff,
+  execution attempt/sequence storage, backup, restore, read-only doctor, and
+  typed-corruption owner; later records are added only by their implementing
+  phase.
+- `dispatcher`: planned reconcile-first launch and recovery workflows.
 - `ports`: execution, workspace, scheduler, project-policy, and completion contracts.
 - `adapters`: replaceable implementations, including Manual and Codex execution backends.
 - `interfaces`: the implemented local product CLI, plus a planned MCP surface;
   every business operation shares the application layer.
 
-Only `domain`, `project-registry`, `authorization`, `application`,
-`persistence`, and the local CLI portion of `interfaces` as narrowly described
-above are implemented. Every later name in this list remains accepted design
-direction rather than a current runtime component. No implemented boundary
-authorizes an external action.
+Only `domain`, `project-registry`, `authorization`, `application` (including
+the narrow execution-claim foundation), `persistence`, and the local Phase 1
+CLI portion of `interfaces` as narrowly described above are implemented. Every
+later name in this list remains accepted design direction rather than a current
+runtime component. No implemented boundary invokes or authorizes an external
+effect.
 
 ## Cross-module dependency constraints
 

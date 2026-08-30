@@ -10,14 +10,16 @@ incompatible/corrupt-state handling.
 
 The current implementation stores exact Project/Task Domain snapshots plus the
 Phase 1 ProjectRegistry, local identity, capability epochs, runtime grants,
-application requests, authorization decisions, lifecycle authorizations, and
-sanitized audit. It exposes lifecycle operations, read-only doctor, and the
-typed application transaction owner; it does not authorize a mutation or select
-or invoke a Domain command. The separate product CLI calls these owners and
-never opens SQLite directly. Persistence implements no
-execution, workspace, scheduler, intent/effect, claim, lease, fence, gate,
-completion, adapter, MCP, or dispatcher record. Those records receive physical
-schema only in the later ExecPlan that owns their behavior.
+application requests, authorization decisions, lifecycle authorizations,
+sanitized audit, and the Phase 2A execution-attempt/sequence foundation. It
+exposes lifecycle operations, read-only doctor, and the typed application
+transaction owner; it does not authorize a mutation or select or invoke a
+Domain command. The separate Phase 1 product CLI calls these owners and never
+opens SQLite directly. Persistence implements the local claim, lease, fence,
+idempotency, and CAS records described below, but no execution adapter, durable
+effect intent/observation/receipt/finalization, workspace, scheduler, gate,
+completion, MCP, or dispatcher-run record. Those later records receive physical
+schema only in the ExecPlan that implements their behavior.
 
 Domain values are owned by the [domain contract](domain-contract.md). Future
 external-effect semantics remain owned by the
@@ -39,11 +41,12 @@ The repository ships exactly these immutable migrations:
 | `2`, `0002-phase1-task-storage.sql` | `projects`, `tasks`, `task_dependencies`, and their indexes only |
 | `3`, `0003-phase1-application.sql` | `project_registry`, `application_requests`, `authorization_bootstrap`, `authorization_grants`, `authorization_decisions`, `application_audit`, their indexes, and append-only/revoke-only triggers only |
 | `4`, `0004-phase1-cli.sql` | Schema-v4 local identity, capability epochs, lifecycle authorization handoffs, expanded finite application vocabulary/audit shapes, provenance-aware grants, indexes, and immutable/revoke-only triggers only |
+| `5`, `0005-phase2-execution-claim.sql` | Closed-check expansion for non-grantable capability upgrade and four execution actions, plus `task_execution_sequences`, `execution_attempts`, their indexes, foreign keys, and immutable/CAS transition triggers only |
 
-Later plans append migrations for their own approved records. Phase 2 or Phase
-3 execution, workspace, scheduling, intent/effect, claim/lease/fence,
-gate, completion, adapter, MCP, and dispatcher records are not allocated by
-these migrations and are not current persistence capabilities.
+Later plans append migrations for their own approved records. Schema v5 does
+not pre-allocate execution ports/adapters, external-effect intents,
+observations/receipts/finalization, workspace, scheduling, gates, completion,
+MCP, or dispatcher records; those are not current persistence capabilities.
 
 ### Migration metadata
 
@@ -153,6 +156,36 @@ revision-incrementing revocation. There are still no execution, intent/effect,
 workspace, scheduler, claim/lease/fence, gate, completion, adapter, MCP, or
 dispatcher tables.
 
+Schema version `5` rebuilds only the closed-check application relations that
+must admit the non-grantable upgrade action and four grantable execution
+actions. Bidirectional row-set assertions preserve every prior request,
+bootstrap, grant, decision, audit, and lifecycle-authorization row. Existing
+lifecycle rows receive internal `state_digest_version = 1`, which continues the
+exact schema-v4 application-state projection; schema-v5 lifecycle writers use
+version `2`, whose projection additionally binds execution sequences and
+attempts. The version is persistence provenance and does not alter the closed
+public handoff or its digest. Schema version `5` then adds only:
+
+- `task_execution_sequences`, one row per ever-claimed Task with its exact last
+  attempt number, current fencing token, and positive CAS revision; and
+- `execution_attempts`, one immutable semantic claim/takeover record with Task,
+  ordered attempt, operation kind, status, idempotency key, trusted lease owner,
+  requested lease duration, lease revision/expiry, fence, execution revision,
+  expected/pre/post Task revisions, Project resource/config revisions,
+  authorization request/decision, predecessor revisions, supersession links,
+  and trusted timestamps.
+
+A partial unique index permits at most one `active` attempt for a Task. Deferred
+self-foreign keys allow one atomic supersede-and-insert transaction. Sequence
+advance must be exact `+1`; attempt updates are limited to a current-owner
+lease-renewal CAS or an expired active-attempt supersession CAS. Attempts and
+sequences cannot be deleted. The migration creates neither capability epoch nor
+grant nor execution row, so upgrade authority is never a migration side effect.
+Every prior vocabulary-3/4 row and every version-1 lifecycle digest remains
+strictly readable. Doctor, pre-migration decode, manual-backup verification and
+post-migration decode select the exact recorded projection; they never
+reinterpret a historical digest with the version-2 execution fields.
+
 ## Writer and reader closure
 
 | Records | Only writer | Readers |
@@ -163,6 +196,7 @@ dispatcher tables.
 | `project_registry` | `src/persistence/application-repository.ts` in the accepted application transaction | the combined decoder and application service |
 | `authorization_bootstrap`, `authorization_local_identity`, `authorization_capability_epochs`, `authorization_grants` | `src/persistence/application-repository.ts` in bootstrap, adoption/renewal, or authorized grant transactions | the combined decoder and application authorization owner |
 | `application_requests`, `authorization_decisions`, `application_audit`, `application_lifecycle_authorizations` | `src/persistence/application-repository.ts` in the same decision/operation transaction | the combined decoder, application result mapping, lifecycle verifier, backup verification, and doctor |
+| `task_execution_sequences`, `execution_attempts` | `src/persistence/application-repository.ts` only inside the typed execution application transaction | the combined decoder, execution application owner, backup verification, and doctor |
 | backup generation and manifest | `src/persistence/backup.ts` under the lifecycle lock | the same verifier, restore, and current CLI/doctor surfaces |
 | lifecycle lock and connection receipts | `src/persistence/runtime.ts` | persistence lifecycle operations only |
 | restore intent, retained generation, and restore receipt | `src/persistence/backup.ts` under the lifecycle lock | explicit recovery and current doctor/CLI surfaces |
@@ -282,16 +316,20 @@ a typed result. Checkpoint results are explicit; a `TRUNCATE` checkpoint does
 not claim success while an active reader still needs WAL frames.
 
 The Domain repository decoder reads all Projects, Tasks, and dependency edges,
-checks SQLite storage classes, and invokes `createDomainSnapshot`. The
-schema-v4 application decoder then reads every registry, bootstrap, local
-identity, capability epoch, grant, request, decision, audit, and lifecycle row,
-checks exact storage classes/enums/JSON/time shapes and all cross-record bindings,
-and returns one combined immutable state. It also retains the narrowly defined
-legacy schema-v3 decode needed for upgrade and read-only doctor classification.
-That shared schema-v3 decoder reads the exact released physical shape, including
-the implicit vocabulary version and absent v4-only identity, epoch, and lifecycle
-relations. It applies the same complete application cross-record validation and
-is the sole schema-v3 application classifier for writable startup and doctor.
+checks SQLite storage classes, and invokes `createDomainSnapshot`. The current
+schema-v5 application decoder then reads every registry, bootstrap, local
+identity, capability epoch, grant, request, decision, audit, lifecycle,
+execution-sequence, and execution-attempt row, checks exact storage
+classes/enums/JSON/time shapes and all cross-record bindings, and returns one
+combined immutable state. It proves contiguous epoch vocabularies, exact
+sequence/attempt/fence order, one active attempt per claimed Task, execution
+authorization and request/decision identity, exact Project/Task revisions,
+lease and idempotency semantics, reciprocal supersession, and a `running` Task
+for every schema-v5 execution history. It also retains narrowly defined legacy
+schema-v4 and schema-v3 decoders needed for upgrade and read-only doctor
+classification. Those readers consume the exact released physical shapes and
+apply their complete historical cross-record validation without manufacturing
+new vocabulary, identity, lifecycle, or execution rows.
 For every accepted delegated `authorization.grant.issue`, it also requires the
 new grant's runtime-versus-Project scope, Project identity, and resource
 revision to match the persisted issue decision target; provenance authority
@@ -307,13 +345,17 @@ snapshot/revisions, applies the trusted Domain or Project mutation and applicabl
 registry/grant/epoch/lifecycle changes, appends the request/decision/audit
 records, then decodes terminal combined state before commit.
 
-Accepted schema-v4 bootstrap commits request, immutable bootstrap and local
+Accepted schema-v5 bootstrap commits request, immutable bootstrap and local
 identity records, all nineteen initial grants, and audit atomically. Accepted
-adoption/renewal commits its identity/epoch/grant lineage and
+adoption/upgrade/renewal commits its identity/epoch/grant lineage and
 request/decision/audit unit atomically. Accepted application mutation, bounded
 query, or lifecycle authorization commits request, allow decision, audit, and
 every applicable snapshot, registry, dependency, grant, or handoff change
-atomically. A fully bound authorization
+atomically. Initial execution claim additionally commits request/decision,
+sequence/fence, active attempt, Domain `ready`-to-`running` snapshot, audit, and
+terminal readback as one unit. Inspection is an audited read transaction;
+renewal and expired effect-free takeover commit their exact authorization,
+attempt/sequence CAS, audit, and readback together. A fully bound authorization
 denial commits only its deny request/decision/audit. Domain rejection, stale or
 uncertain identity before a safe decision, duplicate/replayed request,
 corruption, CAS conflict, or injected exception commits no partial operation.
@@ -335,6 +377,7 @@ entry freezes both that checksum and one canonical line ending:
 | `2` | CRLF | `0FC2DEECBC8ABBA31F9E5063A870706320F66C5AEE882E4A05DA0CADCF9CEC7E` |
 | `3` | CRLF | `58D428B10198B7483ECB6CED2F88D8DA81A97B052CF650ED4CD012D7183F0702` |
 | `4` | LF | `3446455B4A49C2339EC22E6B99FFF5DD43908D0BEB45EFCE099A79D732CF6557` |
+| `5` | LF | `27AB1730F5A56A2127479C02570068E6BA1CA3DB565147FB0325AAA412CD5C81` |
 
 The sole lazily loaded registry accepts a migration source only when it is the
 complete exact logical content transported with uniformly LF or uniformly
@@ -520,10 +563,11 @@ external effect, or initialize a replacement at the same path. A database
 newer than the binary is refused. In-place downgrade does not exist; only the
 separately acknowledged verified-backup mechanism can publish older data.
 
-The current repository proves a local schema-v4 persistence/application
-foundation and Phase 1 CLI backup, separately confirmed restore, and read-only
-doctor surfaces on the observed development host. It does not establish a
-release, Windows support, a running/completed execution loop,
-Manual/Codex/Git/Scheduler adapter, claim/completion protocol, MCP server,
-plugin, deployment, or external Project operation. ProjectRegistry inspection
-never authorizes or performs a mutation inside a registered Project.
+The current repository proves a local schema-v5 persistence/application
+foundation, library-only durable execution claims/leases/fences, and Phase 1 CLI
+backup, separately confirmed restore, and read-only doctor surfaces on the
+observed development host. It does not establish a release, Windows support, an
+execution backend or running/completed product loop, external-effect
+intent/receipt/finalization, Manual/Codex/Git/Scheduler adapter, dispatcher, MCP
+server, plugin, deployment, or external Project operation. ProjectRegistry
+inspection never authorizes or performs a mutation inside a registered Project.

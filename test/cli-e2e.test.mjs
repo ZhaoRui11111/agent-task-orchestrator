@@ -236,12 +236,12 @@ test("source CLI completes the local Phase 1 init, Project, Task, backup, restor
     assert.ifError(humanStatus.error);
     assert.equal(humanStatus.status, 0);
     assert.equal(humanStatus.stderr, "");
-    assert.match(humanStatus.stdout, /^OK status initialized=true schemaVersion=4 projectCount=1 taskCount=2 dependencyCount=0 grantCount=20 auditCount=[0-9]+\n$/u);
+    assert.match(humanStatus.stdout, /^OK status initialized=true schemaVersion=5 projectCount=1 taskCount=2 dependencyCount=0 grantCount=20 auditCount=[0-9]+\n$/u);
 
     const backup = invoke(sourceCli, home, ["--format", "json", "backup", "create"]);
     assert.equal(backup.status, 0);
     assert.equal(backup.body.result.kind, "manual");
-    assert.equal(backup.body.result.sourceSchemaVersion, 4);
+    assert.equal(backup.body.result.sourceSchemaVersion, 5);
     assert.equal(backup.body.result.verified, true);
 
     const later = invoke(sourceCli, home, [
@@ -256,7 +256,7 @@ test("source CLI completes the local Phase 1 init, Project, Task, backup, restor
     ]);
     assert.equal(restored.status, 0, JSON.stringify(restored.body));
     assert.equal(restored.body.result.backupGenerationId, backup.body.result.generationId);
-    assert.equal(restored.body.result.targetSchemaVersion, 4);
+    assert.equal(restored.body.result.targetSchemaVersion, 5);
     assert.equal(restored.body.result.dataLossAcknowledged, true);
 
     const missing = invoke(sourceCli, home, [

@@ -246,11 +246,11 @@ test("doctor precedence distinguishes newer schema, migration drift, and corrupt
       store = undefined;
     }
     let database = new DatabaseSync(newer.layout.databasePath);
-    database.prepare("UPDATE schema_metadata SET schema_version=5 WHERE singleton=1").run();
+    database.prepare("UPDATE schema_metadata SET schema_version=6 WHERE singleton=1").run();
     database.exec("PRAGMA user_version=5");
     database.close();
     assert.deepEqual(doctor(newer), {
-      health: "schema_newer", initialized: null, schemaVersion: 5, activeUse: false,
+      health: "schema_newer", initialized: null, schemaVersion: 6, activeUse: false,
       backupInventory: "empty", restoreState: "none",
     });
 

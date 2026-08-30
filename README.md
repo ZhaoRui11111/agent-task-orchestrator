@@ -10,15 +10,20 @@ The repository contains a governance and architecture-contract baseline, an
 executable TypeScript/Node toolchain and feasibility harness, a pure in-memory
 Domain Core for Project/Task rules, a safe local ProjectRegistry, a finite
 runtime authorization model, one typed Project/Task/dependency application
-service, schema-v4 SQLite persistence, and a composable local Phase 1 `ato`
-product CLI. The application service remains the sole business command/query
-owner and atomically coordinates Domain snapshots, registry/grant changes,
-authorization decisions, and sanitized audit. The CLI provides initialization,
+service, schema-v5 SQLite persistence, a composable local Phase 1 `ato` product
+CLI, and a typed library-only durable execution-claim foundation. The
+application owner remains the sole business command/query owner and atomically
+coordinates Domain snapshots, registry/grant changes, authorization decisions,
+execution attempts, leases/fences, and sanitized audit. The CLI provides initialization,
 finite grant management, Project/Task/dependency management, status, backup,
 confirmed restore, and read-only doctor surfaces without copying those rules.
-It still has no executable orchestrator, MCP server, plugin, dispatcher,
-scheduler, execution backend or claim/completion loop, supported adapter,
-supported release, or validated product platform integration.
+The claim foundation exposes typed package APIs for explicit capability
+upgrade, atomic ready-to-running claim, inspection, lease renewal, safe
+effect-free takeover, and stale-fence refusal. It still has no executable
+orchestrator, MCP server, plugin, dispatcher, scheduler, execution backend,
+durable effect intent/receipt/finalization or completion loop, public Phase 2
+CLI, supported adapter, supported release, or validated product platform
+integration.
 
 Unimplemented planned capabilities are not current capabilities. Design
 proposals and roadmaps must remain clearly labeled until their implementations
@@ -75,6 +80,25 @@ pnpm verify:offline
 
 `pnpm dependency:audit` is a separate network-dependent query. Neither the CI
 skeleton nor a command that was not run is evidence of a passing gate.
+
+## Durable execution-claim foundation
+
+The package exports a provisional typed execution application service for the
+narrow Phase 2 claim boundary. Native or migrated schema-v5 runtimes retain the
+nineteen Phase 1 grants: none of the four execution actions exists as authority
+until the local trust root performs the explicit, fresh-confirmation-bound
+capability upgrade. Claim, renewal, and takeover then require current explicit
+grants and exact revision/fence inputs. Expiry is only an observation; takeover
+is safe here solely because this phase has no adapter or possible external
+effect to reconcile.
+
+This service is not reachable through `ato.api/v1` or the `ato` CLI. It neither
+calls a backend nor persists effect intents or receipts, and it must not be used
+as evidence for a product execution loop, adapter, dispatcher, scheduler, or
+platform-support claim. The exact rules are owned by the
+[authorization contract](docs/reference/authorization-contract.md),
+[persistence contract](docs/reference/persistence-contract.md), and
+[reliability protocol](docs/reference/reliability-protocol.md).
 
 ## Local Phase 1 CLI
 

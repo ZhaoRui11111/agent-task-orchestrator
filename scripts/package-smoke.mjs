@@ -117,6 +117,10 @@ const expectedEntries = [
   "package/dist/domain.d.ts.map",
   "package/dist/domain.js",
   "package/dist/domain.js.map",
+  "package/dist/execution-application.d.ts",
+  "package/dist/execution-application.d.ts.map",
+  "package/dist/execution-application.js",
+  "package/dist/execution-application.js.map",
   "package/dist/index.d.ts",
   "package/dist/index.d.ts.map",
   "package/dist/index.js",
@@ -177,6 +181,7 @@ const expectedEntries = [
   "package/migrations/0002-phase1-task-storage.sql",
   "package/migrations/0003-phase1-application.sql",
   "package/migrations/0004-phase1-cli.sql",
+  "package/migrations/0005-phase2-execution-claim.sql",
   "package/package.json",
 ].sort();
 
@@ -222,10 +227,13 @@ try {
     `import {
   AUTHORIZATION_ACTIONS,
   createApplicationService,
+  createExecutionApplicationService,
   currentSchemaVersion,
   getScaffoldStatus,
   inspectProjectRoot,
   type ApplicationIngress,
+  type ExecutionClaimCommand,
+  type ExecutionIngress,
   type OpenPersistenceOptions,
   type RuntimeRootRequest,
 } from "agent-task-orchestrator";
@@ -242,9 +250,14 @@ void currentSchemaVersion();
 void getScaffoldStatus();
 void AUTHORIZATION_ACTIONS;
 void createApplicationService;
+void createExecutionApplicationService;
 void inspectProjectRoot;
 const ingress = null as unknown as ApplicationIngress;
 void ingress;
+const executionIngress = null as unknown as ExecutionIngress;
+const executionClaim = null as unknown as ExecutionClaimCommand;
+void executionIngress;
+void executionClaim;
 `,
     "utf8",
   );
@@ -318,6 +331,33 @@ void ingress;
           supersedesTaskId: null,
         });
         if (!task.ok) throw new Error("package Task creation was rejected");
+        const ready = service.execute({
+          kind: "task.mark_ready",
+          projectId: "project",
+          expectedProjectResourceRevision: 1,
+          taskId: "task",
+          expectedTaskRevision: 1,
+        });
+        if (!ready.ok) throw new Error("package Task readiness was rejected");
+        const upgraded = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
+        if (!upgraded.ok) throw new Error("package capability upgrade was rejected");
+        const execution = m.createExecutionApplicationService(store, {
+          currentActor: () => ({ actorId: "package-actor", principal: "A".repeat(64) }),
+          now: () => issuedAt,
+          nextId: () => randomUUID(),
+          currentLeaseOwner: () => "package-worker",
+        });
+        const claimed = execution.claim({
+          kind: "execution.claim",
+          projectId: "project",
+          expectedProjectResourceRevision: 1,
+          expectedProjectConfigRevision: 1,
+          taskId: "task",
+          expectedTaskRevision: 2,
+          idempotencyKey: "package-claim",
+          leaseDurationSeconds: 60,
+        });
+        if (!claimed.ok) throw new Error("package execution claim was rejected");
         const generationId = randomUUID();
         const backupAuthorization = service.execute({
           kind: "runtime.backup",
@@ -331,6 +371,7 @@ void ingress;
           status: m.getScaffoldStatus(),
           states: m.TASK_STATES,
           snapshot: project.value.projectId === "project" && task.value.id === "task",
+          claim: claimed.value.fencingToken === 1 && claimed.value.taskRevision === 3,
           schema: m.currentSchemaVersion(),
           backup: verified.generationId === backup.generationId,
         }));
@@ -351,7 +392,7 @@ void ingress;
   invariant(importResult.status === 0, `package export failed: ${importResult.stderr}`);
   const imported = JSON.parse(importResult.stdout.trim());
   invariant(
-    imported.status.phase === "phase1-local-product-cli" &&
+    imported.status.phase === "phase2-execution-claim-foundation" &&
       imported.status.domainCoreImplemented === true &&
       imported.status.persistenceFoundationImplemented === true &&
       imported.status.projectRegistryImplemented === true &&
@@ -359,11 +400,13 @@ void ingress;
       imported.status.applicationServiceImplemented === true &&
       imported.status.localPhase1ProductCliImplemented === true &&
       imported.status.backupRestoreDoctorImplemented === true &&
+      imported.status.durableExecutionClaimFoundationImplemented === true &&
       imported.status.productRuntimeImplemented === false &&
       imported.status.executionRuntimeImplemented === false &&
       JSON.stringify(imported.states) === JSON.stringify(["idea", "ready", "running", "waiting", "completed", "cancelled"]) &&
       imported.snapshot === true &&
-      imported.schema === 4 &&
+      imported.claim === true &&
+      imported.schema === 5 &&
       imported.backup === true,
     "package export Domain Core, persistence registry, or capability status drifted",
   );

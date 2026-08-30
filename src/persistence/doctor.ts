@@ -1,6 +1,10 @@
 import { lstatSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { readApplicationState, readVersionThreeApplicationState } from "./application-repository.ts";
+import {
+  readApplicationState,
+  readVersionFourApplicationState,
+  readVersionThreeApplicationState,
+} from "./application-repository.ts";
 import { inspectRestoreInventory, verifyBackupGeneration } from "./backup.ts";
 import { openDiagnosticDatabase, verifyDatabaseIntegrity } from "./database.ts";
 import { PersistenceError } from "./errors.ts";
@@ -183,6 +187,33 @@ function inspectRuntimeDoctorInternal(
           backupInventory === "invalid" ? "backup_invalid" : "upgrade_required",
           state.bootstrap !== null,
           3,
+          false,
+          backupInventory,
+          restoreState,
+        );
+      }
+      if (evidence.schemaVersion === 4) {
+        let state;
+        try {
+          state = readVersionFourApplicationState(database);
+        } catch (error) {
+          if (error instanceof PersistenceError &&
+              (error.code === "CORRUPT_ROW" || error.code === "INTEGRITY_ERROR")) {
+            return result("state_corrupt", null, 4, false, backupInventory, restoreState);
+          }
+          throw error;
+        }
+        const applicationEmpty = state.projects.length === 0 && state.bootstrap === null &&
+          state.identity === null && state.grants.length === 0 && state.epochs.length === 0 &&
+          state.requests.length === 0 && state.decisions.length === 0 && state.audit.length === 0 &&
+          state.lifecycle.length === 0 && state.executionSequences.length === 0 && state.executions.length === 0;
+        if (state.bootstrap === null && !applicationEmpty) {
+          return result("state_corrupt", null, 4, false, backupInventory, restoreState);
+        }
+        return result(
+          backupInventory === "invalid" ? "backup_invalid" : "upgrade_required",
+          state.bootstrap !== null,
+          4,
           false,
           backupInventory,
           restoreState,

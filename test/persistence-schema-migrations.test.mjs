@@ -1,17 +1,24 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import {
   currentSchemaVersion,
+  inspectPrimaryIdentity,
+  inspectRuntimeDoctor,
   openPersistence,
+  recoverInterruptedRestore,
+  restoreBackup,
   verifyBackupGeneration,
 } from "../src/index.ts";
-import { openPrimaryDatabase } from "../src/persistence/database.ts";
+import { restoreBackupForTesting } from "../src/persistence/backup.ts";
+import { normalizeStandaloneDatabase, openPrimaryDatabase } from "../src/persistence/database.ts";
 import {
   readApplicationStateForOwner,
   readDomainForOwner,
+  lifecycleAuthorizationSha256,
+  readVersionFourApplicationState,
 } from "../src/persistence/application-repository.ts";
 import {
   canonicalizeMigrationSqlForTesting,
@@ -19,10 +26,13 @@ import {
   loadMigrationRegistry,
   migrateDatabaseWithRegistryForTesting,
 } from "../src/persistence/migrations.ts";
-import { sha256 } from "../src/persistence/values.ts";
+import { canonicalJson, sha256 } from "../src/persistence/values.ts";
 import {
+  authorizeTestLifecycle,
   cleanupPersistenceFixture,
   createPersistenceFixture,
+  createVersionFourDatabase,
+  createVersionFourLifecycleDatabase,
   createVersionOneDatabase,
   createVersionThreeDatabase,
   createVersionTwoDatabase,
@@ -70,11 +80,15 @@ const EXPECTED_MIGRATION_IDENTITIES = Object.freeze([
     checksumSha256: "3446455B4A49C2339EC22E6B99FFF5DD43908D0BEB45EFCE099A79D732CF6557",
     lineEnding: "lf",
   }),
+  Object.freeze({
+    checksumSha256: "27AB1730F5A56A2127479C02570068E6BA1CA3DB565147FB0325AAA412CD5C81",
+    lineEnding: "lf",
+  }),
 ]);
 
 test("committed migration registry canonicalizes LF and CRLF transport to released bytes", () => {
   const registry = loadMigrationRegistry();
-  assert.equal(currentSchemaVersion(), 4);
+  assert.equal(currentSchemaVersion(), 5);
   assert.deepEqual(
     registry.map(({ version, id, fileName }) => ({ version, id, fileName })),
     [
@@ -82,6 +96,7 @@ test("committed migration registry canonicalizes LF and CRLF transport to releas
       { version: 2, id: "phase1-task-storage", fileName: "0002-phase1-task-storage.sql" },
       { version: 3, id: "phase1-application", fileName: "0003-phase1-application.sql" },
       { version: 4, id: "phase1-product-cli", fileName: "0004-phase1-cli.sql" },
+      { version: 5, id: "phase2-execution-claim", fileName: "0005-phase2-execution-claim.sql" },
     ],
   );
   for (const [index, migration] of registry.entries()) {
@@ -128,10 +143,10 @@ test("fresh initialization atomically applies the complete staged schema", async
   let store;
   try {
     store = await openPersistence(fixture.layout, { applicationVersion: "fresh" });
-    assert.deepEqual(store.migration.appliedVersions, [1, 2, 3, 4]);
+    assert.deepEqual(store.migration.appliedVersions, [1, 2, 3, 4, 5]);
     assert.equal(store.migration.migratedFrom, 0);
     assert.equal(store.migration.preUpgradeBackupGeneration, null);
-    assert.equal(store.migration.history.length, 4);
+    assert.equal(store.migration.history.length, 5);
     const database = new DatabaseSync(fixture.layout.databasePath, { readOnly: true });
     try {
       const tables = database
@@ -147,11 +162,13 @@ test("fresh initialization atomically applies the complete staged schema", async
         "authorization_decisions",
         "authorization_grants",
         "authorization_local_identity",
+        "execution_attempts",
         "migration_history",
         "project_registry",
         "projects",
         "schema_metadata",
         "task_dependencies",
+        "task_execution_sequences",
         "tasks",
       ]);
       assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
@@ -159,7 +176,7 @@ test("fresh initialization atomically applies the complete staged schema", async
         database.prepare("SELECT count(*) AS count FROM pragma_table_info('authorization_grants') WHERE name='source_grant_id'").get().count,
         1,
       );
-      assert.equal(database.prepare("PRAGMA user_version").get().user_version, 4);
+      assert.equal(database.prepare("PRAGMA user_version").get().user_version, 5);
     } finally {
       database.close();
     }
@@ -196,7 +213,7 @@ test("every shipped earlier prefix upgrades only after a verified pre-upgrade ba
   try {
     createVersionOneDatabase(fixture.layout);
     store = await openPersistence(fixture.layout, { applicationVersion: "upgrade" });
-    assert.deepEqual(store.migration.appliedVersions, [2, 3, 4]);
+    assert.deepEqual(store.migration.appliedVersions, [2, 3, 4, 5]);
     assert.equal(store.migration.migratedFrom, 1);
     assert.ok(store.migration.preUpgradeBackupGeneration);
     const generation = verifyBackupGeneration(
@@ -205,20 +222,20 @@ test("every shipped earlier prefix upgrades only after a verified pre-upgrade ba
     );
     assert.equal(generation.manifest.kind, "pre_upgrade");
     assert.equal(generation.manifest.sourceSchemaVersion, 1);
-    assert.equal(store.migration.schemaVersion, 4);
+    assert.equal(store.migration.schemaVersion, 5);
   } finally {
     if (store) await store.close();
     cleanupPersistenceFixture(fixture);
   }
 });
 
-test("the released schema-v2 prefix upgrades to v4 without fabricating ProjectRegistry identity", async () => {
+test("the released schema-v2 prefix upgrades to v5 without fabricating ProjectRegistry or execution identity", async () => {
   const fixture = createPersistenceFixture("migration-v2-upgrade");
   let store;
   try {
     createVersionTwoDatabase(fixture.layout);
     store = await openPersistence(fixture.layout, { applicationVersion: "upgrade-v3" });
-    assert.deepEqual(store.migration.appliedVersions, [3, 4]);
+    assert.deepEqual(store.migration.appliedVersions, [3, 4, 5]);
     assert.equal(store.migration.migratedFrom, 2);
     assert.ok(store.migration.preUpgradeBackupGeneration);
     assert.deepEqual(readDomainForOwner(store), { projects: [{ id: "legacy-project", enabled: true }], tasks: [] });
@@ -231,7 +248,7 @@ test("the released schema-v2 prefix upgrades to v4 without fabricating ProjectRe
   }
 });
 
-test("the released schema-v3 prefix upgrades with byte-semantic application content and no fabricated authority", async () => {
+test("the released schema-v3 prefix upgrades to v5 with byte-semantic application content and no fabricated authority", async () => {
   const fixture = createPersistenceFixture("migration-v3-upgrade");
   let store;
   try {
@@ -241,7 +258,7 @@ test("the released schema-v3 prefix upgrades with byte-semantic application cont
     beforeDatabase.close();
 
     store = await openPersistence(fixture.layout, { applicationVersion: "upgrade-v4" });
-    assert.deepEqual(store.migration.appliedVersions, [4]);
+    assert.deepEqual(store.migration.appliedVersions, [4, 5]);
     assert.equal(store.migration.migratedFrom, 3);
     assert.ok(store.migration.preUpgradeBackupGeneration);
     const backup = verifyBackupGeneration(fixture.layout, store.migration.preUpgradeBackupGeneration);
@@ -263,6 +280,202 @@ test("the released schema-v3 prefix upgrades with byte-semantic application cont
   } finally {
     if (store) await store.close();
     cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("the released schema-v4 prefix upgrades additively to v5 without manufacturing execution authority or attempts", async () => {
+  const fixture = createPersistenceFixture("migration-v4-upgrade");
+  let store;
+  try {
+    createVersionFourDatabase(fixture.layout);
+    store = await openPersistence(fixture.layout, { applicationVersion: "upgrade-v5" });
+    assert.deepEqual(store.migration.appliedVersions, [5]);
+    assert.equal(store.migration.migratedFrom, 4);
+    assert.ok(store.migration.preUpgradeBackupGeneration);
+    const backup = verifyBackupGeneration(fixture.layout, store.migration.preUpgradeBackupGeneration);
+    assert.equal(backup.manifest.kind, "pre_upgrade");
+    assert.equal(backup.manifest.sourceSchemaVersion, 4);
+    assert.equal(backup.manifest.sourceHistory.length, 4);
+    const state = readApplicationStateForOwner(store);
+    assert.equal(state.bootstrap, null);
+    assert.deepEqual(state.executionSequences, []);
+    assert.deepEqual(state.executions, []);
+    assert.equal(state.grants.some((grant) => grant.action.startsWith("execution.")), false);
+    const database = new DatabaseSync(fixture.layout.databasePath, { readOnly: true });
+    assert.equal(database.prepare("SELECT count(*) AS count FROM task_execution_sequences").get().count, 0);
+    assert.equal(database.prepare("SELECT count(*) AS count FROM execution_attempts").get().count, 0);
+    assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
+    database.close();
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("populated schema-v4 lifecycle digests and manual backup provenance remain readable through v5 migration", async () => {
+  const fixture = createPersistenceFixture("migration-v4-lifecycle-digest");
+  let store;
+  try {
+    const legacy = createVersionFourLifecycleDatabase(fixture.layout);
+    const doctor = inspectRuntimeDoctor(fixture.layout.root, fixture.sourceCheckoutRoot);
+    assert.equal(doctor.health, "upgrade_required");
+    assert.equal(doctor.initialized, true);
+    assert.equal(doctor.schemaVersion, 4);
+
+    const sourceDatabase = new DatabaseSync(fixture.layout.databasePath, { readOnly: true });
+    const evidence = inspectSchemaEvidence(sourceDatabase);
+    const sourceState = readVersionFourApplicationState(sourceDatabase);
+    const independentlyProjectedV4Digest = sha256(canonicalJson({
+      audit: sourceState.audit,
+      bootstrap: sourceState.bootstrap,
+      decisions: sourceState.decisions,
+      domain: sourceState.domain,
+      epochs: sourceState.epochs,
+      grants: sourceState.grants,
+      identity: sourceState.identity,
+      registry: sourceState.projects,
+      requests: sourceState.requests,
+    }));
+    assert.equal(legacy.authorizedStateSha256, independentlyProjectedV4Digest);
+    const authorization = sourceState.lifecycle.find(
+      (candidate) => candidate.authorizationId === legacy.authorizationId,
+    );
+    assert.ok(authorization);
+    assert.equal(authorization.authorizedStateSha256, legacy.authorizedStateSha256);
+    sourceDatabase.close();
+
+    const generationDirectory = path.join(fixture.layout.backupGenerationsRoot, legacy.generationId);
+    mkdirSync(generationDirectory);
+    const backupDatabasePath = path.join(generationDirectory, "state.sqlite3");
+    copyFileSync(fixture.layout.databasePath, backupDatabasePath);
+    normalizeStandaloneDatabase(backupDatabasePath);
+    const databaseBytes = readFileSync(backupDatabasePath);
+    const manifest = {
+      schemaVersion: 2,
+      generationId: legacy.generationId,
+      kind: "manual",
+      databaseFile: "state.sqlite3",
+      databaseLength: databaseBytes.byteLength,
+      databaseSha256: sha256(databaseBytes),
+      sourceSchemaVersion: evidence.schemaVersion,
+      sourceRegistryIdentity: evidence.registryIdentity,
+      sourceSchemaFingerprint: evidence.schemaFingerprint,
+      sourceHistory: evidence.history,
+      applicationVersion: "historical-v4",
+      createdAt: "2026-01-01T00:00:01.000Z",
+      provenanceKind: "application",
+      lifecycleAuthorizationId: authorization.authorizationId,
+      lifecycleAuthorizationSha256: lifecycleAuthorizationSha256(authorization),
+      sourceApplicationStateSha256: legacy.authorizedStateSha256,
+    };
+    writeFileSync(path.join(generationDirectory, "manifest.json"), canonicalJson(manifest), { encoding: "utf8" });
+    const verified = verifyBackupGeneration(fixture.layout, legacy.generationId);
+    assert.equal(verified.manifest.sourceSchemaVersion, 4);
+    assert.equal(verified.manifest.sourceApplicationStateSha256, legacy.authorizedStateSha256);
+
+    store = await openPersistence(fixture.layout, { applicationVersion: "upgrade-populated-v4" });
+    assert.deepEqual(store.migration.appliedVersions, [5]);
+    const migrated = readApplicationStateForOwner(store);
+    assert.equal(migrated.lifecycle.length, 1);
+    assert.equal(migrated.lifecycle[0]?.authorizedStateSha256, legacy.authorizedStateSha256);
+    assert.deepEqual(migrated.executionSequences, []);
+    assert.deepEqual(migrated.executions, []);
+    await store.close();
+    store = undefined;
+    const migratedDatabase = new DatabaseSync(fixture.layout.databasePath, { readOnly: true });
+    const digestRows = migratedDatabase.prepare(
+      "SELECT authorization_id, state_digest_version FROM application_lifecycle_authorizations",
+    ).all().map((row) => ({
+      authorization_id: row.authorization_id,
+      state_digest_version: row.state_digest_version,
+    }));
+    migratedDatabase.close();
+    assert.deepEqual(
+      digestRows,
+      [{ authorization_id: legacy.authorizationId, state_digest_version: 1 }],
+    );
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("migrated schema-v4 lifecycle digest provenance survives current-v5 backup and direct or recovered restore", async () => {
+  for (const mode of ["direct", "recover-after-publish"]) {
+    const fixture = createPersistenceFixture(`migration-v4-lifecycle-${mode}`);
+    let store;
+    try {
+      const issuedAtMillis = Date.now() - 5_000;
+      const legacy = createVersionFourLifecycleDatabase(
+        fixture.layout,
+        `v4-lifecycle-${mode}`,
+        {
+          backupAt: new Date(issuedAtMillis).toISOString(),
+          authorizationExpiresAt: new Date(issuedAtMillis + 5 * 60 * 1000).toISOString(),
+        },
+      );
+      store = await openPersistence(fixture.layout, { applicationVersion: `upgrade-v4-lifecycle-${mode}` });
+      assert.deepEqual(store.migration.appliedVersions, [5]);
+      const migrated = readApplicationStateForOwner(store);
+      const authorization = migrated.lifecycle.find(
+        (candidate) => candidate.authorizationId === legacy.authorizationId,
+      );
+      assert.ok(authorization);
+
+      const backup = await store.createBackup(authorization);
+      assert.equal(backup.generationId, legacy.generationId);
+      assert.equal(backup.manifest.sourceSchemaVersion, 5);
+      assert.equal(backup.manifest.sourceApplicationStateSha256, legacy.authorizedStateSha256);
+
+      const verified = verifyBackupGeneration(fixture.layout, legacy.generationId);
+      assert.equal(verified.manifest.sourceSchemaVersion, 5);
+      assert.equal(verified.manifest.sourceApplicationStateSha256, legacy.authorizedStateSha256);
+
+      const restoreAuthorization = authorizeTestLifecycle(store, "runtime.restore", legacy.generationId);
+      await store.close();
+      store = undefined;
+      const expectedCurrent = await inspectPrimaryIdentity(fixture.layout);
+      const request = {
+        generationId: legacy.generationId,
+        expectedCurrent,
+        acknowledgeDataLoss: true,
+        applicationVersion: `restore-v4-lifecycle-${mode}`,
+        authorization: restoreAuthorization,
+      };
+      let receipt;
+      if (mode === "direct") {
+        receipt = await restoreBackup(fixture.layout, request);
+      } else {
+        let restoreId;
+        await assert.rejects(
+          restoreBackupForTesting(
+            fixture.layout,
+            request,
+            { afterPublish: () => { throw new Error("interrupt migrated digest restore"); } },
+          ),
+          (error) => {
+            expectPersistenceError(error, "RESTORE_RECOVERY_REQUIRED");
+            restoreId = error.details.restoreId;
+            return true;
+          },
+        );
+        assert.ok(restoreId);
+        receipt = await recoverInterruptedRestore(fixture.layout);
+        assert.equal(receipt.restoreId, restoreId);
+      }
+      assert.equal(receipt.backupGenerationId, legacy.generationId);
+
+      store = await openPersistence(fixture.layout, { applicationVersion: `read-v4-lifecycle-${mode}` });
+      const restored = readApplicationStateForOwner(store);
+      assert.equal(restored.lifecycle.length, 1);
+      assert.equal(restored.lifecycle[0]?.authorizationId, legacy.authorizationId);
+      assert.equal(restored.lifecycle[0]?.authorizedStateSha256, legacy.authorizedStateSha256);
+      assert.deepEqual(restored.executionSequences, []);
+      assert.deepEqual(restored.executions, []);
+    } finally {
+      if (store) await store.close();
+      cleanupPersistenceFixture(fixture);
+    }
   }
 });
 
@@ -341,6 +554,7 @@ test("schema-v4 identity, epoch, and lifecycle relations have exact mandatory co
         ["decision_id", "TEXT", 1, 0],
         ["audit_id", "TEXT", 1, 0],
         ["authorized_state_sha256", "TEXT", 1, 0],
+        ["state_digest_version", "INTEGER", 1, 0],
         ["expected_request_count", "INTEGER", 1, 0],
         ["expected_decision_count", "INTEGER", 1, 0],
         ["expected_audit_count", "INTEGER", 1, 0],
@@ -405,7 +619,7 @@ test("schema-v4 identity, epoch, and lifecycle relations have exact mandatory co
       "v4-null-lifecycle", "runtime.backup", "11111111-1111-4111-8111-111111111111",
       bootstrap.actor_id, bootstrap.runtime_root_key, "v3-grant-01", 1,
       "v3-inspect-request", "v3-inspect-decision", "v3-inspect-audit", "C".repeat(64),
-      2, 1, 2, "2026-01-01T00:00:01.000Z", "2026-01-01T00:05:01.000Z",
+      2, 2, 1, 2, "2026-01-01T00:00:01.000Z", "2026-01-01T00:05:01.000Z",
     ]);
 
     assert.equal(database.prepare("SELECT count(*) AS count FROM authorization_local_identity").get().count, 1);
@@ -479,7 +693,7 @@ test("a failed appended migration rolls back atomically and the shipped registry
       const extended = Object.freeze([
         ...registry,
         Object.freeze({
-          version: 5,
+          version: 6,
           id: "deliberate-test-failure",
           fileName: "test-only-invalid.sql",
           checksumSha256: sha256(sql),
@@ -498,7 +712,7 @@ test("a failed appended migration rolls back atomically and the shipped registry
         database.prepare("SELECT count(*) AS count FROM sqlite_schema WHERE name='should_rollback'").get().count,
         0,
       );
-      assert.equal(inspectSchemaEvidence(database).schemaVersion, 4);
+      assert.equal(inspectSchemaEvidence(database).schemaVersion, 5);
     } finally {
       database.close();
     }
@@ -551,7 +765,7 @@ const mismatchCases = [
     name: "newer schema",
     code: "SCHEMA_NEWER",
     mutate(database) {
-      database.prepare("UPDATE schema_metadata SET schema_version=5 WHERE singleton=1").run();
+      database.prepare("UPDATE schema_metadata SET schema_version=6 WHERE singleton=1").run();
       database.exec("PRAGMA user_version=5");
     },
   },

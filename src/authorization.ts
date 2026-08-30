@@ -1,4 +1,4 @@
-export const AUTHORIZATION_ACTIONS = Object.freeze([
+export const PHASE1_AUTHORIZATION_ACTIONS = Object.freeze([
   "authorization.grant.issue",
   "authorization.grant.inspect",
   "authorization.grant.revoke",
@@ -18,6 +18,18 @@ export const AUTHORIZATION_ACTIONS = Object.freeze([
   "runtime.status",
   "runtime.backup",
   "runtime.restore",
+] as const);
+
+export const EXECUTION_AUTHORIZATION_ACTIONS = Object.freeze([
+  "execution.claim",
+  "execution.claim.inspect",
+  "execution.lease.renew",
+  "execution.lease.takeover",
+] as const);
+
+export const AUTHORIZATION_ACTIONS = Object.freeze([
+  ...PHASE1_AUTHORIZATION_ACTIONS,
+  ...EXECUTION_AUTHORIZATION_ACTIONS,
 ] as const);
 
 export const HIGH_RISK_ACTIONS = Object.freeze([

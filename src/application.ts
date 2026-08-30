@@ -1,5 +1,6 @@
 import {
   AUTHORIZATION_ACTIONS,
+  PHASE1_AUTHORIZATION_ACTIONS,
   canIssueGrant,
   evaluateAuthorization,
   isAuthorizationAction,
@@ -63,6 +64,7 @@ export const APPLICATION_ERROR_CODES = Object.freeze([
   "DOMAIN_REJECTED",
   "SCOPE_EXPANSION_DENIED",
   "CAPABILITY_RENEWAL_NOT_DUE",
+  "CAPABILITY_UPGRADE_NOT_ELIGIBLE",
 ] as const);
 
 export type ApplicationErrorCode = (typeof APPLICATION_ERROR_CODES)[number];
@@ -124,8 +126,13 @@ export interface RenewalCommand {
   readonly expiresAt: string;
 }
 
+export interface CapabilityUpgradeCommand {
+  readonly kind: "authorization.capability.upgrade";
+  readonly expiresAt: string;
+}
+
 export interface CapabilityEpochResult {
-  readonly mode: "initialized" | "adopted" | "renewed";
+  readonly mode: "initialized" | "adopted" | "renewed" | "upgraded";
   readonly expiresAt: string;
   readonly capabilityCount: number;
   readonly epochRevision: number;
@@ -353,14 +360,20 @@ function parseScope(value: unknown): AuthorizationScope | null {
 }
 
 function parseCommand(value: unknown): ApplicationCommand | null {
-  let kind: AuthorizationAction;
+  let kind: ApplicationCommand["kind"];
   try {
     if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) return null;
     const descriptor = Object.getOwnPropertyDescriptor(value, "kind");
-    if (descriptor === undefined || !("value" in descriptor) || !descriptor.enumerable || !isAuthorizationAction(descriptor.value)) return null;
-    kind = descriptor.value;
+    if (
+      descriptor === undefined ||
+      !("value" in descriptor) ||
+      !descriptor.enumerable ||
+      typeof descriptor.value !== "string" ||
+      !(PHASE1_AUTHORIZATION_ACTIONS as readonly string[]).includes(descriptor.value)
+    ) return null;
+    kind = descriptor.value as ApplicationCommand["kind"];
   } catch {
     return null;
   }
@@ -509,7 +522,11 @@ function refreshOperationTime(identity: OperationIdentity, ingress: ApplicationI
 }
 
 function confirmHighRisk(identity: OperationIdentity, action: ApplicationAction, ingress: ApplicationIngress): boolean {
-  if (action !== "authorization.capability.renew" && !isHighRiskAction(action)) return true;
+  if (
+    action !== "authorization.capability.renew" &&
+    action !== "authorization.capability.upgrade" &&
+    !isHighRiskAction(action)
+  ) return true;
   try {
     return ingress.confirmHighRisk(Object.freeze({
       actorId: identity.actor.actorId,
@@ -551,6 +568,13 @@ function parseRenewal(value: unknown): RenewalCommand | null {
     : null;
 }
 
+function parseCapabilityUpgrade(value: unknown): CapabilityUpgradeCommand | null {
+  const record = exactRecord(value, ["kind", "expiresAt"]);
+  return record !== null && record.kind === "authorization.capability.upgrade" && timestamp(record.expiresAt)
+    ? Object.freeze({ kind: record.kind, expiresAt: record.expiresAt })
+    : null;
+}
+
 function sameLocalIdentity(state: ApplicationState, identity: OperationIdentity, root: ProjectRootIdentity): boolean {
   return state.identity !== null &&
     state.identity.actorId === identity.actor.actorId &&
@@ -559,11 +583,17 @@ function sameLocalIdentity(state: ApplicationState, identity: OperationIdentity,
     state.identity.runtimeRootKey === root.rootKey;
 }
 
-const CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
+const PHASE1_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(PHASE1_AUTHORIZATION_ACTIONS));
+const CURRENT_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
+
+function actionsForVocabulary(version: 4 | 5): readonly AuthorizationAction[] {
+  return version === 4 ? PHASE1_AUTHORIZATION_ACTIONS : AUTHORIZATION_ACTIONS;
+}
 
 interface RenewalAssessment {
   readonly mode: "adopted" | "renewed";
   readonly nextEpochRevision: number;
+  readonly vocabularyVersion: 4 | 5;
 }
 
 function assessRenewal(
@@ -583,11 +613,13 @@ function assessRenewal(
       grant.expiresAt === bootstrap.expiresAt
     );
     if (legacyOrigin.some((grant) => grant.revokedAt !== null && grant.expiresAt > identity.now)) return "not_due";
-    return Object.freeze({ mode: "adopted", nextEpochRevision: 1 });
+    return Object.freeze({ mode: "adopted", nextEpochRevision: 1, vocabularyVersion: 4 as const });
   }
   const localIdentity = state.identity;
   if (localIdentity === null || !sameLocalIdentity(state, identity, root)) return "authorization_denied";
   const latestEpoch = state.epochs.at(-1);
+  const vocabularyVersion = latestEpoch?.vocabularyVersion ?? 4;
+  const currentActions = actionsForVocabulary(vocabularyVersion);
   const originActor = localIdentity.actorId;
   const originCreatedAt = latestEpoch?.createdAt ?? bootstrap.createdAt;
   const originExpiresAt = latestEpoch?.expiresAt ?? bootstrap.expiresAt;
@@ -598,11 +630,53 @@ function assessRenewal(
     grant.notBefore === originCreatedAt &&
     grant.expiresAt === originExpiresAt
   );
-  if (currentOrigin.length !== AUTHORIZATION_ACTIONS.length) return "authorization_denied";
+  if (currentOrigin.length !== currentActions.length) return "authorization_denied";
+  if (!currentActions.every((action) => currentOrigin.some((grant) => grant.action === action))) return "authorization_denied";
   const renewalThreshold = new Date(new Date(identity.now).valueOf() + 7 * 24 * 60 * 60 * 1000).toISOString();
   if (originExpiresAt > renewalThreshold) return "not_due";
   if (originExpiresAt > identity.now && currentOrigin.some((grant) => grant.revokedAt !== null)) return "not_due";
-  return Object.freeze({ mode: "renewed", nextEpochRevision: (latestEpoch?.epochRevision ?? 0) + 1 });
+  return Object.freeze({
+    mode: "renewed",
+    nextEpochRevision: (latestEpoch?.epochRevision ?? 0) + 1,
+    vocabularyVersion,
+  });
+}
+
+interface UpgradeAssessment {
+  readonly nextEpochRevision: number;
+}
+
+function assessCapabilityUpgrade(
+  state: ApplicationState,
+  identity: OperationIdentity,
+  root: ProjectRootIdentity,
+): UpgradeAssessment | "authorization_denied" | "not_initialized" | "not_eligible" {
+  const bootstrap = state.bootstrap;
+  if (bootstrap === null) return "not_initialized";
+  if (!sameRootIdentity(bootstrap, root) || !sameLocalIdentity(state, identity, root)) {
+    return "authorization_denied";
+  }
+  const latestEpoch = state.epochs.at(-1);
+  const currentVocabulary = latestEpoch?.vocabularyVersion ?? bootstrap.vocabularyVersion;
+  if (currentVocabulary === 5) return "not_eligible";
+  if (currentVocabulary !== 4 || (bootstrap.vocabularyVersion === 3 && latestEpoch === undefined)) {
+    return "not_eligible";
+  }
+  const originCreatedAt = latestEpoch?.createdAt ?? bootstrap.createdAt;
+  const originExpiresAt = latestEpoch?.expiresAt ?? bootstrap.expiresAt;
+  const currentOrigin = state.grants.filter((grant) =>
+    grant.actorId === identity.actor.actorId &&
+    grant.issuerGrantId === null &&
+    grant.sourceGrantId === null &&
+    grant.notBefore === originCreatedAt &&
+    grant.expiresAt === originExpiresAt
+  );
+  if (
+    currentOrigin.length !== PHASE1_AUTHORIZATION_ACTIONS.length ||
+    !PHASE1_AUTHORIZATION_ACTIONS.every((action) => currentOrigin.some((grant) => grant.action === action)) ||
+    currentOrigin.some((grant) => grant.revokedAt !== null || grant.notBefore > identity.now || grant.expiresAt <= identity.now)
+  ) return "not_eligible";
+  return Object.freeze({ nextEpochRevision: (latestEpoch?.epochRevision ?? 0) + 1 });
 }
 
 function affectedProjectIds(mutation: DomainMutation): readonly string[] {
@@ -861,6 +935,17 @@ function domainMutation(command: ApplicationCommand, state: ApplicationState): D
       return failed("STALE_REVISION", "Task identity, Project, or revision is stale", null, { taskId: command.taskId });
     }
   }
+  if (
+    command.kind === "task.cancel" &&
+    state.executions.some((execution) => execution.taskId === command.taskId && execution.status === "active")
+  ) {
+    return failed(
+      "DOMAIN_REJECTED",
+      "An active execution claim requires a later verified interruption path before Task cancellation",
+      null,
+      { domainCode: "EXTERNAL_PRECONDITION_FAILED" },
+    );
+  }
   let result;
   switch (command.kind) {
     case "task.create":
@@ -978,6 +1063,7 @@ function outputFor(command: ApplicationCommand, state: ApplicationState, schemaV
 
 export interface ApplicationService {
   bootstrap(command: BootstrapCommand): ApplicationResult<Readonly<{ actorId: string; grantIds: readonly string[] }>>;
+  upgrade(command: CapabilityUpgradeCommand): ApplicationResult<CapabilityEpochResult>;
   renew(command: RenewalCommand): ApplicationResult<CapabilityEpochResult>;
   execute(command: ApplicationCommand): ApplicationResult<unknown>;
 }
@@ -1002,7 +1088,7 @@ function createApplicationServiceInternal(
     }
     const grantIds: string[] = [];
     try {
-      for (const action of AUTHORIZATION_ACTIONS) {
+      for (const action of PHASE1_AUTHORIZATION_ACTIONS) {
         const grantId = ingress.nextId("grant");
         if (!operationalIdentifier(grantId) || grantIds.includes(grantId)) {
           return failed("INVALID_INPUT", `Trusted grant identity is invalid or repeated for ${action}`, identity);
@@ -1041,7 +1127,7 @@ function createApplicationServiceInternal(
         createdAt: identity.now,
       }));
       hooks.afterStage?.("identity");
-      for (const [index, action] of AUTHORIZATION_ACTIONS.entries()) {
+      for (const [index, action] of PHASE1_AUTHORIZATION_ACTIONS.entries()) {
         const grantId = grantIds[index];
         if (grantId === undefined) throw new TypeError("Trusted bootstrap grant identity is absent");
         transaction.insertGrant(Object.freeze({
@@ -1066,6 +1152,144 @@ function createApplicationServiceInternal(
         throw new TypeError("Bootstrap terminal readback did not match");
       }
       return succeeded(Object.freeze({ actorId: identity.actor.actorId, grantIds: Object.freeze(grantIds) }), identity);
+    });
+  };
+
+  const upgrade = (value: CapabilityUpgradeCommand): ApplicationResult<CapabilityEpochResult> => {
+    const command = parseCapabilityUpgrade(value);
+    if (command === null) return failed("INVALID_INPUT", "Capability upgrade input is invalid");
+    let identity = operationIdentity(ingress);
+    if (identity === null) return failed("INVALID_INPUT", "Trusted capability upgrade ingress is invalid");
+    if (!confirmHighRisk(identity, "authorization.capability.upgrade", ingress)) {
+      return failed("AUTHORIZATION_DENIED", "Trusted capability upgrade confirmation is required", identity, {
+        reason: "confirmation_required",
+      });
+    }
+    const refreshedIdentity = refreshOperationTime(identity, ingress);
+    if (refreshedIdentity === null) {
+      return failed("INVALID_INPUT", "Trusted capability upgrade time could not be refreshed", identity);
+    }
+    identity = refreshedIdentity;
+    const minimumExpiry = new Date(new Date(identity.now).valueOf() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const maximumExpiry = new Date(new Date(identity.now).valueOf() + 31 * 24 * 60 * 60 * 1000).toISOString();
+    if (command.expiresAt <= minimumExpiry || command.expiresAt > maximumExpiry) {
+      return failed("INVALID_INPUT", "Capability upgrade expiry is outside the finite window", identity);
+    }
+    const runtimeIdentity = checkedRuntimeRoot(store.layout.root, identity);
+    if ("ok" in runtimeIdentity) return runtimeIdentity;
+    const preflightState = readApplicationStateForOwner(store);
+    const preflightAssessment = assessCapabilityUpgrade(preflightState, identity, runtimeIdentity);
+    if (typeof preflightAssessment === "string") {
+      return preflightAssessment === "not_initialized"
+        ? failed("BOOTSTRAP_REQUIRED", "Trusted authorization bootstrap has not been completed", identity)
+        : preflightAssessment === "authorization_denied"
+          ? failed("AUTHORIZATION_DENIED", "Trusted local identity does not match the initialized runtime", identity)
+          : failed("CAPABILITY_UPGRADE_NOT_ELIGIBLE", "Current capability origin is not eligible for upgrade", identity);
+    }
+    const preflightStateSha256 = applicationStateSha256(preflightState);
+    const preflightEpochRevision = preflightState.epochs.at(-1)?.epochRevision ?? 0;
+    let epochId: string;
+    const grantIds: string[] = [];
+    try {
+      epochId = ingress.nextId("epoch");
+      for (const action of AUTHORIZATION_ACTIONS) {
+        const grantId = ingress.nextId("grant");
+        if (!operationalIdentifier(grantId) || grantIds.includes(grantId) || grantId === epochId) {
+          return failed("INVALID_INPUT", `Trusted upgrade grant identity is invalid or repeated for ${action}`, identity);
+        }
+        grantIds.push(grantId);
+      }
+    } catch {
+      return failed("INVALID_INPUT", "Trusted capability upgrade identities could not be obtained", identity);
+    }
+    if (!operationalIdentifier(epochId)) {
+      return failed("INVALID_INPUT", "Trusted capability epoch identity is invalid", identity);
+    }
+    hooks.beforeTransaction?.();
+    return withApplicationTransaction(store, (transaction) => {
+      const state = transaction.read();
+      if (
+        applicationStateSha256(state) !== preflightStateSha256 ||
+        (state.epochs.at(-1)?.epochRevision ?? 0) !== preflightEpochRevision
+      ) {
+        return failed("STALE_REVISION", "Capability upgrade preflight is stale", identity);
+      }
+      const assessment = assessCapabilityUpgrade(state, identity, runtimeIdentity);
+      if (typeof assessment === "string") {
+        return assessment === "not_initialized"
+          ? failed("BOOTSTRAP_REQUIRED", "Trusted authorization bootstrap has not been completed", identity)
+          : assessment === "authorization_denied"
+            ? failed("AUTHORIZATION_DENIED", "Trusted local identity does not match the initialized runtime", identity)
+            : failed("CAPABILITY_UPGRADE_NOT_ELIGIBLE", "Current capability origin is not eligible for upgrade", identity);
+      }
+      if (assessment.nextEpochRevision !== preflightAssessment.nextEpochRevision) {
+        return failed("STALE_REVISION", "Capability upgrade lineage is stale", identity);
+      }
+      const target: BoundTarget = Object.freeze({ kind: "runtime", id: "runtime", revision: null, project: null });
+      transaction.insertRequest(requestRecord(identity, "authorization.capability.upgrade", target, "upgrade"));
+      hooks.afterStage?.("request");
+      transaction.insertCapabilityEpoch(Object.freeze({
+        epochId,
+        epochRevision: assessment.nextEpochRevision,
+        actorId: identity.actor.actorId,
+        runtimeRootKey: runtimeIdentity.rootKey,
+        vocabularyVersion: 5 as const,
+        actionSetSha256: CURRENT_CAPABILITY_ACTION_SET_SHA256,
+        requestId: identity.requestId,
+        createdAt: identity.now,
+        expiresAt: command.expiresAt,
+      }));
+      hooks.afterStage?.("epoch");
+      for (const [index, action] of AUTHORIZATION_ACTIONS.entries()) {
+        const grantId = grantIds[index];
+        if (grantId === undefined) throw new TypeError("Trusted upgrade grant identity is absent");
+        transaction.insertGrant(Object.freeze({
+          grantId,
+          revision: 1,
+          actorId: identity.actor.actorId,
+          action,
+          scope: Object.freeze({ kind: "runtime", projectId: null, resourceRevision: null, configRevision: null }),
+          notBefore: identity.now,
+          expiresAt: command.expiresAt,
+          revokedAt: null,
+          issuerGrantId: null,
+          sourceGrantId: null,
+          capabilityEpochId: epochId,
+          createdRequestId: identity.requestId,
+        }));
+        hooks.afterStage?.(`grant:${action}`);
+      }
+      transaction.insertDecision(Object.freeze({
+        decisionId: identity.decisionId,
+        requestId: identity.requestId,
+        actorId: identity.actor.actorId,
+        action: "authorization.capability.upgrade" as const,
+        result: "allow" as const,
+        reason: "allowed" as const,
+        policy: "allow" as const,
+        grantId: null,
+        grantRevision: null,
+        projectId: null,
+        resourceRevision: null,
+        createdAt: identity.now,
+      }));
+      hooks.afterStage?.("decision");
+      transaction.insertAudit(auditRecord(identity, target, "capability.upgraded", "accepted", "accepted"));
+      hooks.afterStage?.("audit");
+      const readback = transaction.read();
+      const epoch = readback.epochs.find((candidate) => candidate.epochId === epochId);
+      if (
+        epoch === undefined ||
+        epoch.vocabularyVersion !== 5 ||
+        epoch.epochRevision !== assessment.nextEpochRevision ||
+        !grantIds.every((grantId) => readback.grants.some((grant) => grant.grantId === grantId))
+      ) throw new TypeError("Capability upgrade terminal readback did not match");
+      return succeeded(Object.freeze({
+        mode: "upgraded" as const,
+        expiresAt: epoch.expiresAt,
+        capabilityCount: AUTHORIZATION_ACTIONS.length,
+        epochRevision: epoch.epochRevision,
+      }), identity);
     });
   };
 
@@ -1100,11 +1324,12 @@ function createApplicationServiceInternal(
     const preflightStateSha256 = applicationStateSha256(preflightState);
     const preflightIdentityPresent = preflightState.identity !== null;
     const preflightEpochRevision = preflightState.epochs.at(-1)?.epochRevision ?? 0;
+    const renewalActions = actionsForVocabulary(preflightAssessment.vocabularyVersion);
     let epochId: string;
     const grantIds: string[] = [];
     try {
       epochId = ingress.nextId("epoch");
-      for (const action of AUTHORIZATION_ACTIONS) {
+      for (const action of renewalActions) {
         const grantId = ingress.nextId("grant");
         if (!operationalIdentifier(grantId) || grantIds.includes(grantId) || grantId === epochId) {
           return failed("INVALID_INPUT", `Trusted renewal grant identity is invalid or repeated for ${action}`, identity);
@@ -1133,7 +1358,11 @@ function createApplicationServiceInternal(
             ? failed("BOOTSTRAP_REQUIRED", "Trusted authorization bootstrap has not been completed", identity)
             : failed("AUTHORIZATION_DENIED", "Trusted local identity does not match the initialized runtime", identity);
       }
-      if (assessment.mode !== preflightAssessment.mode || assessment.nextEpochRevision !== preflightAssessment.nextEpochRevision) {
+      if (
+        assessment.mode !== preflightAssessment.mode ||
+        assessment.nextEpochRevision !== preflightAssessment.nextEpochRevision ||
+        assessment.vocabularyVersion !== preflightAssessment.vocabularyVersion
+      ) {
         return failed("STALE_REVISION", "Capability renewal lineage is stale", identity);
       }
       const target: BoundTarget = Object.freeze({ kind: "runtime", id: "runtime", revision: null, project: null });
@@ -1159,14 +1388,16 @@ function createApplicationServiceInternal(
         epochRevision: assessment.nextEpochRevision,
         actorId: identity.actor.actorId,
         runtimeRootKey: runtimeIdentity.rootKey,
-        vocabularyVersion: 4 as const,
-        actionSetSha256: CAPABILITY_ACTION_SET_SHA256,
+        vocabularyVersion: assessment.vocabularyVersion,
+        actionSetSha256: assessment.vocabularyVersion === 4
+          ? PHASE1_CAPABILITY_ACTION_SET_SHA256
+          : CURRENT_CAPABILITY_ACTION_SET_SHA256,
         requestId: identity.requestId,
         createdAt: identity.now,
         expiresAt: command.expiresAt,
       }));
       hooks.afterStage?.("epoch");
-      for (const [index, action] of AUTHORIZATION_ACTIONS.entries()) {
+      for (const [index, action] of renewalActions.entries()) {
         const grantId = grantIds[index];
         if (grantId === undefined) throw new TypeError("Trusted renewal grant identity is absent");
         transaction.insertGrant(Object.freeze({
@@ -1211,7 +1442,7 @@ function createApplicationServiceInternal(
       return succeeded(Object.freeze({
         mode: assessment.mode,
         expiresAt: epoch.expiresAt,
-        capabilityCount: AUTHORIZATION_ACTIONS.length,
+        capabilityCount: renewalActions.length,
         epochRevision: epoch.epochRevision,
       }), identity);
     });
@@ -1644,6 +1875,7 @@ function createApplicationServiceInternal(
 
   return Object.freeze({
     bootstrap,
+    upgrade,
     renew,
     execute,
   });

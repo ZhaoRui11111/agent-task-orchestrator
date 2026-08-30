@@ -16,17 +16,21 @@ import {
 } from "./database.ts";
 import { PersistenceError, persistenceFailure } from "./errors.ts";
 import {
+  currentSchemaVersion,
   inspectSchemaEvidence,
   type MigrationHistoryEntry,
   type SchemaEvidence,
 } from "./migrations.ts";
 import {
   applicationStateSha256,
+  applicationStateSha256ForLifecycleAuthorization,
   lifecycleAuthorizationSha256,
   parseApplicationLifecycleAuthorization,
   readApplicationState,
+  readVersionFourApplicationState,
   validateLifecycleAuthorizationForUse,
   validateLifecycleAuthorizationForUseUntransactional,
+  versionFourApplicationStateSha256,
   type ApplicationLifecycleAuthorization,
 } from "./application-repository.ts";
 import { readDomainSnapshot } from "./repository.ts";
@@ -370,7 +374,8 @@ function parseBackupManifest(value: unknown): BackupManifest {
   } as const;
   if (record.schemaVersion === 1) return Object.freeze({ schemaVersion: 1 as const, ...common });
   const applicationProvenance = record.provenanceKind === "application" &&
-    record.kind === "manual" && record.sourceSchemaVersion === 4 &&
+    record.kind === "manual" && record.sourceSchemaVersion >= 4 &&
+    record.sourceSchemaVersion <= currentSchemaVersion() &&
     isNonemptyString(record.lifecycleAuthorizationId) &&
     isSha256(record.lifecycleAuthorizationSha256) && isSha256(record.sourceApplicationStateSha256);
   const preUpgradeProvenance = record.provenanceKind === "pre_upgrade_internal" &&
@@ -453,7 +458,8 @@ function verifyStandaloneDatabase(
   try {
     evidence = inspectSchemaEvidence(database);
     verifyDatabaseIntegrity(database);
-    if (evidence.schemaVersion >= 4) readApplicationState(database);
+    if (evidence.schemaVersion >= 5) readApplicationState(database);
+    else if (evidence.schemaVersion === 4) readVersionFourApplicationState(database);
     else if (evidence.schemaVersion >= 2) readDomainSnapshot(database);
   } finally {
     database.close();
@@ -549,17 +555,22 @@ function verifyBackupGenerationWithHooks(
     if (manifest.schemaVersion === 2 && manifest.provenanceKind === "application") {
       const provenanceDatabase = openReadOnlyDatabase(databasePath);
       try {
-        const state = readApplicationState(provenanceDatabase);
+        const state = evidence.schemaVersion === 4
+          ? readVersionFourApplicationState(provenanceDatabase)
+          : readApplicationState(provenanceDatabase);
         const authorization = state.lifecycle.find(
           (candidate) => candidate.authorizationId === manifest.lifecycleAuthorizationId,
         );
+        const stateSha256 = authorization === undefined
+          ? null
+          : applicationStateSha256ForLifecycleAuthorization(state, authorization);
         if (
           authorization === undefined ||
           authorization.operation !== "runtime.backup" ||
           authorization.backupGenerationId !== generationId ||
           lifecycleAuthorizationSha256(authorization) !== manifest.lifecycleAuthorizationSha256 ||
           authorization.authorizedStateSha256 !== manifest.sourceApplicationStateSha256 ||
-          applicationStateSha256(state) !== manifest.sourceApplicationStateSha256
+          stateSha256 !== manifest.sourceApplicationStateSha256
         ) {
           throw persistenceFailure("BACKUP_INVALID", "Backup application provenance does not match the cloned state");
         }
@@ -837,7 +848,10 @@ export async function createBackupUnderLock(
     hooks.afterAuthorizationCommit?.();
     const clonedDatabase = openReadOnlyDatabase(stageDatabasePath);
     try {
-      const clonedStateSha256 = applicationStateSha256(readApplicationState(clonedDatabase));
+      const clonedState = readApplicationState(clonedDatabase);
+      const clonedStateSha256 = terminalAuthorization.stateDigestVersion === 1
+        ? versionFourApplicationStateSha256(clonedState)
+        : applicationStateSha256(clonedState);
       if (clonedStateSha256 !== terminalAuthorization.stateSha256) {
         throw persistenceFailure("BACKUP_CONFLICT", "Cloned state does not match lifecycle authorization");
       }
@@ -1310,7 +1324,7 @@ function validateBackupBinding(layout: RuntimeLayout, intent: RestoreIntent): Ba
       manifest.schemaVersion !== 2 ||
       manifest.kind !== "manual" ||
       manifest.provenanceKind !== "application" ||
-      manifest.sourceSchemaVersion !== 4 ||
+      manifest.sourceSchemaVersion !== currentSchemaVersion() ||
       manifest.lifecycleAuthorizationId !== intent.backupAuthorizationId ||
       manifest.lifecycleAuthorizationSha256 !== intent.backupAuthorizationSha256 ||
       manifest.sourceApplicationStateSha256 === null ||
@@ -1333,12 +1347,12 @@ function requireRestorableGeneration(generation: BackupGeneration): BackupManife
     manifest.schemaVersion !== 2 ||
     manifest.kind !== "manual" ||
     manifest.provenanceKind !== "application" ||
-    manifest.sourceSchemaVersion !== 4 ||
+    manifest.sourceSchemaVersion !== currentSchemaVersion() ||
     manifest.lifecycleAuthorizationId === null ||
     manifest.lifecycleAuthorizationSha256 === null ||
     manifest.sourceApplicationStateSha256 === null
   ) {
-    throw persistenceFailure("BACKUP_INVALID", "Only schema-2 application-authorized manual backups are restorable");
+    throw persistenceFailure("BACKUP_INVALID", "Only current-schema application-authorized manual backups are restorable");
   }
   return manifest as BackupManifestV2 & {
     readonly provenanceKind: "application";
@@ -1403,7 +1417,8 @@ function validatePublishedBackupAuthorization(layout: RuntimeLayout, intent: Res
       authorization.backupGenerationId !== intent.backupGenerationId ||
       lifecycleAuthorizationSha256(authorization) !== manifest.lifecycleAuthorizationSha256 ||
       authorization.authorizedStateSha256 !== manifest.sourceApplicationStateSha256 ||
-      applicationStateSha256(state) !== manifest.sourceApplicationStateSha256
+      applicationStateSha256ForLifecycleAuthorization(state, authorization) !==
+        manifest.sourceApplicationStateSha256
     ) {
       throw persistenceFailure("RESTORE_BLOCKED", "Published target does not retain the backup authorization lineage");
     }

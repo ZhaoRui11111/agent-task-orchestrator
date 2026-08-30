@@ -215,8 +215,8 @@ test("manual backup refuses another reader, then publishes an exact authorized g
     const verified = verifyBackupGeneration(fixture.layout, generation.generationId);
     assert.deepEqual(verified, generation);
     assert.equal(verified.manifest.kind, "manual");
-    assert.equal(verified.manifest.sourceSchemaVersion, 4);
-    assert.equal(verified.manifest.sourceHistory.length, 4);
+    assert.equal(verified.manifest.sourceSchemaVersion, 5);
+    assert.equal(verified.manifest.sourceHistory.length, 5);
     const directory = path.join(fixture.layout.backupGenerationsRoot, generation.generationId);
     assert.deepEqual(readdirSync(directory).sort(), ["manifest.json", "state.sqlite3"]);
     const database = new DatabaseSync(path.join(directory, "state.sqlite3"), { readOnly: true });
@@ -849,7 +849,7 @@ test("backup verification refuses missing, changed, extra, newer, or wrong-appli
       if (corruption === "newer") {
         const databasePath = path.join(directory, "state.sqlite3");
         const database = new DatabaseSync(databasePath);
-        database.prepare("UPDATE schema_metadata SET schema_version=5 WHERE singleton=1").run();
+        database.prepare("UPDATE schema_metadata SET schema_version=6 WHERE singleton=1").run();
         database.exec("PRAGMA user_version=5");
         database.close();
         const databaseBytes = readFileSync(databasePath);

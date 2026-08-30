@@ -16,8 +16,8 @@ SQLite, parse SQL, copy Domain rules, inspect arbitrary files, or accept an acto
 or authority from command content.
 
 This is a local single-user Phase 1 surface, not a released compatibility or
-platform-support promise. It implements no execution, running/completed
-transition, claim, completion, dispatcher, scheduler, adapter, MCP, Git, network,
+platform-support promise. It exposes no execution command,
+running/completed transition, claim, completion, dispatcher, scheduler, adapter, MCP, Git, network,
 secret, release, deployment, repair, cleanup, or arbitrary shell/filesystem
 operation.
 
@@ -110,10 +110,12 @@ There is no alias for a command or option. In particular there is no Task
   this same predicate again rather than measuring JavaScript UTF-16 code units.
   Project root is an absolute traversal-free path of at most 1,024 UTF-8 bytes
   before persistence identity checks.
-- `ACTION` is one exact action in the finite vocabulary owned by the
+- `ACTION` is one exact member of the nineteen-action Phase 1 CLI subset of the
+  finite vocabulary owned by the
   [authorization contract](authorization-contract.md#exact-action-vocabulary).
-  Runtime scope rejects Project fields; Project scope requires all three Project
-  fields.
+  The four `execution.*`/`execution.lease.*` actions and the non-grantable
+  capability-upgrade transition are invalid `ato.api/v1` input. Runtime scope
+  rejects Project fields; Project scope requires all three Project fields.
 
 Parsing and all of these bounds complete before runtime selection, creation, or
 open. Actor, principal, request identity, lifecycle authorization, current time,
@@ -257,3 +259,7 @@ package. It does not create a release or support claim. Unknown fields remain
 rejected; changing a field's meaning, requiredness, error meaning, authorization,
 or state effect requires a new API major under the
 [versioning contract](versioning-compatibility-contract.md#public-api-evolution).
+Schema v5 and the package-root typed execution service do not extend this
+command tree. In particular, the CLI cannot upgrade to, issue, evaluate, claim,
+inspect, renew, or take over an execution capability. `task.cancel` also cannot
+bypass an active execution or act as verified interruption.

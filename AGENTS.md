@@ -17,16 +17,22 @@ If documents conflict, stop the affected mutation and resolve the conflict inste
 ## Current repository state
 
 This repository has a governance baseline, an executable toolchain and
-feasibility scaffold, a pure in-memory Domain Core, and the closed local Phase 1
-schema-v4 foundation defined by the persistence contract. ProjectRegistry,
+feasibility scaffold, a pure in-memory Domain Core, the closed local Phase 1
+product, and the narrow Phase 2 execution-claim foundation defined by the
+persistence and reliability contracts. ProjectRegistry,
 finite single-user runtime authorization, the typed application service, the
 versioned local product CLI, and its persistence-owned backup, confirmed restore,
 and read-only doctor surfaces are implemented for local
 Project/Task/dependency management. The application owner alone selects Domain
 commands, evaluates current explicit grants, and coordinates accepted
 snapshot/registry/grant/decision/audit/lifecycle commits; persistence still
-neither authorizes nor selects a Domain mutation. The repository still has no
-dispatcher, port, adapter, scheduler, MCP component, execution claim or
+neither authorizes nor selects a Domain mutation. Schema v5 and the typed
+execution application service implement atomic ready-to-running claims,
+ordered attempts, one active execution per Task, leases, per-Task fencing,
+idempotent claim/takeover replay, renewal, expiry observation, safe effect-free
+takeover, and stale-fence refusal. These are library-only foundation
+capabilities: the repository still has no execution port or backend, durable
+effect intent/receipt/finalization loop, dispatcher, scheduler, MCP component,
 completion loop, or executable orchestration runtime. Do not describe those
 planned modules, platform support, safety properties, or integration behavior
 as implemented. Follow the
@@ -37,6 +43,8 @@ for Domain Core behavior, the
 current finite local grant model, and the
 [persistence contract](docs/reference/persistence-contract.md) for the staged
 schema and storage/recovery boundary. The
+[reliability protocol](docs/reference/reliability-protocol.md) owns the current
+claim/lease/fence rules and the still-planned effect protocol. The
 [CLI contract](docs/reference/cli-contract.md) alone owns commands, public output,
 and exit codes.
 

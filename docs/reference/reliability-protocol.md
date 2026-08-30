@@ -2,11 +2,17 @@
 
 ## Status and authority
 
-This file is the sole normative owner of the planned durable operation
-protocol: semantic identity, claims, leases, fencing, idempotency, revision CAS,
+This file is the sole normative owner of the durable operation protocol:
+semantic identity, claims, leases, fencing, idempotency, revision CAS,
 intent/receipt/finalization, publication, recovery, retry propagation, and
-observable fan-out. No dispatcher, lease, external-operation runner, or recovery
-implementation exists today.
+observable fan-out. The Phase 2A library foundation currently implements only
+database-local execution claim semantic identity, ordered attempts, one active
+claim per Task, lease inspection/renewal, per-Task fencing, exact CAS,
+idempotent claim/takeover replay, safe no-effect takeover, restart readback, and
+stale-fence refusal. No execution port/backend, external-operation runner,
+intent/receipt/finalization loop, dispatcher, fan-out run, or scheduler exists
+today; the corresponding rules below remain requirements for their later
+implementing plans.
 
 Task-state meaning comes from the [domain contract](domain-contract.md), record
 layout from the [persistence contract](persistence-contract.md), permission from
@@ -50,6 +56,17 @@ or payload is an integrity conflict. Policy results, source revisions, adapter
 versions, or ignored external state MUST NOT be omitted merely because the
 human-readable request looks the same.
 
+The current claim-foundation subset has no adapter, workspace, or external
+resource identity to bind. Its persisted authoritative tuple therefore binds
+operation kind, Task and expected revision, Project resource/config revisions,
+trusted actor and lease owner, requested lease duration, and—only for
+takeover—the exact predecessor execution, execution revision, lease revision,
+and fencing token. The newly allocated execution ID and ordered attempt number
+are the outcome. Claim/takeover reuse returns that persisted outcome only when
+the complete applicable tuple and actor match; otherwise it is an integrity
+conflict. This narrow tuple is not permission to omit later semantic members
+when an adapter or external effect is introduced.
+
 ## Claim, lease, and fencing
 
 ### Atomic claim
@@ -59,7 +76,8 @@ A claim transaction MUST, against one database snapshot:
 1. re-evaluate domain eligibility;
 2. obtain a current allow decision from the authorization envelope;
 3. prove there is no valid active execution and no unfinished conflicting
-   operation for the Task;
+   operation for the Task (the current Phase 2A schema has no effect-intent
+   writer, so absence is structural as well as decoded);
 4. compare the caller's expected Task revision;
 5. allocate the next attempt number and a strictly greater per-Task fencing
    token;
@@ -71,12 +89,21 @@ All seven effects commit or none do. At most one execution per Task can hold the
 current valid claim. A query result obtained before this transaction confers no
 claim.
 
+The implemented initial claim performs this unit through the typed application
+owner: request and final authorization decision, sequence/fence allocation,
+attempt insertion, Domain `claim_accepted`, sanitized audit, and terminal
+readback share one short transaction. Competing claims can produce only one
+winner. No adapter call or other external effect occurs before or after this
+transaction in Phase 2A.
+
 ### Lease rules
 
 - A lease identifies `execution_id`, `claim_owner`, `lease_revision`,
   `fencing_token`, and an absolute UTC expiry.
-- Renewal is a short CAS transaction matching all five current values and moves
-  expiry forward; it never changes the fencing token.
+- Renewal is a short CAS transaction matching all five current values. Its new
+  expiry is exactly trusted operation time plus the bounded requested duration;
+  it never accumulates duration from the old expiry or changes the fencing
+  token. A request whose derived expiry would not move forward is rejected.
 - Long-running work MUST NOT hold a process-long file lock or database
   transaction. A short OS lock may serialize a local publication step, but the
   durable lease and CAS remain authoritative.
@@ -88,6 +115,15 @@ claim.
 - Every heartbeat, receipt, finalization, workspace mutation, and completion
   decision from a worker carries its execution ID and fencing token. A value
   lower than or different from the current token is rejected before mutation.
+
+Phase 2A has one deliberately narrower takeover case: because no production
+path can create an effect intent, call an adapter, or perform an external
+effect, an expired active attempt is structurally effect-free. The typed service
+may atomically supersede it and create the next attempt/fence while leaving the
+Task `running`. This exception ends when an effect-capable phase lands; then
+expiry alone is never sufficient and the general reconcile-first rule above is
+mandatory. The old attempt/owner/fence remains immutable history and every late
+write is refused.
 
 ## Revision CAS
 
@@ -104,6 +140,9 @@ identical already-finalized outcome is an idempotent success; any different
 current state is reconciled explicitly.
 
 ## Intent, receipt, verification, and finalization
+
+This entire section is a later-phase requirement; schema v5 allocates none of
+these records and Phase 2A performs no external effect.
 
 ### Intent state set
 
@@ -149,6 +188,9 @@ effect is never performed before its durable intent, and a terminal domain
 result is never accepted before verified finalization.
 
 ## Private staging and publication
+
+This section is a later-phase requirement and is not implemented by the
+execution-claim foundation.
 
 Any replaceable artifact or shared publication uses a run/generation namespace
 not visible as the current result:
@@ -223,6 +265,9 @@ hidden inside logs. Retry exhaustion is an observable failure; it is never a
 successful finalization.
 
 ## Observable fan-out
+
+This section is a later dispatcher requirement and is not implemented by the
+execution-claim foundation.
 
 After reconciliation and before any candidate claim or candidate-bound external
 action, each dispatcher sweep atomically seals its complete finite candidate

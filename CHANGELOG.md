@@ -41,10 +41,18 @@ All notable changes to this project will be documented in this file.
   seams, workers remove only receipt-bound generations, nested SQLite defers
   shared-root contraction to the globally quiescent test parent, and standalone
   package/SQLite owners retain deterministic empty-root contraction evidence.
+- Added the Phase 2 durable execution-claim foundation: additive schema v5,
+  explicit confirmation-bound capability upgrade, atomic ready-to-running
+  claims, ordered attempts, one active execution per Task, leases, per-Task
+  fencing, exact idempotent replay, renewal, expiry observation, safe
+  effect-free takeover, stale-fence refusal, restart/corruption/concurrency
+  evidence, and typed package exports. This adds no execution backend, external
+  effect protocol, dispatcher, completion loop, or public Phase 2 CLI.
 
 These entries do not announce a release or supported runtime. The executable
 material is limited to the development package, feasibility harness, pure
-in-memory Domain Core, ProjectRegistry, runtime authorization, typed Phase 1
-application service, local schema-v4 persistence, and the Phase 1 product CLI;
-execution/completion, dispatcher, adapter, scheduler, MCP, and orchestration
-runtime behavior remain unimplemented.
+in-memory Domain Core, ProjectRegistry, runtime authorization, typed
+application services, local schema-v5 persistence, the Phase 1 product CLI, and
+the library-only durable execution-claim foundation; execution backends,
+effect intent/receipt/finalization, completion, dispatcher, adapter, scheduler,
+MCP, and orchestration runtime behavior remain unimplemented.

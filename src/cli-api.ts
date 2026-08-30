@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import {
-  AUTHORIZATION_ACTIONS,
-  isAuthorizationAction,
+  PHASE1_AUTHORIZATION_ACTIONS,
   type AuthorizationAction,
   type AuthorizationGrant,
 } from "./authorization.ts";
@@ -212,7 +211,9 @@ function validateOptions(spec: CommandSpec, options: Readonly<Record<string, str
     if (value !== undefined && !canonicalTimestamp(value)) return "CLI_INVALID_INPUT";
   }
   const action = options.action;
-  if (action !== undefined && !isAuthorizationAction(action)) return "CLI_INVALID_INPUT";
+  if (action !== undefined && !(PHASE1_AUTHORIZATION_ACTIONS as readonly string[]).includes(action)) {
+    return "CLI_INVALID_INPUT";
+  }
   const root = options.root;
   if (root !== undefined && !absolutePath(root)) return "CLI_INVALID_INPUT";
   const body = options.body;
@@ -526,6 +527,7 @@ function mapApplicationFailure(failure: ApplicationFailure): PublicErrorCode {
     case "BOOTSTRAP_REQUIRED": return "RUNTIME_NOT_INITIALIZED";
     case "BOOTSTRAP_ALREADY_CONSUMED": return "RUNTIME_ALREADY_INITIALIZED";
     case "CAPABILITY_RENEWAL_NOT_DUE": return "CAPABILITY_RENEWAL_NOT_DUE";
+    case "CAPABILITY_UPGRADE_NOT_ELIGIBLE": return "AUTHORIZATION_DENIED";
     case "AUTHORIZATION_DENIED":
       return failure.error.details.reason === "confirmation_required" ? "CONFIRMATION_REQUIRED" : "AUTHORIZATION_DENIED";
     case "SCOPE_EXPANSION_DENIED": return "SCOPE_EXPANSION_DENIED";
@@ -656,7 +658,7 @@ export async function runCli(args: readonly string[], options: CliRunOptions): P
         return successResult(command.format, command.id, Object.freeze({
           mode: "initialized",
           expiresAt: option(command, "expires-at"),
-          capabilityCount: AUTHORIZATION_ACTIONS.length,
+          capabilityCount: PHASE1_AUTHORIZATION_ACTIONS.length,
           epochRevision: 0,
         }));
       }

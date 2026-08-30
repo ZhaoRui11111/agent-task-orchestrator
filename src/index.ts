@@ -1,6 +1,6 @@
 export interface ScaffoldStatus {
   readonly packageName: "agent-task-orchestrator";
-  readonly phase: "phase1-local-product-cli";
+  readonly phase: "phase2-execution-claim-foundation";
   readonly domainCoreImplemented: true;
   readonly persistenceFoundationImplemented: true;
   readonly projectRegistryImplemented: true;
@@ -8,6 +8,7 @@ export interface ScaffoldStatus {
   readonly applicationServiceImplemented: true;
   readonly localPhase1ProductCliImplemented: true;
   readonly backupRestoreDoctorImplemented: true;
+  readonly durableExecutionClaimFoundationImplemented: true;
   readonly productRuntimeImplemented: false;
   readonly executionRuntimeImplemented: false;
   readonly supportedAdapters: readonly [];
@@ -15,7 +16,7 @@ export interface ScaffoldStatus {
 
 const STATUS: ScaffoldStatus = Object.freeze({
   packageName: "agent-task-orchestrator",
-  phase: "phase1-local-product-cli",
+  phase: "phase2-execution-claim-foundation",
   domainCoreImplemented: true,
   persistenceFoundationImplemented: true,
   projectRegistryImplemented: true,
@@ -23,6 +24,7 @@ const STATUS: ScaffoldStatus = Object.freeze({
   applicationServiceImplemented: true,
   localPhase1ProductCliImplemented: true,
   backupRestoreDoctorImplemented: true,
+  durableExecutionClaimFoundationImplemented: true,
   productRuntimeImplemented: false,
   executionRuntimeImplemented: false,
   supportedAdapters: Object.freeze([] as const),
@@ -50,9 +52,29 @@ export type {
   ApplicationService,
   ApplicationSuccess,
   BootstrapCommand,
+  CapabilityEpochResult,
+  CapabilityUpgradeCommand,
   ConfirmationRequest,
   TrustedActorAssertion,
 } from "./application.ts";
+export {
+  EXECUTION_APPLICATION_ERROR_CODES,
+  createExecutionApplicationService,
+} from "./execution-application.ts";
+export type {
+  ExecutionApplicationError,
+  ExecutionApplicationErrorCode,
+  ExecutionApplicationFailure,
+  ExecutionApplicationResult,
+  ExecutionApplicationService,
+  ExecutionApplicationSuccess,
+  ExecutionClaimCommand,
+  ExecutionClaimView,
+  ExecutionIngress,
+  ExecutionInspectCommand,
+  ExecutionLeaseRenewCommand,
+  ExecutionTakeoverCommand,
+} from "./execution-application.ts";
 export * from "./persistence/index.ts";
 export {
   CLI_API_VERSION,

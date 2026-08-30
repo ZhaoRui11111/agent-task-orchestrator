@@ -97,16 +97,18 @@ normal console entry is the `ato` package binary. A package smoke test must
 first reproduce the frozen dependency install in an empty disposable project
 and generation-local store, then pack the declared distribution, install it
 into a disposable consumer without registry access, typecheck the public
-declarations without undeclared Node type dependencies, import the library
-entry, exercise trusted bootstrap plus Project/Task application commands and a
-fresh persistence backup, and invoke the console entry. The console portion
+  declarations without undeclared Node type dependencies, import the library
+  entry, exercise trusted bootstrap plus Project/Task commands, explicit
+  capability upgrade, an atomic execution claim and a fresh persistence backup,
+  and invoke the console entry. The console portion
 compares source, built, and packed-installed CLI behavior for an exact
 successful JSON response, successful human response, invalid-input JSON
 response, public exit codes, and absence of read-only doctor side effects.
 
 The package-root library export exposes a truthful capability status, the pure
 TypeScript Domain Core, ProjectRegistry identity owner, finite authorization
-owner, typed application service, schema-v4 persistence foundation, local
+owner, typed Phase 1 application service, typed execution-claim application
+service, schema-v5 persistence foundation, local
 lifecycle surfaces, and product CLI API. The packed inventory includes the
 immutable SQL files under `migrations/`. The source and compiled migration
 registry consume either a uniform LF or CRLF transport of those files and
@@ -119,11 +121,12 @@ wildcard. The `ato` console is the local Phase 1 product CLI defined by the
 
 Production source is limited to `src/index.ts`, `src/domain.ts`, `src/cli.ts`,
 `src/cli-api.ts`, `src/project-registry.ts`, `src/authorization.ts`,
-`src/application.ts`, the narrow built-in declarations in
+`src/application.ts`, `src/execution-application.ts`, the narrow built-in
+declarations in
 `src/node-builtins.d.ts`, and `src/persistence/`. `node:sqlite` is confined to
 the persistence owner. The package has no production dependency and must not
-acquire a dispatcher, port, adapter, scheduler, MCP, execution/completion loop,
-or executable orchestrator as part of this boundary.
+acquire a dispatcher, port, adapter, scheduler, MCP, backend/effect/completion
+loop, or executable orchestrator as part of this boundary.
 
 ## Validation entry points
 
@@ -134,8 +137,8 @@ The following package scripts are the public local entry points:
 | `pnpm lint` | Repository hygiene, frozen configuration, source-boundary, and diff checks |
 | `pnpm typecheck` | Strict TypeScript checking without output |
 | `pnpm build` | Produce the ESM package and declarations |
-| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application atomicity, persistence, CLI, doctor, and real local feasibility contracts |
-| `pnpm test:persistence` | Run the targeted migration, repository, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
+| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/execution-claim atomicity and security, persistence, CLI, doctor, and real local feasibility contracts |
+| `pnpm test:persistence` | Run the targeted schema-v5 migration, repository/decoder, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
 | `pnpm docs:check` | Resolve exact-case repository-relative Markdown links, validate same-file and cross-file heading fragments, and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |
 | `pnpm package:smoke` | Pack and consume the declared package boundary offline |

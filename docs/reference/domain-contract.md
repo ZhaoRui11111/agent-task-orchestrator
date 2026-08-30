@@ -7,8 +7,10 @@ repository implements these rules as the pure in-memory TypeScript
 [Domain Core](../../src/domain.ts). `MUST`, `MUST NOT`, and `SHOULD` below
 constrain that implementation and its evidence. The implemented Phase 1
 application service invokes this owner for Project registration/enablement and
-Task/dependency mutations; the contract does not itself authorize those calls
-or imply a dispatcher, adapter, product CLI, execution backend, or
+Task/dependency mutations; the Phase 2A execution application service invokes
+it for the accepted `ready`-to-`running` claim transition. The contract does not
+itself authorize those calls or imply a dispatcher, adapter, product execution
+CLI, execution backend, or
 orchestration runtime.
 
 This contract deliberately contains no SQLite, Git, Codex, CLI, MCP, scheduler,
@@ -71,6 +73,10 @@ illegal. A cancellation request while `running` records an execution phase and
 leaves the Task `running`; only `interruption_verified` changes it to
 `cancelled`. A backend turn ending is not `completion_accepted`.
 
+The current Phase 1 `task.cancel` application command refuses any Task that has
+an active execution attempt. It cannot substitute for the future verified
+interruption owner or bypass the transition relation above.
+
 ### Terminal immutability
 
 `completed` and `cancelled` are terminal. Their state, Project binding, parent,
@@ -123,8 +129,9 @@ read revision:
 
 Parent state has no effect. Domain eligibility does not assert that resources,
 authorization, policy, adapter compatibility, or a reliable claim is available.
-The dispatcher MUST re-evaluate these facts in the claim transaction; a prior
-query is advisory.
+The current execution application owner, and any later dispatcher that invokes
+it, MUST re-evaluate these facts in the claim transaction; a prior query is
+advisory.
 
 ## Waiting taxonomy
 

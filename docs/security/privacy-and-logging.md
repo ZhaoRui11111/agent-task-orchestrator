@@ -4,8 +4,8 @@
 
 This file is the sole normative owner of data classification, prompt and secret
 handling, log-content redaction, retention, diagnostic disclosure, and default
-no telemetry. The schema-v4 application owner implements the sanitized
-append-only audit subset, and the local product CLI/read-only doctor implement
+no telemetry. The schema-v5 application owners implement the sanitized
+append-only Phase 1 and execution-claim audit subset, and the local product CLI/read-only doctor implement
 the closed display subset described below. No runtime logger, secret provider,
 diagnostic bundle exporter, retention job, or telemetry implementation exists
 today; the corresponding sections remain requirements for later implementations.
@@ -58,6 +58,14 @@ stable reason, trusted actor/correlation IDs, opaque target kind/ID/revision,
 and trusted timestamp. Its bounded canonical details object contains only the
 exact action, stable reason, target kind, and nullable target revision.
 
+Execution claim, inspection, renewal, and takeover use the same record shape
+with an opaque `execution` target and fixed action/result/reason metadata. Lease
+owner, idempotency key, Project/runtime path, Task body, raw identity, expiry,
+prompt, backend output, and arbitrary exception text are not audit details. The
+typed library result is likewise bounded to documented opaque execution/Task
+identity, attempt/fence/revision/expiry state, and fixed error codes/messages;
+it is not a general diagnostic surface.
+
 Task body, Project canonical path, prompts, source/repository content, tool or
 Agent output, free text, raw commands, environment values, credentials, and
 secrets are never copied into audit details. Accepted application operations
@@ -83,7 +91,8 @@ one line to stdout and no raw stderr diagnostics. Exact serialization belongs to
 the [CLI/API contract](../reference/cli-contract.md).
 
 The following broader redaction rules apply when an operational logger is
-implemented; Phase 1 does not claim that logger or its HMAC key lifecycle.
+implemented; the current foundation does not claim that logger or its HMAC key
+lifecycle.
 
 Redaction is allowlist-first. For each structured event schema:
 

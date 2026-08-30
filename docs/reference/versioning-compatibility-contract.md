@@ -5,9 +5,9 @@
 This file is the sole normative owner of schema, planned public API, and adapter
 versioning; forward migration and downgrade-by-restore policy; and the evidence
 required for a platform or external API support claim. The project now has an
-internal staged SQLite schema at version `4`, a provisional package-root
-Domain/ProjectRegistry/authorization/application/persistence surface, and an
-implemented provisional `ato.api/v1` local CLI. It still has no released
+  internal staged SQLite schema at version `5`, a provisional package-root
+  Domain/ProjectRegistry/authorization/application/execution-claim/persistence
+  surface, and an implemented provisional `ato.api/v1` local Phase 1 CLI. It still has no released
 product, adapter, supported platform, or supported external API.
 
 The [v0.1 matrix](../compatibility/v0.1.md) records evidence only. It cannot
@@ -20,13 +20,15 @@ create or change this policy.
   notes and versioned wire contracts below.
 - SQLite schema versions are strictly increasing non-negative integers, where
   `0` means a genuinely fresh database with no application table and shipped
-  versions begin at `1`. The current target is `4`: version `1` owns migration
+  versions begin at `1`. The current target is `5`: version `1` owns migration
   metadata/history, version `2` owns only Phase 1 Domain Core
   Project/Task/dependency storage, and version `3` owns only the Phase 1
   ProjectRegistry, runtime-grant, application-request/decision, and audit
   records; version `4` owns only Phase 1 local identity/capability epochs,
   lifecycle authorization handoffs, and the finite CLI vocabulary/storage-shape
-  expansion. Exact migration identity, checksum, staged allocation, and mechanics
+  expansion; version `5` owns only the closed authorization-vocabulary upgrade
+  and Phase 2A execution attempt, sequence, lease, fence, idempotency, and CAS
+  foundation. Exact migration identity, checksum, staged allocation, and mechanics
   are owned by the
   [persistence contract](persistence-contract.md#migration-identity-and-atomicity).
 - Each CLI/MCP or other machine-readable public request and response carries
@@ -82,14 +84,16 @@ persisted receipts.
   and has a contiguous verified forward-migration chain to its target schema.
 - Physical allocation is staged by approved implementation phase. A future
   contract or roadmap does not reserve a table or column; the plan that
-  implements that owner appends a migration. Versions `1`, `2`, and `3` remain
-  byte-identical, and version `4` does not pre-allocate execution,
+  implements that owner appends a migration. Versions `1`, `2`, `3`, and `4`
+  remain byte-identical, and version `4` does not pre-allocate execution,
   intent/effect, workspace, scheduler, claim/lease/fence, gate, completion,
-  adapter, MCP, or dispatcher records.
-- The current migration matrix proves fresh `0` to `4` and shipped prefixes
-  `1`, `2`, and `3` to `4`, including failed/interrupted migration, checksum
-  drift, and newer-schema refusal. Adding version `5` or later requires tests from
-  every earlier prefix for which compatibility will be claimed.
+  adapter, MCP, or dispatcher records. Version `5` allocates only its named
+  execution-claim foundation and no later effect/adapter/dispatcher record.
+- The current migration matrix proves fresh `0` to `5` and shipped prefixes
+  `1`, `2`, `3`, and `4` to `5`, including failed/interrupted migration,
+  checksum drift, historical row preservation, and newer-schema refusal. Adding
+  version `6` or later requires tests from every earlier prefix for which
+  compatibility will be claimed.
 - Every released schema in the v0.1 series MUST have a tested forward path to
   the latest v0.1 schema before that release can claim upgrade compatibility.
 - A future v0.2 release must test upgrade from the latest published v0.1 schema;
@@ -110,7 +114,7 @@ A future released downgrade route would mean stopping the newer runtime,
 selecting a verified backup created by the target older schema/application,
 restoring it to a private location, validating it with that target reader, and
 atomically publishing it under the persistence recovery rules. The current
-Phase 1 product restore accepts only schema-v4 application-authorized manual
+  current product restore accepts only schema-v5 application-authorized manual
 backups and therefore provides data rollback, not schema downgrade support.
 
 Data accepted after the backup is not present after downgrade. The operator

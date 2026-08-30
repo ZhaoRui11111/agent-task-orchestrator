@@ -12,10 +12,10 @@ import {
   repoRoot,
 } from "../scripts/repo-utils.mjs";
 
-test("package status exposes the local Phase 1 CLI without overstating the execution runtime", () => {
+test("package status exposes the narrow claim foundation without overstating an execution runtime", () => {
   assert.deepEqual(getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "phase1-local-product-cli",
+    phase: "phase2-execution-claim-foundation",
     domainCoreImplemented: true,
     persistenceFoundationImplemented: true,
     projectRegistryImplemented: true,
@@ -23,6 +23,7 @@ test("package status exposes the local Phase 1 CLI without overstating the execu
     applicationServiceImplemented: true,
     localPhase1ProductCliImplemented: true,
     backupRestoreDoctorImplemented: true,
+    durableExecutionClaimFoundationImplemented: true,
     productRuntimeImplemented: false,
     executionRuntimeImplemented: false,
     supportedAdapters: [],

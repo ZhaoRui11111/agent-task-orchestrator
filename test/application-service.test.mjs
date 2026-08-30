@@ -435,10 +435,40 @@ test("a migrated v3 bootstrap is adopted once without rewriting historical actor
       expiresAt: "2026-09-21T12:00:00.000Z",
     }).error.code, "CAPABILITY_RENEWAL_NOT_DUE");
 
+    const upgraded = service.upgrade({
+      kind: "authorization.capability.upgrade",
+      expiresAt: "2026-09-22T12:00:00.000Z",
+    });
+    assert.equal(upgraded.ok, true);
+    assert.equal(upgraded.value.mode, "upgraded");
+    assert.equal(upgraded.value.epochRevision, 2);
+    assert.equal(upgraded.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
+    state = readApplicationStateForOwner(store);
+    assert.equal(state.bootstrap.vocabularyVersion, 3);
+    assert.equal(state.bootstrap.actorId, "legacy-v3-owner");
+    assert.equal(state.epochs.length, 2);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 5);
+    assert.equal(state.grants.filter((grant) => grant.actorId === "legacy-v3-owner").length, 15);
+    assert.equal(state.grants.length, 15 + 19 + AUTHORIZATION_ACTIONS.length);
+    assert.equal(
+      AUTHORIZATION_ACTIONS.every((action) => state.grants.some(
+        (grant) => grant.actorId === "owner" && grant.action === action && grant.revokedAt === null,
+      )),
+      true,
+    );
+    assert.equal(service.upgrade({
+      kind: "authorization.capability.upgrade",
+      expiresAt: "2026-09-23T12:00:00.000Z",
+    }).error.code, "CAPABILITY_UPGRADE_NOT_ELIGIBLE");
+
     await store.close();
     store = await openPersistence(fixture.layout, { applicationVersion: "v3-adoption-restart" });
     state = readApplicationStateForOwner(store);
     assert.equal(state.identity.actorId, "owner");
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 5);
+    assert.equal(state.grants.some(
+      (grant) => grant.actorId === "owner" && grant.action === "execution.claim" && grant.revokedAt === null,
+    ), true);
     const wrongActor = createApplicationService(store, ingress({ actorId: "other-actor" }));
     const denied = wrongActor.execute({ kind: "runtime.status" });
     assert.equal(denied.ok, false);
