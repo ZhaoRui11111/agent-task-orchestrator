@@ -1,12 +1,16 @@
 import { DatabaseSync } from "node:sqlite";
+import { pathToFileURL } from "node:url";
 import { normalizeSqliteFailure, persistenceFailure } from "./errors.ts";
 import {
   enforcePrivateRegularFile,
   type FileIdentity,
   inspectPrivateRegularFile,
   pathEntryExistsNoFollow,
+  readRegularFile,
+  sameFileIdentity,
   reservePrivateRegularFile,
   sameFileObjectIdentity,
+  sha256,
 } from "./values.ts";
 
 export const SQLITE_BUSY_TIMEOUT_MS = 5_000 as const;
@@ -196,6 +200,64 @@ export function openReadOnlyDatabase(databasePath: string): SqliteDatabase {
     assertSqliteFileBindings(databasePath, bindings);
     throw normalizeSqliteFailure(error, "SQLITE_OPEN_FAILED");
   }
+}
+
+export function openDiagnosticDatabase(databasePath: string): SqliteDatabase {
+  for (const sidecar of [`${databasePath}-wal`, `${databasePath}-shm`]) {
+    if (pathEntryExistsNoFollow(sidecar)) {
+      throw persistenceFailure("UNSAFE_RUNTIME_ROOT", "Inactive SQLite sidecar blocks a no-write diagnostic snapshot");
+    }
+  }
+  const source = readRegularFile(databasePath);
+  const checksumSha256 = sha256(source.bytes);
+  const assertSourceUnchanged = (): void => {
+    for (const sidecar of [`${databasePath}-wal`, `${databasePath}-shm`]) {
+      if (pathEntryExistsNoFollow(sidecar)) {
+        throw persistenceFailure("PATH_IDENTITY_CHANGED", "Diagnostic access created or observed a SQLite sidecar");
+      }
+    }
+    const terminal = readRegularFile(databasePath);
+    if (!sameFileIdentity(source.identity, terminal.identity) || sha256(terminal.bytes) !== checksumSha256) {
+      throw persistenceFailure("PATH_IDENTITY_CHANGED", "Diagnostic source changed during read-only inspection");
+    }
+  };
+  let database: DatabaseSync;
+  try {
+    const immutableUrl = pathToFileURL(databasePath);
+    immutableUrl.searchParams.set("immutable", "1");
+    database = new DatabaseSync(immutableUrl, { readOnly: true, timeout: SQLITE_BUSY_TIMEOUT_MS });
+    database.exec("PRAGMA query_only=ON");
+    database.exec("PRAGMA foreign_keys=ON");
+    database.exec("PRAGMA read_uncommitted=OFF");
+    database.exec(`PRAGMA busy_timeout=${SQLITE_BUSY_TIMEOUT_MS}`);
+    if (
+      pragmaValue(database, "query_only") !== 1 ||
+      pragmaValue(database, "foreign_keys") !== 1 ||
+      pragmaValue(database, "read_uncommitted") !== 0 ||
+      pragmaValue(database, "busy_timeout") !== SQLITE_BUSY_TIMEOUT_MS
+    ) {
+      throw persistenceFailure("CONNECTION_POLICY_FAILED", "Diagnostic SQLite connection policy drifted");
+    }
+    assertSourceUnchanged();
+  } catch (error) {
+    assertSourceUnchanged();
+    throw normalizeSqliteFailure(error, "CONNECTION_POLICY_FAILED");
+  }
+  let closed = false;
+  return Object.freeze({
+    get isOpen(): boolean { return database.isOpen; },
+    get isTransaction(): boolean { return database.isTransaction; },
+    close(): void {
+      if (!closed) {
+        database.close();
+        closed = true;
+      }
+      assertSourceUnchanged();
+    },
+    exec(sql: string): void { database.exec(sql); },
+    prepare(sql: string): SqliteStatement { return database.prepare(sql); },
+    serialize(schema?: string): Uint8Array { return database.serialize(schema); },
+  });
 }
 
 export function normalizeStandaloneDatabase(databasePath: string): void {

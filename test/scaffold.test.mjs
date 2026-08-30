@@ -12,30 +12,37 @@ import {
   repoRoot,
 } from "../scripts/repo-utils.mjs";
 
-test("package status exposes the Phase 1 application foundation without overstating the product runtime", () => {
+test("package status exposes the local Phase 1 CLI without overstating the execution runtime", () => {
   assert.deepEqual(getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "phase1-application-service",
+    phase: "phase1-local-product-cli",
     domainCoreImplemented: true,
     persistenceFoundationImplemented: true,
     projectRegistryImplemented: true,
     runtimeAuthorizationImplemented: true,
     applicationServiceImplemented: true,
+    localPhase1ProductCliImplemented: true,
+    backupRestoreDoctorImplemented: true,
     productRuntimeImplemented: false,
+    executionRuntimeImplemented: false,
     supportedAdapters: [],
   });
   assert.equal(Object.isFrozen(getScaffoldStatus()), true);
   assert.equal(Object.isFrozen(getScaffoldStatus().supportedAdapters), true);
 });
 
-test("source console entry emits the same truthful status", () => {
+test("source console entry exposes the versioned CLI instead of the legacy status dump", () => {
   const result = spawnSync(process.execPath, [path.join(repoRoot, "src", "cli.ts")], {
     cwd: repoRoot,
     encoding: "utf8",
     windowsHide: true,
   });
-  assert.equal(result.status, 0, result.stderr);
-  assert.deepEqual(JSON.parse(result.stdout), getScaffoldStatus());
+  assert.equal(result.status, 2, result.stderr);
+  assert.equal(result.stderr, "");
+  assert.equal(
+    result.stdout,
+    'ERROR unknown code="CLI_INVALID_INPUT" message="The command input is invalid."\n',
+  );
 });
 
 test("package metadata exposes only the normal export and console boundary", () => {

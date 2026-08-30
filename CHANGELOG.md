@@ -27,10 +27,15 @@ All notable changes to this project will be documented in this file.
   grants, exact revision-aware application commands and queries, atomic Domain
   snapshot/registry/authorization/audit commits, typed combined-state
   corruption refusal, restart readback, and failure/concurrency evidence.
+- Added Phase 1 schema v4 and the local `ato` product CLI with OS-derived local
+  identity, finite capability adoption/renewal and grant listing, strict
+  versioned human/JSON ingress, Project/Task/dependency workflows, authorized
+  online backup, separately confirmed provenance-bound restore, read-only
+  doctor, packaged-entry parity, and fail-closed lifecycle evidence.
 
 These entries do not announce a release or supported runtime. The executable
 material is limited to the development package, feasibility harness, pure
 in-memory Domain Core, ProjectRegistry, runtime authorization, typed Phase 1
-application service, and local schema-v3 persistence; product CLI,
+application service, local schema-v4 persistence, and the Phase 1 product CLI;
 execution/completion, dispatcher, adapter, scheduler, MCP, and orchestration
 runtime behavior remain unimplemented.

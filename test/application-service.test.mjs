@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdirSync, renameSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -13,15 +14,18 @@ import { readApplicationStateForOwner } from "../src/persistence/application-rep
 import {
   cleanupPersistenceFixture,
   createPersistenceFixture,
+  createVersionThreeDatabase,
   createVersionTwoDatabase,
 } from "./persistence-test-helpers.mjs";
+
+const TEST_PRINCIPAL_SHA256 = "A".repeat(64);
 
 function ingress(options = {}) {
   let sequence = 0;
   let actor = options.actorId ?? "local-actor";
   const now = options.now ?? "2026-08-29T12:00:00.000Z";
   return {
-    currentActor: () => ({ actorId: actor, principal: `os:${actor}` }),
+    currentActor: () => ({ actorId: actor, principal: TEST_PRINCIPAL_SHA256 }),
     now: () => now,
     nextId: (kind) => `${kind}-${String(++sequence).padStart(4, "0")}`,
     confirmHighRisk: () => options.confirm !== false,
@@ -35,7 +39,7 @@ function mutableAuthorizationIngress() {
   let now = "2026-08-29T12:00:00.000Z";
   let confirmed = true;
   return {
-    currentActor: () => ({ actorId, principal: `os:${actorId}` }),
+    currentActor: () => ({ actorId, principal: TEST_PRINCIPAL_SHA256 }),
     now: () => now,
     nextId: (kind) => `${kind}-authorization-${++sequence}`,
     confirmHighRisk: () => confirmed,
@@ -48,7 +52,7 @@ function mutableAuthorizationIngress() {
 function domainIngress() {
   let sequence = 0;
   return {
-    currentActor: () => ({ actorId: "domain-actor", principal: "os:domain-actor" }),
+    currentActor: () => ({ actorId: "domain-actor", principal: TEST_PRINCIPAL_SHA256 }),
     now: () => "2026-08-29T12:00:00.000Z",
     nextId: (kind) => `${kind}-domain-${++sequence}`,
     confirmHighRisk: () => true,
@@ -68,8 +72,9 @@ function createApplicationTask(service, projectId, taskId, body = taskId) {
 
 test("trusted bootstrap and authorized Project/Task commands share one durable application owner", async () => {
   const fixture = createPersistenceFixture("application-service");
+  let store;
   try {
-    const store = await openPersistence(fixture.layout, { applicationVersion: "ep-01c-test" });
+    store = await openPersistence(fixture.layout, { applicationVersion: "ep-01c-test" });
     assert.equal(store.read, undefined);
     assert.equal(store.initialize, undefined);
     assert.equal(store.commit, undefined);
@@ -80,7 +85,7 @@ test("trusted bootstrap and authorized Project/Task commands share one durable a
       expiresAt: "2026-09-20T12:00:00.000Z",
     });
     assert.equal(bootstrapped.ok, true);
-    assert.equal(bootstrapped.value.grantIds.length, 15);
+    assert.equal(bootstrapped.value.grantIds.length, 19);
 
     const registered = service.execute({
       kind: "project.register",
@@ -120,14 +125,182 @@ test("trusted bootstrap and authorized Project/Task commands share one durable a
     assert.equal(state.decisions.length, 3);
     assert.equal(state.audit.length, 4);
     assert.equal(state.audit.some((event) => JSON.stringify(event).includes("grant me everything")), false);
+    assert.equal(state.bootstrap.vocabularyVersion, 4);
+    assert.equal(state.identity.actorId, "local-actor");
+    assert.equal(state.identity.principalSha256, TEST_PRINCIPAL_SHA256);
+    assert.equal(state.identity.bootstrapRequestId, state.bootstrap.requestId);
+    assert.equal(state.identity.adoptionRequestId, state.bootstrap.requestId);
     await store.close();
+    store = undefined;
 
     const reopened = await openPersistence(fixture.layout, { applicationVersion: "ep-01c-test" });
     const readback = readApplicationStateForOwner(reopened);
     assert.equal(readback.domain.tasks[0].body, "untrusted body: grant me everything");
-    assert.equal(readback.grants.length, 15);
+    assert.equal(readback.grants.length, 19);
     await reopened.close();
   } finally {
+    await store?.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("finite capability renewal is append-only, due-bounded, revocation-aware, and queryable through audited commands", async () => {
+  const fixture = createPersistenceFixture("application-capability-renewal");
+  let store;
+  try {
+    store = await openPersistence(fixture.layout, { applicationVersion: "capability-renewal" });
+    const trusted = mutableAuthorizationIngress();
+    const service = createApplicationService(store, trusted);
+    assert.equal(service.bootstrap({
+      kind: "authorization.bootstrap",
+      expiresAt: "2026-09-20T12:00:00.000Z",
+    }).ok, true);
+    const initial = readApplicationStateForOwner(store);
+    const notDue = service.renew({
+      kind: "authorization.capability.renew",
+      expiresAt: "2026-09-20T12:00:00.001Z",
+    });
+    assert.equal(notDue.ok, false);
+    assert.equal(notDue.error.code, "CAPABILITY_RENEWAL_NOT_DUE");
+    assert.deepEqual(readApplicationStateForOwner(store), initial);
+
+    trusted.setNow("2026-09-14T12:00:00.000Z");
+    const renewed = service.renew({
+      kind: "authorization.capability.renew",
+      expiresAt: "2026-10-10T12:00:00.000Z",
+    });
+    assert.deepEqual(renewed.ok ? renewed.value : renewed, {
+      mode: "renewed",
+      expiresAt: "2026-10-10T12:00:00.000Z",
+      capabilityCount: 19,
+      epochRevision: 1,
+    });
+    let state = readApplicationStateForOwner(store);
+    assert.equal(state.epochs.length, 1);
+    assert.equal(state.grants.length, 38);
+    assert.equal(state.requests.filter((request) => request.action === "authorization.capability.renew").length, 1);
+    const renewalDecision = state.decisions.find((decision) => decision.action === "authorization.capability.renew");
+    assert.equal(renewalDecision.result, "allow");
+    assert.equal(renewalDecision.grantId, null);
+    assert.equal(renewalDecision.policy, "allow");
+    assert.equal(state.audit.filter((event) => event.eventKind === "capability.renewed").length, 1);
+
+    const immediateReplay = service.renew({
+      kind: "authorization.capability.renew",
+      expiresAt: "2026-10-11T12:00:00.000Z",
+    });
+    assert.equal(immediateReplay.ok, false);
+    assert.equal(immediateReplay.error.code, "CAPABILITY_RENEWAL_NOT_DUE");
+
+    trusted.setNow("2026-10-05T12:00:00.000Z");
+    state = readApplicationStateForOwner(store);
+    const currentStatusGrant = state.grants.find((grant) =>
+      grant.action === "runtime.status" && grant.notBefore === "2026-09-14T12:00:00.000Z"
+    );
+    assert.ok(currentStatusGrant);
+    const revoked = service.execute({
+      kind: "authorization.grant.revoke",
+      grantId: currentStatusGrant.grantId,
+      expectedGrantRevision: 1,
+    });
+    assert.equal(revoked.ok, true);
+    const partialRevocation = readApplicationStateForOwner(store);
+    const blockedByLiveRevocation = service.renew({
+      kind: "authorization.capability.renew",
+      expiresAt: "2026-10-30T12:00:00.000Z",
+    });
+    assert.equal(blockedByLiveRevocation.ok, false);
+    assert.equal(blockedByLiveRevocation.error.code, "CAPABILITY_RENEWAL_NOT_DUE");
+    assert.deepEqual(readApplicationStateForOwner(store), partialRevocation);
+
+    trusted.setNow("2026-10-10T12:00:00.001Z");
+    const afterExpiry = service.renew({
+      kind: "authorization.capability.renew",
+      expiresAt: "2026-11-05T12:00:00.000Z",
+    });
+    assert.equal(afterExpiry.ok, true);
+    assert.equal(afterExpiry.value.mode, "renewed");
+    assert.equal(afterExpiry.value.epochRevision, 2);
+    state = readApplicationStateForOwner(store);
+    assert.equal(state.epochs.length, 2);
+    assert.equal(state.grants.length, 57);
+    assert.equal(state.grants.find((grant) => grant.grantId === currentStatusGrant.grantId).revision, 2);
+
+    const listed = service.execute({ kind: "authorization.grant.list", limit: 3, afterGrantId: null });
+    assert.equal(listed.ok, true);
+    assert.equal(listed.value.grants.length, 3);
+    assert.equal(typeof listed.value.nextCursor, "string");
+    assert.deepEqual(
+      listed.value.grants.map((grant) => grant.grantId),
+      [...listed.value.grants.map((grant) => grant.grantId)].sort(),
+    );
+    const status = service.execute({ kind: "runtime.status" });
+    assert.equal(status.ok, true);
+    state = readApplicationStateForOwner(store);
+    assert.equal(status.value.grantCount, state.grants.length);
+    assert.equal(status.value.auditCount, state.audit.length);
+    assert.equal(status.value.schemaVersion, 4);
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("a migrated v3 bootstrap is adopted once without rewriting historical actor or grants", async () => {
+  const fixture = createPersistenceFixture("application-v3-adoption");
+  let store;
+  try {
+    createVersionThreeDatabase(fixture.layout);
+    store = await openPersistence(fixture.layout, { applicationVersion: "v3-adoption" });
+    const before = readApplicationStateForOwner(store);
+    assert.equal(before.bootstrap.vocabularyVersion, 3);
+    assert.equal(before.bootstrap.actorId, "legacy-v3-owner");
+    assert.equal(before.identity, null);
+    assert.equal(before.grants.length, 15);
+
+    const trusted = mutableAuthorizationIngress();
+    const service = createApplicationService(store, trusted);
+    const closedBeforeAdoption = service.execute({ kind: "runtime.status" });
+    assert.equal(closedBeforeAdoption.ok, false);
+    assert.equal(closedBeforeAdoption.error.code, "AUTHORIZATION_DENIED");
+    assert.deepEqual(readApplicationStateForOwner(store), before);
+
+    const adopted = service.renew({
+      kind: "authorization.capability.renew",
+      expiresAt: "2026-09-20T12:00:00.000Z",
+    });
+    assert.equal(adopted.ok, true);
+    assert.deepEqual(adopted.value, {
+      mode: "adopted",
+      expiresAt: "2026-09-20T12:00:00.000Z",
+      capabilityCount: 19,
+      epochRevision: 1,
+    });
+    let state = readApplicationStateForOwner(store);
+    assert.equal(state.bootstrap.actorId, "legacy-v3-owner");
+    assert.equal(state.bootstrap.trustedPrincipal, "legacy-v3-principal");
+    assert.equal(state.identity.actorId, "owner");
+    assert.equal(state.identity.principalSha256, TEST_PRINCIPAL_SHA256);
+    assert.equal(state.identity.bootstrapRequestId, state.bootstrap.requestId);
+    assert.equal(state.identity.adoptionRequestId, state.epochs[0].requestId);
+    assert.equal(state.grants.filter((grant) => grant.actorId === "legacy-v3-owner").length, 15);
+    assert.equal(state.grants.filter((grant) => grant.actorId === "owner").length, 19);
+    assert.equal(service.execute({ kind: "runtime.status" }).ok, true);
+    assert.equal(service.renew({
+      kind: "authorization.capability.renew",
+      expiresAt: "2026-09-21T12:00:00.000Z",
+    }).error.code, "CAPABILITY_RENEWAL_NOT_DUE");
+
+    await store.close();
+    store = await openPersistence(fixture.layout, { applicationVersion: "v3-adoption-restart" });
+    state = readApplicationStateForOwner(store);
+    assert.equal(state.identity.actorId, "owner");
+    const wrongActor = createApplicationService(store, ingress({ actorId: "other-actor" }));
+    const denied = wrongActor.execute({ kind: "runtime.status" });
+    assert.equal(denied.ok, false);
+    assert.equal(denied.error.code, "AUTHORIZATION_DENIED");
+  } finally {
+    if (store) await store.close();
     cleanupPersistenceFixture(fixture);
   }
 });
@@ -327,8 +500,7 @@ test("delegation requires both issue authority and the source action at equal-or
       expiresAt: "2026-08-31T12:00:00.000Z",
     });
     assert.equal(expansion.ok, false);
-    assert.equal(expansion.error.code, "AUTHORIZATION_DENIED");
-    assert.equal(expansion.error.details.reason, "scope_mismatch");
+    assert.equal(expansion.error.code, "SCOPE_EXPANSION_DENIED");
     assert.equal(readApplicationStateForOwner(store).grants.some((grant) => grant.actorId === "third-party"), false);
   } finally {
     if (store) await store.close();
@@ -807,13 +979,17 @@ test("cross-Project cancellation refuses disabled policy and substituted depende
 
 test("Project disablement narrows policy and explicit high-risk update re-enables at new revisions", async () => {
   const fixture = createPersistenceFixture("application-project-state");
+  let store;
   try {
-    const store = await openPersistence(fixture.layout, { applicationVersion: "application-domain" });
+    store = await openPersistence(fixture.layout, { applicationVersion: "application-domain" });
     const service = createApplicationService(store, domainIngress());
     assert.equal(service.bootstrap({ kind: "authorization.bootstrap", expiresAt: "2026-09-20T12:00:00.000Z" }).ok, true);
     assert.equal(service.execute({ kind: "project.register", projectId: "project", root: fixture.projectRoot }).ok, true);
     const expectedPolicy = (action, enabled) => {
-      if (action.startsWith("authorization.") || action.endsWith(".inspect") || action === "policy.evaluate") {
+      if (
+        action.startsWith("authorization.") || action.endsWith(".inspect") || action === "policy.evaluate" ||
+        action === "runtime.status" || action === "runtime.backup" || action === "runtime.restore"
+      ) {
         return "read_not_applicable";
       }
       if (action === "project.register" || action === "project.update" || action === "project.disable") return "allow";
@@ -859,8 +1035,8 @@ test("Project disablement narrows policy and explicit high-risk update re-enable
     assert.equal(enabled.ok, true);
     assert.equal(enabled.value.resourceRevision, 3);
     assert.equal(readApplicationStateForOwner(store).domain.projects[0].enabled, true);
-    await store.close();
   } finally {
+    if (store) await store.close();
     cleanupPersistenceFixture(fixture);
   }
 });
@@ -937,14 +1113,113 @@ test("v2 Domain Project upgrade binds the legacy identity through ProjectRegistr
   }
 });
 
+test("lifecycle retries return the exact newly inserted authorization under adverse lexical ID ordering", async () => {
+  const fixture = createPersistenceFixture("application-lifecycle-exact-readback");
+  let store;
+  try {
+    let sequence = 0;
+    const lifecycleIds = ["lifecycle-a-old", "lifecycle-z-new"];
+    const trusted = {
+      currentActor: () => ({ actorId: "lifecycle-owner", principal: TEST_PRINCIPAL_SHA256 }),
+      now: () => "2026-08-29T12:00:00.000Z",
+      nextId(kind) {
+        if (kind === "lifecycle") return lifecycleIds.shift();
+        return `${kind}-lifecycle-exact-${++sequence}`;
+      },
+      confirmHighRisk: () => true,
+    };
+    store = await openPersistence(fixture.layout, { applicationVersion: "lifecycle-exact-readback" });
+    const service = createApplicationService(store, trusted);
+    assert.equal(service.bootstrap({
+      kind: "authorization.bootstrap",
+      expiresAt: "2026-09-20T12:00:00.000Z",
+    }).ok, true);
+    const generationId = randomUUID();
+    const first = service.execute({ kind: "runtime.backup", backupGenerationId: generationId });
+    const second = service.execute({ kind: "runtime.backup", backupGenerationId: generationId });
+    assert.equal(first.ok, true);
+    assert.equal(second.ok, true);
+    assert.equal(first.value.authorizationId, "lifecycle-a-old");
+    assert.equal(second.value.authorizationId, "lifecycle-z-new");
+    assert.deepEqual(
+      readApplicationStateForOwner(store).lifecycle.map((record) => record.authorizationId),
+      ["lifecycle-a-old", "lifecycle-z-new"],
+    );
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("Project command results remain bound to their terminal transaction after a competing writer", async () => {
+  const fixture = createPersistenceFixture("application-project-terminal-result");
+  let primary;
+  let competitor;
+  try {
+    primary = await openPersistence(fixture.layout, { applicationVersion: "project-result-primary" });
+    const service = createApplicationService(primary, ingress({ actorId: "project-owner" }));
+    assert.equal(service.bootstrap({
+      kind: "authorization.bootstrap",
+      expiresAt: "2026-09-20T12:00:00.000Z",
+    }).ok, true);
+    const registered = service.execute({
+      kind: "project.register",
+      projectId: "project",
+      root: fixture.projectRoot,
+    });
+    assert.equal(registered.ok, true);
+    assert.deepEqual(registered.value, {
+      projectId: "project",
+      enabled: true,
+      configRevision: 1,
+      resourceRevision: 1,
+    });
+
+    competitor = await openPersistence(fixture.layout, { applicationVersion: "project-result-competitor" });
+    let competitorSequence = 0;
+    const competingService = createApplicationService(competitor, {
+      currentActor: () => ({ actorId: "project-owner", principal: TEST_PRINCIPAL_SHA256 }),
+      now: () => "2026-08-29T12:00:00.000Z",
+      nextId: (kind) => `${kind}-project-result-competitor-${++competitorSequence}`,
+      confirmHighRisk: () => true,
+    });
+    const disabled = competingService.execute({
+      kind: "project.disable",
+      projectId: "project",
+      expectedResourceRevision: 1,
+      expectedConfigRevision: 1,
+    });
+    assert.equal(disabled.ok, true);
+    assert.deepEqual(disabled.value, {
+      projectId: "project",
+      enabled: false,
+      configRevision: 2,
+      resourceRevision: 2,
+    });
+    assert.deepEqual(registered.value, {
+      projectId: "project",
+      enabled: true,
+      configRevision: 1,
+      resourceRevision: 1,
+    });
+  } finally {
+    if (competitor) await competitor.close();
+    if (primary) await primary.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
 test("backup and explicit restore round-trip the complete application, authorization, audit, and Domain state", async () => {
   const fixture = createPersistenceFixture("application-backup-restore");
   let store;
   try {
     store = await openPersistence(fixture.layout, { applicationVersion: "application-backup" });
     const trusted = mutableAuthorizationIngress();
+    const operationNow = new Date().toISOString();
+    const operationExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    trusted.setNow(operationNow);
     const service = createApplicationService(store, trusted);
-    assert.equal(service.bootstrap({ kind: "authorization.bootstrap", expiresAt: "2026-09-20T12:00:00.000Z" }).ok, true);
+    assert.equal(service.bootstrap({ kind: "authorization.bootstrap", expiresAt: operationExpiry }).ok, true);
     assert.equal(service.execute({ kind: "project.register", projectId: "project", root: fixture.projectRoot }).ok, true);
     assert.equal(createApplicationTask(service, "project", "preserved-task").ok, true);
     const issued = service.execute({
@@ -952,8 +1227,8 @@ test("backup and explicit restore round-trip the complete application, authoriza
       actorId: "delegate",
       action: "task.inspect",
       scope: { kind: "project", projectId: "project", resourceRevision: 1, configRevision: 1 },
-      notBefore: "2026-08-29T12:00:00.000Z",
-      expiresAt: "2026-09-01T12:00:00.000Z",
+      notBefore: operationNow,
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
     });
     assert.equal(issued.ok, true);
     assert.equal(service.execute({
@@ -961,9 +1236,14 @@ test("backup and explicit restore round-trip the complete application, authoriza
       grantId: issued.value.grantId,
       expectedGrantRevision: 1,
     }).ok, true);
+    const backupGenerationId = randomUUID();
+    const backupAuthorization = service.execute({ kind: "runtime.backup", backupGenerationId });
+    assert.equal(backupAuthorization.ok, true);
     const expected = readApplicationStateForOwner(store);
-    const backup = await store.createBackup();
+    const backup = await store.createBackup(backupAuthorization.value);
     assert.equal(createApplicationTask(service, "project", "discarded-task").ok, true);
+    const restoreAuthorization = service.execute({ kind: "runtime.restore", backupGenerationId });
+    assert.equal(restoreAuthorization.ok, true);
     await store.close();
     store = undefined;
 
@@ -973,6 +1253,7 @@ test("backup and explicit restore round-trip the complete application, authoriza
       expectedCurrent,
       acknowledgeDataLoss: true,
       applicationVersion: "application-restore",
+      authorization: restoreAuthorization.value,
     });
     store = await openPersistence(fixture.layout, { applicationVersion: "application-restored" });
     assert.deepEqual(readApplicationStateForOwner(store), expected);

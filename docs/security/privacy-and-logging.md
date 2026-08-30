@@ -4,10 +4,11 @@
 
 This file is the sole normative owner of data classification, prompt and secret
 handling, log-content redaction, retention, diagnostic disclosure, and default
-no telemetry. The schema-v3 application owner implements only the sanitized
-append-only audit subset described below. No runtime logger, secret provider,
-diagnostic exporter, retention job, or telemetry implementation exists today;
-the corresponding sections remain requirements for later implementations.
+no telemetry. The schema-v4 application owner implements the sanitized
+append-only audit subset, and the local product CLI/read-only doctor implement
+the closed display subset described below. No runtime logger, secret provider,
+diagnostic bundle exporter, retention job, or telemetry implementation exists
+today; the corresponding sections remain requirements for later implementations.
 
 The [observability contract](../reference/observability-contract.md) owns event
 schemas and where redaction is applied. This file owns what data may appear and
@@ -65,8 +66,24 @@ their request and decision; SQLite triggers reject audit update or deletion.
 Failures before a safe typed/bound envelope produce no audit row rather than
 persisting unclassified input.
 
+### Current CLI and doctor display
+
+The local `ato` human and `ato.api/v1` outputs use closed allowlisted result
+shapes and fixed public errors. They never serialize Task body, cancellation
+reason, full Project/runtime path or filesystem identity, actor/principal,
+request/correlation/decision/audit/lifecycle/restore identity, application-state
+digest, secret, environment value, raw SQL/page/error, cause, or stack. Required
+bounded operational Project, Task, grant, and backup IDs may appear only in the
+documented workflow result shapes.
+
+Failures return only the stable public code and fixed message. Read-only doctor
+returns only its six closed health fields; it does not export rows, paths,
+manifests, raw migration evidence, or diagnostic files. Both modes emit exactly
+one line to stdout and no raw stderr diagnostics. Exact serialization belongs to
+the [CLI/API contract](../reference/cli-contract.md).
+
 The following broader redaction rules apply when an operational logger is
-implemented; EP-01C does not claim that logger or its HMAC key lifecycle.
+implemented; Phase 1 does not claim that logger or its HMAC key lifecycle.
 
 Redaction is allowlist-first. For each structured event schema:
 
@@ -111,8 +128,10 @@ the failure.
 
 ## Diagnostic disclosure
 
-Default diagnostics include only the redacted, manifest-listed fields allowed
-by the [observability owner](../reference/observability-contract.md#diagnostic-access).
+The implemented `ato doctor` surface is limited to the fixed classification
+above. Any future diagnostic bundle includes only the redacted, manifest-listed
+fields allowed by the
+[observability owner](../reference/observability-contract.md#diagnostic-access).
 Raw prompts, source/Task bodies, environment values, credentials, database
 pages, raw adapter payloads, and full paths are excluded.
 

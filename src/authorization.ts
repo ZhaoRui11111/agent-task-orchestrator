@@ -14,6 +14,10 @@ export const AUTHORIZATION_ACTIONS = Object.freeze([
   "task.inspect",
   "dependency.add",
   "dependency.remove",
+  "authorization.grant.list",
+  "runtime.status",
+  "runtime.backup",
+  "runtime.restore",
 ] as const);
 
 export const HIGH_RISK_ACTIONS = Object.freeze([
@@ -22,6 +26,7 @@ export const HIGH_RISK_ACTIONS = Object.freeze([
   "project.register",
   "project.update",
   "project.disable",
+  "runtime.restore",
 ] as const);
 
 export type AuthorizationAction = (typeof AUTHORIZATION_ACTIONS)[number];
@@ -192,8 +197,7 @@ export function parseAuthorizationGrant(value: unknown): AuthorizationGrant | nu
     !(record.revokedAt === null || timestamp(record.revokedAt)) ||
     !(record.issuerGrantId === null || identifier(record.issuerGrantId)) ||
     !(record.sourceGrantId === null || identifier(record.sourceGrantId)) ||
-    record.notBefore >= record.expiresAt ||
-    (record.revokedAt !== null && record.revokedAt < record.notBefore)
+    record.notBefore >= record.expiresAt
   ) {
     return null;
   }

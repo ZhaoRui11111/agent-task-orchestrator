@@ -2,23 +2,33 @@ import { randomUUID } from "node:crypto";
 import {
   readdirSync,
   renameSync,
+  rmdirSync,
 } from "node:fs";
 import path from "node:path";
 import { backup } from "node:sqlite";
 import {
   normalizeStandaloneDatabase,
   openReadOnlyDatabase,
+  runWriteTransaction,
   type SqliteDatabase,
   sqliteInteger,
   verifyDatabaseIntegrity,
 } from "./database.ts";
-import { persistenceFailure, type PersistenceError } from "./errors.ts";
+import { PersistenceError, persistenceFailure } from "./errors.ts";
 import {
   inspectSchemaEvidence,
   type MigrationHistoryEntry,
   type SchemaEvidence,
 } from "./migrations.ts";
-import { readApplicationState } from "./application-repository.ts";
+import {
+  applicationStateSha256,
+  lifecycleAuthorizationSha256,
+  parseApplicationLifecycleAuthorization,
+  readApplicationState,
+  validateLifecycleAuthorizationForUse,
+  validateLifecycleAuthorizationForUseUntransactional,
+  type ApplicationLifecycleAuthorization,
+} from "./application-repository.ts";
 import { readDomainSnapshot } from "./repository.ts";
 import {
   assertOwnedRuntimeDirectory,
@@ -65,7 +75,7 @@ const PRIMARY_MEMBER_NAMES = Object.freeze([
 
 export type BackupKind = "manual" | "pre_upgrade";
 
-export interface BackupManifest {
+export interface BackupManifestV1 {
   readonly schemaVersion: 1;
   readonly generationId: string;
   readonly kind: BackupKind;
@@ -79,6 +89,27 @@ export interface BackupManifest {
   readonly applicationVersion: string;
   readonly createdAt: string;
 }
+
+export interface BackupManifestV2 {
+  readonly schemaVersion: 2;
+  readonly generationId: string;
+  readonly kind: BackupKind;
+  readonly databaseFile: "state.sqlite3";
+  readonly databaseLength: number;
+  readonly databaseSha256: string;
+  readonly sourceSchemaVersion: number;
+  readonly sourceRegistryIdentity: string;
+  readonly sourceSchemaFingerprint: string;
+  readonly sourceHistory: readonly MigrationHistoryEntry[];
+  readonly applicationVersion: string;
+  readonly createdAt: string;
+  readonly provenanceKind: "application" | "pre_upgrade_internal";
+  readonly lifecycleAuthorizationId: string | null;
+  readonly lifecycleAuthorizationSha256: string | null;
+  readonly sourceApplicationStateSha256: string | null;
+}
+
+export type BackupManifest = BackupManifestV1 | BackupManifestV2;
 
 export interface BackupGeneration {
   readonly generationId: string;
@@ -105,9 +136,10 @@ export interface RestoreRequest {
   readonly expectedCurrent: PrimaryIdentity;
   readonly acknowledgeDataLoss: true;
   readonly applicationVersion: string;
+  readonly authorization: ApplicationLifecycleAuthorization;
 }
 
-export interface RestoreReceipt {
+export interface RestoreReceiptV1 {
   readonly schemaVersion: 1;
   readonly restoreId: string;
   readonly backupGenerationId: string;
@@ -120,7 +152,28 @@ export interface RestoreReceipt {
   readonly retainedDirectoryIdentity: DirectoryIdentity;
 }
 
-interface RestoreIntent {
+export interface RestoreReceiptV2 {
+  readonly schemaVersion: 2;
+  readonly restoreId: string;
+  readonly backupGenerationId: string;
+  readonly restoredAt: string;
+  readonly applicationVersion: string;
+  readonly previousIdentitySha256: string;
+  readonly targetDatabaseSha256: string;
+  readonly targetSchemaVersion: number;
+  readonly retainedDirectory: string;
+  readonly retainedDirectoryIdentity: DirectoryIdentity;
+  readonly backupManifestSha256: string;
+  readonly backupAuthorizationId: string;
+  readonly backupAuthorizationSha256: string;
+  readonly restoreAuthorizationId: string;
+  readonly restoreAuthorizationSha256: string;
+  readonly restoreAuthorizedStateSha256: string;
+}
+
+export type RestoreReceipt = RestoreReceiptV1 | RestoreReceiptV2;
+
+interface RestoreIntentV1 {
   readonly schemaVersion: 1;
   readonly restoreId: string;
   readonly backupGenerationId: string;
@@ -132,6 +185,27 @@ interface RestoreIntent {
   readonly targetSchemaVersion: number;
   readonly createdAt: string;
 }
+
+interface RestoreIntentV2 {
+  readonly schemaVersion: 2;
+  readonly restoreId: string;
+  readonly backupGenerationId: string;
+  readonly backupManifestSha256: string;
+  readonly applicationVersion: string;
+  readonly expectedCurrent: PrimaryIdentity;
+  readonly stageIdentity: PrimaryFileMember;
+  readonly retainedDirectoryIdentity: DirectoryIdentity;
+  readonly targetSchemaVersion: number;
+  readonly createdAt: string;
+  readonly backupManifestSchemaVersion: 2;
+  readonly backupAuthorizationId: string;
+  readonly backupAuthorizationSha256: string;
+  readonly restoreAuthorizationId: string;
+  readonly restoreAuthorizationSha256: string;
+  readonly restoreAuthorizedStateSha256: string;
+}
+
+type RestoreIntent = RestoreIntentV1 | RestoreIntentV2;
 
 export interface RestoreTestHooks {
   readonly afterStage?: () => void;
@@ -145,7 +219,14 @@ export interface RestoreTestHooks {
 }
 
 export interface BackupTestHooks {
+  readonly beforeStage?: () => void;
+  readonly afterStage?: () => void;
+  readonly beforeClone?: () => void;
   readonly afterClone?: () => void;
+  readonly beforeAuthorizationRecheck?: () => void;
+  readonly beforeAuthorizationCommit?: () => void;
+  readonly afterAuthorizationCommit?: () => void;
+  readonly afterManifest?: () => void;
   readonly beforePublish?: () => void;
   readonly afterPublish?: () => void;
 }
@@ -221,6 +302,24 @@ function parseHistory(value: unknown): readonly MigrationHistoryEntry[] {
 }
 
 function parseBackupManifest(value: unknown): BackupManifest {
+  let schemaVersion: unknown;
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw persistenceFailure("BACKUP_INVALID", "Backup manifest is not an object");
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, "schemaVersion");
+    schemaVersion = descriptor !== undefined && "value" in descriptor && descriptor.enumerable
+      ? descriptor.value
+      : null;
+  } catch (error) {
+    throw persistenceFailure("BACKUP_INVALID", "Backup manifest schema cannot be inspected", {}, error);
+  }
+  const versionTwoFields = [
+    "lifecycleAuthorizationId",
+    "lifecycleAuthorizationSha256",
+    "provenanceKind",
+    "sourceApplicationStateSha256",
+  ] as const;
   const record = exactRecord(
     value,
     [
@@ -236,12 +335,13 @@ function parseBackupManifest(value: unknown): BackupManifest {
       "sourceRegistryIdentity",
       "sourceSchemaFingerprint",
       "sourceSchemaVersion",
+      ...(schemaVersion === 2 ? versionTwoFields : []),
     ],
     "backup manifest",
   );
   assertUuid(record.generationId, "Backup generationId");
   if (
-    record.schemaVersion !== 1 ||
+    (record.schemaVersion !== 1 && record.schemaVersion !== 2) ||
     (record.kind !== "manual" && record.kind !== "pre_upgrade") ||
     record.databaseFile !== BACKUP_DATABASE_FILE ||
     typeof record.databaseLength !== "number" ||
@@ -258,8 +358,7 @@ function parseBackupManifest(value: unknown): BackupManifest {
   ) {
     throw persistenceFailure("BACKUP_INVALID", "Backup manifest contains an invalid field");
   }
-  return Object.freeze({
-    schemaVersion: 1,
+  const common = {
     generationId: record.generationId,
     kind: record.kind,
     databaseFile: BACKUP_DATABASE_FILE,
@@ -271,6 +370,25 @@ function parseBackupManifest(value: unknown): BackupManifest {
     sourceHistory: parseHistory(record.sourceHistory),
     applicationVersion: record.applicationVersion,
     createdAt: record.createdAt,
+  } as const;
+  if (record.schemaVersion === 1) return Object.freeze({ schemaVersion: 1 as const, ...common });
+  const applicationProvenance = record.provenanceKind === "application" &&
+    record.kind === "manual" && record.sourceSchemaVersion === 4 &&
+    isNonemptyString(record.lifecycleAuthorizationId) &&
+    isSha256(record.lifecycleAuthorizationSha256) && isSha256(record.sourceApplicationStateSha256);
+  const preUpgradeProvenance = record.provenanceKind === "pre_upgrade_internal" &&
+    record.kind === "pre_upgrade" && record.lifecycleAuthorizationId === null &&
+    record.lifecycleAuthorizationSha256 === null && record.sourceApplicationStateSha256 === null;
+  if (!applicationProvenance && !preUpgradeProvenance) {
+    throw persistenceFailure("BACKUP_INVALID", "Backup manifest provenance is invalid");
+  }
+  return Object.freeze({
+    schemaVersion: 2 as const,
+    ...common,
+    provenanceKind: record.provenanceKind as BackupManifestV2["provenanceKind"],
+    lifecycleAuthorizationId: record.lifecycleAuthorizationId as string | null,
+    lifecycleAuthorizationSha256: record.lifecycleAuthorizationSha256 as string | null,
+    sourceApplicationStateSha256: record.sourceApplicationStateSha256 as string | null,
   });
 }
 
@@ -338,7 +456,7 @@ function verifyStandaloneDatabase(
   try {
     evidence = inspectSchemaEvidence(database);
     verifyDatabaseIntegrity(database);
-    if (evidence.schemaVersion >= 3) readApplicationState(database);
+    if (evidence.schemaVersion >= 4) readApplicationState(database);
     else if (evidence.schemaVersion >= 2) readDomainSnapshot(database);
   } finally {
     database.close();
@@ -398,6 +516,9 @@ function verifyBackupGenerationWithHooks(
   assertRuntimeLayout(layout);
   assertUuid(generationId, "Backup generationId");
   try {
+    if (!pathEntryExistsNoFollow(path.join(layout.backupGenerationsRoot, generationId))) {
+      throw persistenceFailure("NOT_FOUND", "Backup generation is absent");
+    }
     const directory = captureOwnedRuntimeDirectory(layout, layout.backupGenerationsRoot, generationId);
     assertBackupInventory(layout, directory);
     const manifestRead = readJsonFile(path.join(directory.path, BACKUP_MANIFEST_FILE), "backup manifest");
@@ -428,6 +549,27 @@ function verifyBackupGenerationWithHooks(
     ) {
       throw persistenceFailure("BACKUP_INVALID", "Backup database readback does not match its manifest");
     }
+    if (manifest.schemaVersion === 2 && manifest.provenanceKind === "application") {
+      const provenanceDatabase = openReadOnlyDatabase(databasePath);
+      try {
+        const state = readApplicationState(provenanceDatabase);
+        const authorization = state.lifecycle.find(
+          (candidate) => candidate.authorizationId === manifest.lifecycleAuthorizationId,
+        );
+        if (
+          authorization === undefined ||
+          authorization.operation !== "runtime.backup" ||
+          authorization.backupGenerationId !== generationId ||
+          lifecycleAuthorizationSha256(authorization) !== manifest.lifecycleAuthorizationSha256 ||
+          authorization.authorizedStateSha256 !== manifest.sourceApplicationStateSha256 ||
+          applicationStateSha256(state) !== manifest.sourceApplicationStateSha256
+        ) {
+          throw persistenceFailure("BACKUP_INVALID", "Backup application provenance does not match the cloned state");
+        }
+      } finally {
+        provenanceDatabase.close();
+      }
+    }
     assertBackupInventory(layout, directory);
     const terminalManifest = readRegularFile(path.join(directory.path, BACKUP_MANIFEST_FILE));
     const terminalDatabase = readRegularFile(databasePath);
@@ -453,7 +595,9 @@ function verifyBackupGenerationWithHooks(
     if (
       error instanceof Error &&
       error.name === "PersistenceError" &&
-      (error as PersistenceError).code === "BACKUP_INVALID"
+      ["BACKUP_INVALID", "NOT_FOUND", "PATH_IDENTITY_CHANGED", "UNSAFE_RUNTIME_ROOT"].includes(
+        (error as PersistenceError).code,
+      )
     ) {
       throw error;
     }
@@ -471,6 +615,76 @@ export function verifyBackupGenerationForTesting(
   hooks: BackupVerificationTestHooks,
 ): BackupGeneration {
   return verifyBackupGenerationWithHooks(layout, generationId, hooks);
+}
+
+export type RestoreInventoryState = "none" | "pending" | "ambiguous";
+
+export function inspectRestoreInventory(layout: RuntimeLayout): RestoreInventoryState {
+  assertRuntimeLayout(layout);
+  const stageNames = readdirSync(layout.restoreStagingRoot).sort();
+  const retainedNames = readdirSync(layout.restoreRetainedRoot).sort();
+  const receiptNames = readdirSync(layout.restoreReceiptsRoot).sort();
+  assertRuntimeLayout(layout);
+  if (hasRestoreIntent(layout)) {
+    try {
+      const pending = readRestoreIntent(layout).intent;
+      const expectedStage = `${pending.restoreId}.sqlite3`;
+      const expectedReceipt = `${pending.restoreId}.json`;
+      if (
+        !retainedNames.includes(pending.restoreId) ||
+        retainedNames.some((name) => name !== pending.restoreId) ||
+        stageNames.some((name) => name !== expectedStage) ||
+        receiptNames.some((name) => name !== expectedReceipt)
+      ) {
+        return "ambiguous";
+      }
+      assertRetainedDirectory(layout, pending);
+      return "pending";
+    } catch (error) {
+      if (error instanceof PersistenceError &&
+          (error.code === "PATH_IDENTITY_CHANGED" || error.code === "UNSAFE_RUNTIME_ROOT")) throw error;
+      return "ambiguous";
+    }
+  }
+  if (stageNames.length !== 0) return "ambiguous";
+  if (retainedNames.length === 0 && receiptNames.length === 0) return "none";
+  if (retainedNames.length !== receiptNames.length) return "ambiguous";
+  try {
+    for (const restoreId of retainedNames) {
+      assertUuid(restoreId, "Retained restore identifier");
+      const expectedReceiptName = `${restoreId}.json`;
+      if (!receiptNames.includes(expectedReceiptName)) return "ambiguous";
+      const directory = captureOwnedRuntimeDirectory(layout, layout.restoreRetainedRoot, restoreId);
+      const names = readdirSync(directory.path).sort();
+      if (
+        !names.includes(BACKUP_DATABASE_FILE) ||
+        names.some((name) => !PRIMARY_MEMBER_NAMES.includes(name as (typeof PRIMARY_MEMBER_NAMES)[number]))
+      ) {
+        return "ambiguous";
+      }
+      for (const name of names) readRegularFile(path.join(directory.path, name));
+      assertOwnedRuntimeDirectory(layout, directory);
+      const receiptRead = readJsonFile(
+        path.join(layout.restoreReceiptsRoot, expectedReceiptName),
+        "restore receipt",
+        "RESTORE_BLOCKED",
+      );
+      const receipt = parseRestoreReceipt(receiptRead.value);
+      if (
+        receipt.restoreId !== restoreId ||
+        receipt.retainedDirectory !== restoreId ||
+        !sameDirectoryIdentity(receipt.retainedDirectoryIdentity, directory.identity)
+      ) {
+        return "ambiguous";
+      }
+    }
+    assertRuntimeLayout(layout);
+    return "none";
+  } catch (error) {
+    if (error instanceof PersistenceError &&
+        (error.code === "PATH_IDENTITY_CHANGED" || error.code === "UNSAFE_RUNTIME_ROOT")) throw error;
+    return "ambiguous";
+  }
 }
 
 async function cloneDatabase(
@@ -513,6 +727,43 @@ async function cloneDatabase(
   }
 }
 
+function assertNoBackupStagingResidue(layout: RuntimeLayout): void {
+  assertRuntimeLayout(layout);
+  const names = readdirSync(layout.backupStagingRoot);
+  assertRuntimeLayout(layout);
+  if (names.length !== 0) {
+    throw persistenceFailure("BACKUP_INVALID", "Backup staging inventory contains unpublished residue");
+  }
+}
+
+function cleanupOwnedBackupStage(layout: RuntimeLayout, directory: OwnedRuntimeDirectory): void {
+  try {
+    assertOwnedRuntimeDirectory(layout, directory);
+    const names = readdirSync(directory.path).sort();
+    if (names.some((name) => name !== BACKUP_DATABASE_FILE && name !== BACKUP_MANIFEST_FILE)) return;
+    const members = names.map((name) => {
+      const filePath = path.join(directory.path, name);
+      const read = readRegularFile(filePath);
+      return Object.freeze({ filePath, identity: read.identity, checksumSha256: sha256(read.bytes) });
+    });
+    assertOwnedRuntimeDirectory(layout, directory);
+    if (canonicalJson(readdirSync(directory.path).sort()) !== canonicalJson(names)) return;
+    for (const member of members) {
+      assertOwnedRuntimeDirectory(layout, directory);
+      unlinkOwnedFile(member.filePath, member.identity, member.checksumSha256);
+    }
+    assertOwnedRuntimeDirectory(layout, directory);
+    if (readdirSync(directory.path).length !== 0) return;
+    rmdirSync(directory.path);
+    if (pathEntryExistsNoFollow(directory.path)) {
+      throw persistenceFailure("PATH_IDENTITY_CHANGED", "Owned backup stage remained after cleanup");
+    }
+    assertRuntimeLayout(layout);
+  } catch {
+    // Fail closed: an ownership or inventory ambiguity preserves the residue for doctor.
+  }
+}
+
 export async function createBackupUnderLock(
   database: SqliteDatabase,
   layout: RuntimeLayout,
@@ -520,14 +771,35 @@ export async function createBackupUnderLock(
   kind: BackupKind,
   token: LifecycleLockToken,
   hooks: BackupTestHooks = {},
+  authorization: ApplicationLifecycleAuthorization | null = null,
 ): Promise<BackupGeneration> {
   assertRuntimeLayout(layout);
   token.assertHeld();
   if (!isNonemptyString(applicationVersion)) {
     throw persistenceFailure("INVALID_INPUT", "applicationVersion must be nonempty");
   }
-  const generationId = randomUUID();
-  const stageDirectory = createPrivateDirectory(layout, layout.backupStagingRoot, generationId);
+  if ((kind === "manual") !== (authorization !== null)) {
+    throw persistenceFailure("AUTHORIZATION_DENIED", "Manual backup requires one application lifecycle authorization");
+  }
+  const generationId = authorization?.backupGenerationId ?? randomUUID();
+  assertUuid(generationId, "Backup generationId");
+  let stageDirectory: OwnedRuntimeDirectory | null = null;
+  let published = false;
+  try {
+    assertNoBackupStagingResidue(layout);
+    const initialAuthorization = authorization === null
+      ? null
+      : validateLifecycleAuthorizationForUse(
+        database,
+        authorization,
+        "runtime.backup",
+        generationId,
+        new Date().toISOString(),
+      );
+    hooks.beforeStage?.();
+    stageDirectory = createPrivateDirectory(layout, layout.backupStagingRoot, generationId);
+    const ownedStage = stageDirectory;
+  hooks.afterStage?.();
   const sourceIdentity = inspectRegularFile(layout.databasePath);
   const assertSource = (): void => {
     assertRuntimeLayout(layout);
@@ -536,22 +808,48 @@ export async function createBackupUnderLock(
       throw persistenceFailure("PATH_IDENTITY_CHANGED", "Backup source database identity changed");
     }
   };
-  const stageDatabasePath = path.join(stageDirectory.path, BACKUP_DATABASE_FILE);
+  const stageDatabasePath = path.join(ownedStage.path, BACKUP_DATABASE_FILE);
+  hooks.beforeClone?.();
   await cloneDatabase(
     database,
     stageDatabasePath,
-    () => assertOwnedRuntimeDirectory(layout, stageDirectory),
+    () => assertOwnedRuntimeDirectory(layout, ownedStage),
     assertSource,
     hooks.afterClone,
   );
   token.assertHeld();
   assertSource();
-  assertOwnedRuntimeDirectory(layout, stageDirectory);
+  assertOwnedRuntimeDirectory(layout, ownedStage);
   const verified = verifyStandaloneDatabase(stageDatabasePath);
-  assertOwnedRuntimeDirectory(layout, stageDirectory);
+  assertOwnedRuntimeDirectory(layout, ownedStage);
   const evidence = verified.evidence;
+  let terminalAuthorization = initialAuthorization;
+  if (authorization !== null) {
+    terminalAuthorization = runWriteTransaction(database, () => {
+      hooks.beforeAuthorizationRecheck?.();
+      const currentAuthorization = validateLifecycleAuthorizationForUseUntransactional(
+        database,
+        authorization,
+        "runtime.backup",
+        generationId,
+        new Date().toISOString(),
+      );
+      hooks.beforeAuthorizationCommit?.();
+      return currentAuthorization;
+    });
+    hooks.afterAuthorizationCommit?.();
+    const clonedDatabase = openReadOnlyDatabase(stageDatabasePath);
+    try {
+      const clonedStateSha256 = applicationStateSha256(readApplicationState(clonedDatabase));
+      if (clonedStateSha256 !== terminalAuthorization.stateSha256) {
+        throw persistenceFailure("BACKUP_CONFLICT", "Cloned state does not match lifecycle authorization");
+      }
+    } finally {
+      clonedDatabase.close();
+    }
+  }
   const manifest: BackupManifest = Object.freeze({
-    schemaVersion: 1,
+    schemaVersion: 2,
     generationId,
     kind,
     databaseFile: BACKUP_DATABASE_FILE,
@@ -563,18 +861,23 @@ export async function createBackupUnderLock(
     sourceHistory: evidence.history,
     applicationVersion,
     createdAt: new Date().toISOString(),
+    provenanceKind: authorization === null ? "pre_upgrade_internal" : "application",
+    lifecycleAuthorizationId: authorization?.authorizationId ?? null,
+    lifecycleAuthorizationSha256: authorization === null ? null : lifecycleAuthorizationSha256(authorization),
+    sourceApplicationStateSha256: terminalAuthorization?.stateSha256 ?? null,
   });
   const manifestPath = path.join(stageDirectory.path, BACKUP_MANIFEST_FILE);
   const manifestBytes = canonicalJson(manifest);
   token.assertHeld();
   assertSource();
-  assertOwnedRuntimeDirectory(layout, stageDirectory);
+  assertOwnedRuntimeDirectory(layout, ownedStage);
   const manifestIdentity = writeExclusiveFile(manifestPath, manifestBytes);
   const enforcedManifest = enforcePrivateRegularFile(manifestPath);
   if (!sameFileIdentity(manifestIdentity, enforcedManifest)) {
     throw persistenceFailure("PATH_IDENTITY_CHANGED", "Backup manifest identity changed during publication");
   }
-  assertOwnedRuntimeDirectory(layout, stageDirectory);
+  hooks.afterManifest?.();
+  assertOwnedRuntimeDirectory(layout, ownedStage);
   const generationDirectory = path.join(layout.backupGenerationsRoot, generationId);
   if (pathEntryExistsNoFollow(generationDirectory)) {
     throw persistenceFailure("BACKUP_CONFLICT", "Backup generation destination already exists");
@@ -582,8 +885,8 @@ export async function createBackupUnderLock(
   hooks.beforePublish?.();
   token.assertHeld();
   assertSource();
-  assertOwnedRuntimeDirectory(layout, stageDirectory);
-  assertBackupInventory(layout, stageDirectory);
+  assertOwnedRuntimeDirectory(layout, ownedStage);
+  assertBackupInventory(layout, ownedStage);
   const terminalStageDatabase = readRegularFile(stageDatabasePath);
   const terminalStageManifest = readRegularFile(manifestPath);
   if (
@@ -594,15 +897,16 @@ export async function createBackupUnderLock(
   ) {
     throw persistenceFailure("BACKUP_INVALID", "Backup stage binding changed before publication");
   }
-  assertBackupInventory(layout, stageDirectory);
+  assertBackupInventory(layout, ownedStage);
   if (pathEntryExistsNoFollow(generationDirectory)) {
     throw persistenceFailure("BACKUP_CONFLICT", "Backup generation destination appeared before publication");
   }
   try {
-    renameSync(stageDirectory.path, generationDirectory);
+    renameSync(ownedStage.path, generationDirectory);
   } catch (error) {
     throw persistenceFailure("BACKUP_CONFLICT", "Backup generation could not be published", {}, error);
   }
+  published = true;
   token.assertHeld();
   assertSource();
   const publishedDirectory = captureOwnedRuntimeDirectory(
@@ -610,15 +914,29 @@ export async function createBackupUnderLock(
     layout.backupGenerationsRoot,
     generationId,
   );
-  if (!sameDirectoryIdentity(stageDirectory.identity, publishedDirectory.identity)) {
+  if (!sameDirectoryIdentity(ownedStage.identity, publishedDirectory.identity)) {
     throw persistenceFailure("PATH_IDENTITY_CHANGED", "Backup generation identity changed during publication");
   }
-  if (pathEntryExistsNoFollow(stageDirectory.path)) {
+  if (pathEntryExistsNoFollow(ownedStage.path)) {
     throw persistenceFailure("PATH_IDENTITY_CHANGED", "Backup stage remained after publication");
   }
   hooks.afterPublish?.();
   assertOwnedRuntimeDirectory(layout, publishedDirectory);
-  return verifyBackupGeneration(layout, generationId);
+    return verifyBackupGeneration(layout, generationId);
+  } catch (error) {
+    if (!published && stageDirectory !== null) cleanupOwnedBackupStage(layout, stageDirectory);
+    if (published) {
+      try {
+        return verifyBackupGeneration(layout, generationId);
+      } catch (verificationError) {
+        if (verificationError instanceof Error && verificationError.name === "PersistenceError") {
+          throw verificationError;
+        }
+        throw persistenceFailure("BACKUP_INVALID", "Published backup generation could not be reverified", {}, verificationError);
+      }
+    }
+    throw error;
+  }
 }
 
 function memberPath(layout: RuntimeLayout, fileName: string): string {
@@ -734,7 +1052,7 @@ function stageMember(stagePath: string): PrimaryFileMember {
 function parseRestoreRequest(value: unknown): RestoreRequest {
   const record = exactRecord(
     value,
-    ["acknowledgeDataLoss", "applicationVersion", "expectedCurrent", "generationId"],
+    ["acknowledgeDataLoss", "applicationVersion", "authorization", "expectedCurrent", "generationId"],
     "restore request",
   );
   assertUuid(record.generationId, "Restore generationId");
@@ -744,15 +1062,40 @@ function parseRestoreRequest(value: unknown): RestoreRequest {
   if (!isNonemptyString(record.applicationVersion)) {
     throw persistenceFailure("INVALID_INPUT", "Restore applicationVersion must be nonempty");
   }
+  const authorization = parseApplicationLifecycleAuthorization(record.authorization);
+  if (authorization.operation !== "runtime.restore" || authorization.backupGenerationId !== record.generationId) {
+    throw persistenceFailure("AUTHORIZATION_DENIED", "Restore lifecycle authorization does not bind this generation");
+  }
   return Object.freeze({
     generationId: record.generationId,
     expectedCurrent: parsePrimaryIdentity(record.expectedCurrent),
     acknowledgeDataLoss: true,
     applicationVersion: record.applicationVersion,
+    authorization,
   });
 }
 
 function parseRestoreIntent(value: unknown): RestoreIntent {
+  let schemaVersion: unknown;
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw persistenceFailure("RESTORE_BLOCKED", "Restore intent is not an object");
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, "schemaVersion");
+    schemaVersion = descriptor !== undefined && "value" in descriptor && descriptor.enumerable
+      ? descriptor.value
+      : null;
+  } catch (error) {
+    throw persistenceFailure("RESTORE_BLOCKED", "Restore intent schema cannot be inspected", {}, error);
+  }
+  const v2Fields = [
+    "backupAuthorizationId",
+    "backupAuthorizationSha256",
+    "backupManifestSchemaVersion",
+    "restoreAuthorizationId",
+    "restoreAuthorizationSha256",
+    "restoreAuthorizedStateSha256",
+  ] as const;
   const record = exactRecord(
     value,
     [
@@ -766,13 +1109,14 @@ function parseRestoreIntent(value: unknown): RestoreIntent {
       "schemaVersion",
       "stageIdentity",
       "targetSchemaVersion",
+      ...(schemaVersion === 2 ? v2Fields : []),
     ],
     "restore intent",
   );
   assertUuid(record.restoreId, "Restore intent restoreId");
   assertUuid(record.backupGenerationId, "Restore intent backupGenerationId");
   if (
-    record.schemaVersion !== 1 ||
+    (record.schemaVersion !== 1 && record.schemaVersion !== 2) ||
     !isSha256(record.backupManifestSha256) ||
     !isNonemptyString(record.applicationVersion) ||
     !isCanonicalUtcTimestamp(record.createdAt) ||
@@ -786,8 +1130,7 @@ function parseRestoreIntent(value: unknown): RestoreIntent {
   if (stageIdentity.fileName !== BACKUP_DATABASE_FILE) {
     throw persistenceFailure("RESTORE_BLOCKED", "Restore stage identity has an invalid member name");
   }
-  return Object.freeze({
-    schemaVersion: 1,
+  const common = {
     restoreId: record.restoreId,
     backupGenerationId: record.backupGenerationId,
     backupManifestSha256: record.backupManifestSha256,
@@ -800,10 +1143,51 @@ function parseRestoreIntent(value: unknown): RestoreIntent {
     ),
     targetSchemaVersion: record.targetSchemaVersion,
     createdAt: record.createdAt,
+  } as const;
+  if (record.schemaVersion === 1) return Object.freeze({ schemaVersion: 1 as const, ...common });
+  if (
+    record.backupManifestSchemaVersion !== 2 ||
+    !isNonemptyString(record.backupAuthorizationId) ||
+    !isSha256(record.backupAuthorizationSha256) ||
+    !isNonemptyString(record.restoreAuthorizationId) ||
+    !isSha256(record.restoreAuthorizationSha256) ||
+    !isSha256(record.restoreAuthorizedStateSha256)
+  ) {
+    throw persistenceFailure("RESTORE_BLOCKED", "Restore intent authorization binding is invalid");
+  }
+  return Object.freeze({
+    schemaVersion: 2 as const,
+    ...common,
+    backupManifestSchemaVersion: 2 as const,
+    backupAuthorizationId: record.backupAuthorizationId,
+    backupAuthorizationSha256: record.backupAuthorizationSha256,
+    restoreAuthorizationId: record.restoreAuthorizationId,
+    restoreAuthorizationSha256: record.restoreAuthorizationSha256,
+    restoreAuthorizedStateSha256: record.restoreAuthorizedStateSha256,
   });
 }
 
 function parseRestoreReceipt(value: unknown): RestoreReceipt {
+  let schemaVersion: unknown;
+  try {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      throw persistenceFailure("RESTORE_BLOCKED", "Restore receipt is not an object");
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(value, "schemaVersion");
+    schemaVersion = descriptor !== undefined && "value" in descriptor && descriptor.enumerable
+      ? descriptor.value
+      : null;
+  } catch (error) {
+    throw persistenceFailure("RESTORE_BLOCKED", "Restore receipt schema cannot be inspected", {}, error);
+  }
+  const v2Fields = [
+    "backupAuthorizationId",
+    "backupAuthorizationSha256",
+    "backupManifestSha256",
+    "restoreAuthorizationId",
+    "restoreAuthorizationSha256",
+    "restoreAuthorizedStateSha256",
+  ] as const;
   const record = exactRecord(
     value,
     [
@@ -817,13 +1201,14 @@ function parseRestoreReceipt(value: unknown): RestoreReceipt {
       "schemaVersion",
       "targetDatabaseSha256",
       "targetSchemaVersion",
+      ...(schemaVersion === 2 ? v2Fields : []),
     ],
     "restore receipt",
   );
   assertUuid(record.restoreId, "Restore receipt restoreId");
   assertUuid(record.backupGenerationId, "Restore receipt backupGenerationId");
   if (
-    record.schemaVersion !== 1 ||
+    (record.schemaVersion !== 1 && record.schemaVersion !== 2) ||
     !isNonemptyString(record.applicationVersion) ||
     !isCanonicalUtcTimestamp(record.restoredAt) ||
     !isSha256(record.previousIdentitySha256) ||
@@ -835,8 +1220,7 @@ function parseRestoreReceipt(value: unknown): RestoreReceipt {
   ) {
     throw persistenceFailure("RESTORE_BLOCKED", "Restore receipt contains an invalid field");
   }
-  return Object.freeze({
-    schemaVersion: 1,
+  const common = {
     restoreId: record.restoreId,
     backupGenerationId: record.backupGenerationId,
     restoredAt: record.restoredAt,
@@ -849,6 +1233,27 @@ function parseRestoreReceipt(value: unknown): RestoreReceipt {
       record.retainedDirectoryIdentity,
       "restore receipt retainedDirectoryIdentity",
     ),
+  } as const;
+  if (record.schemaVersion === 1) return Object.freeze({ schemaVersion: 1 as const, ...common });
+  if (
+    !isSha256(record.backupManifestSha256) ||
+    !isNonemptyString(record.backupAuthorizationId) ||
+    !isSha256(record.backupAuthorizationSha256) ||
+    !isNonemptyString(record.restoreAuthorizationId) ||
+    !isSha256(record.restoreAuthorizationSha256) ||
+    !isSha256(record.restoreAuthorizedStateSha256)
+  ) {
+    throw persistenceFailure("RESTORE_BLOCKED", "Restore receipt authorization binding is invalid");
+  }
+  return Object.freeze({
+    schemaVersion: 2 as const,
+    ...common,
+    backupManifestSha256: record.backupManifestSha256,
+    backupAuthorizationId: record.backupAuthorizationId,
+    backupAuthorizationSha256: record.backupAuthorizationSha256,
+    restoreAuthorizationId: record.restoreAuthorizationId,
+    restoreAuthorizationSha256: record.restoreAuthorizationSha256,
+    restoreAuthorizedStateSha256: record.restoreAuthorizedStateSha256,
   });
 }
 
@@ -904,7 +1309,112 @@ function validateBackupBinding(layout: RuntimeLayout, intent: RestoreIntent): Ba
   ) {
     throw persistenceFailure("RESTORE_BLOCKED", "Restore intent no longer matches the backup generation");
   }
+  if (intent.schemaVersion === 2) {
+    const manifest = generation.manifest;
+    if (
+      manifest.schemaVersion !== 2 ||
+      manifest.kind !== "manual" ||
+      manifest.provenanceKind !== "application" ||
+      manifest.sourceSchemaVersion !== 4 ||
+      manifest.lifecycleAuthorizationId !== intent.backupAuthorizationId ||
+      manifest.lifecycleAuthorizationSha256 !== intent.backupAuthorizationSha256 ||
+      manifest.sourceApplicationStateSha256 === null ||
+      intent.backupManifestSchemaVersion !== 2
+    ) {
+      throw persistenceFailure("RESTORE_BLOCKED", "Restore intent application provenance is inconsistent");
+    }
+  }
   return generation;
+}
+
+function requireRestorableGeneration(generation: BackupGeneration): BackupManifestV2 & {
+  readonly provenanceKind: "application";
+  readonly lifecycleAuthorizationId: string;
+  readonly lifecycleAuthorizationSha256: string;
+  readonly sourceApplicationStateSha256: string;
+} {
+  const manifest = generation.manifest;
+  if (
+    manifest.schemaVersion !== 2 ||
+    manifest.kind !== "manual" ||
+    manifest.provenanceKind !== "application" ||
+    manifest.sourceSchemaVersion !== 4 ||
+    manifest.lifecycleAuthorizationId === null ||
+    manifest.lifecycleAuthorizationSha256 === null ||
+    manifest.sourceApplicationStateSha256 === null
+  ) {
+    throw persistenceFailure("BACKUP_INVALID", "Only schema-2 application-authorized manual backups are restorable");
+  }
+  return manifest as BackupManifestV2 & {
+    readonly provenanceKind: "application";
+    readonly lifecycleAuthorizationId: string;
+    readonly lifecycleAuthorizationSha256: string;
+    readonly sourceApplicationStateSha256: string;
+  };
+}
+
+function validateCurrentRestoreAuthorization(
+  layout: RuntimeLayout,
+  authorization: ApplicationLifecycleAuthorization,
+  generationId: string,
+  now: string,
+): Readonly<{ authorization: ApplicationLifecycleAuthorization; stateSha256: string }> {
+  const database = openReadOnlyDatabase(layout.databasePath);
+  try {
+    return validateLifecycleAuthorizationForUse(database, authorization, "runtime.restore", generationId, now);
+  } finally {
+    database.close();
+    assertRuntimeLayout(layout);
+  }
+}
+
+function validateRetainedRestoreAuthorization(layout: RuntimeLayout, intent: RestoreIntentV2): void {
+  const retainedPath = retainedMemberPath(layout, intent.restoreId, BACKUP_DATABASE_FILE);
+  const database = openReadOnlyDatabase(retainedPath);
+  try {
+    const state = readApplicationState(database);
+    const authorization = state.lifecycle.find((candidate) => candidate.authorizationId === intent.restoreAuthorizationId);
+    if (
+      authorization === undefined ||
+      lifecycleAuthorizationSha256(authorization) !== intent.restoreAuthorizationSha256 ||
+      authorization.authorizedStateSha256 !== intent.restoreAuthorizedStateSha256 ||
+      authorization.operation !== "runtime.restore" ||
+      authorization.backupGenerationId !== intent.backupGenerationId
+    ) {
+      throw persistenceFailure("RESTORE_BLOCKED", "Retained restore authorization does not match the durable intent");
+    }
+    validateLifecycleAuthorizationForUse(
+      database,
+      authorization,
+      "runtime.restore",
+      intent.backupGenerationId,
+      intent.createdAt,
+    );
+  } finally {
+    database.close();
+  }
+}
+
+function validatePublishedBackupAuthorization(layout: RuntimeLayout, intent: RestoreIntentV2): void {
+  const generation = validateBackupBinding(layout, intent);
+  const manifest = requireRestorableGeneration(generation);
+  const database = openReadOnlyDatabase(layout.databasePath);
+  try {
+    const state = readApplicationState(database);
+    const authorization = state.lifecycle.find((candidate) => candidate.authorizationId === manifest.lifecycleAuthorizationId);
+    if (
+      authorization === undefined ||
+      authorization.operation !== "runtime.backup" ||
+      authorization.backupGenerationId !== intent.backupGenerationId ||
+      lifecycleAuthorizationSha256(authorization) !== manifest.lifecycleAuthorizationSha256 ||
+      authorization.authorizedStateSha256 !== manifest.sourceApplicationStateSha256 ||
+      applicationStateSha256(state) !== manifest.sourceApplicationStateSha256
+    ) {
+      throw persistenceFailure("RESTORE_BLOCKED", "Published target does not retain the backup authorization lineage");
+    }
+  } finally {
+    database.close();
+  }
 }
 
 function receiptPath(layout: RuntimeLayout, restoreId: string): string {
@@ -939,6 +1449,20 @@ function existingReceipt(layout: RuntimeLayout, intent: RestoreIntent): RestoreR
     canonicalJson(receipt.retainedDirectoryIdentity) !== canonicalJson(intent.retainedDirectoryIdentity)
   ) {
     throw persistenceFailure("RESTORE_BLOCKED", "Existing restore receipt conflicts with the pending intent");
+  }
+  if (
+    receipt.schemaVersion !== intent.schemaVersion ||
+    (intent.schemaVersion === 2 && (
+      receipt.schemaVersion !== 2 ||
+      receipt.backupManifestSha256 !== intent.backupManifestSha256 ||
+      receipt.backupAuthorizationId !== intent.backupAuthorizationId ||
+      receipt.backupAuthorizationSha256 !== intent.backupAuthorizationSha256 ||
+      receipt.restoreAuthorizationId !== intent.restoreAuthorizationId ||
+      receipt.restoreAuthorizationSha256 !== intent.restoreAuthorizationSha256 ||
+      receipt.restoreAuthorizedStateSha256 !== intent.restoreAuthorizedStateSha256
+    ))
+  ) {
+    throw persistenceFailure("RESTORE_BLOCKED", "Existing restore receipt authorization links conflict with the intent");
   }
   assertRuntimeLayout(layout);
   return receipt;
@@ -1104,6 +1628,10 @@ async function continueRestore(
   if (priorReceipt !== null) {
     assertCompleteRetainedDirectory(layout, intent);
     verifyPublishedTarget(layout, intent);
+    if (intent.schemaVersion === 2) {
+      validateRetainedRestoreAuthorization(layout, intent);
+      validatePublishedBackupAuthorization(layout, intent);
+    }
     token.assertHeld();
     assertRetainedDirectory(layout, intent);
     unlinkOwnedFile(layout.restoreIntentPath, intentIdentity, intentChecksumSha256);
@@ -1161,8 +1689,11 @@ async function continueRestore(
   }
   if (!published) throw persistenceFailure("RESTORE_BLOCKED", "Restore target was not published");
   const evidence = verifyPublishedTarget(layout, intent);
-  const receipt: RestoreReceipt = Object.freeze({
-    schemaVersion: 1,
+  if (intent.schemaVersion === 2) {
+    validateRetainedRestoreAuthorization(layout, intent);
+    validatePublishedBackupAuthorization(layout, intent);
+  }
+  const receiptCommon = {
     restoreId: intent.restoreId,
     backupGenerationId: intent.backupGenerationId,
     restoredAt: new Date().toISOString(),
@@ -1172,7 +1703,19 @@ async function continueRestore(
     targetSchemaVersion: evidence.schemaVersion,
     retainedDirectory: intent.restoreId,
     retainedDirectoryIdentity: intent.retainedDirectoryIdentity,
-  });
+  } as const;
+  const receipt: RestoreReceipt = intent.schemaVersion === 1
+    ? Object.freeze({ schemaVersion: 1 as const, ...receiptCommon })
+    : Object.freeze({
+      schemaVersion: 2 as const,
+      ...receiptCommon,
+      backupManifestSha256: intent.backupManifestSha256,
+      backupAuthorizationId: intent.backupAuthorizationId,
+      backupAuthorizationSha256: intent.backupAuthorizationSha256,
+      restoreAuthorizationId: intent.restoreAuthorizationId,
+      restoreAuthorizationSha256: intent.restoreAuthorizationSha256,
+      restoreAuthorizedStateSha256: intent.restoreAuthorizedStateSha256,
+    });
   const publishedReceiptPath = receiptPath(layout, intent.restoreId);
   const receiptBytes = canonicalJson(receipt);
   token.assertHeld();
@@ -1193,6 +1736,10 @@ async function continueRestore(
   token.assertHeld();
   assertRetainedDirectory(layout, intent);
   verifyPublishedTarget(layout, intent);
+  if (intent.schemaVersion === 2) {
+    validateRetainedRestoreAuthorization(layout, intent);
+    validatePublishedBackupAuthorization(layout, intent);
+  }
   const terminalReceipt = readRegularFile(publishedReceiptPath);
   if (
     !sameFileIdentity(publishedReceiptIdentity, terminalReceipt.identity) ||
@@ -1249,32 +1796,55 @@ async function restoreBackupWithHooks(
   const request = parseRestoreRequest(requestInput);
   return withLifecycleLock(layout, "restore", async (token) => {
     ensureNoConnectionReceipts(layout);
+    assertNoBackupStagingResidue(layout);
     if (hasRestoreIntent(layout)) {
       throw persistenceFailure("RESTORE_RECOVERY_REQUIRED", "A prior restore intent requires explicit recovery");
     }
     assertExpectedPrimaryIdentity(layout, request.expectedCurrent);
     const generation = verifyBackupGeneration(layout, request.generationId);
+    const manifest = requireRestorableGeneration(generation);
+    validateCurrentRestoreAuthorization(
+      layout,
+      request.authorization,
+      generation.generationId,
+      new Date().toISOString(),
+    );
+    const validatedPrimary = capturePrimaryIdentity(layout);
     const restoreId = randomUUID();
     const stage = await stageRestoreTarget(layout, restoreId, generation, hooks);
     token.assertHeld();
     hooks.beforeIntent?.();
     token.assertHeld();
-    assertExpectedPrimaryIdentity(layout, request.expectedCurrent);
+    assertExpectedPrimaryIdentity(layout, validatedPrimary);
     const retainedDirectory = createPrivateDirectory(layout, layout.restoreRetainedRoot, restoreId);
     if (path.basename(retainedDirectory.path) !== restoreId) {
       throw persistenceFailure("PATH_IDENTITY_CHANGED", "Restore retained directory identity changed");
     }
-    const intent: RestoreIntent = Object.freeze({
-      schemaVersion: 1,
+    const intentCreatedAt = new Date().toISOString();
+    const terminalAuthorization = validateCurrentRestoreAuthorization(
+      layout,
+      request.authorization,
+      generation.generationId,
+      intentCreatedAt,
+    );
+    const terminalPrimary = capturePrimaryIdentity(layout);
+    const intent: RestoreIntentV2 = Object.freeze({
+      schemaVersion: 2,
       restoreId,
       backupGenerationId: generation.generationId,
       backupManifestSha256: sha256(canonicalJson(generation.manifest)),
       applicationVersion: request.applicationVersion,
-      expectedCurrent: request.expectedCurrent,
+      expectedCurrent: terminalPrimary,
       stageIdentity: stage.identity,
       retainedDirectoryIdentity: retainedDirectory.identity,
       targetSchemaVersion: stage.evidence.schemaVersion,
-      createdAt: new Date().toISOString(),
+      createdAt: intentCreatedAt,
+      backupManifestSchemaVersion: 2,
+      backupAuthorizationId: manifest.lifecycleAuthorizationId,
+      backupAuthorizationSha256: manifest.lifecycleAuthorizationSha256,
+      restoreAuthorizationId: request.authorization.authorizationId,
+      restoreAuthorizationSha256: lifecycleAuthorizationSha256(request.authorization),
+      restoreAuthorizedStateSha256: terminalAuthorization.stateSha256,
     });
     const intentBytes = canonicalJson(intent);
     assertRuntimeLayout(layout);
@@ -1287,7 +1857,7 @@ async function restoreBackupWithHooks(
     if (!samePrimaryMember(stageMember(stage.path), stage.identity)) {
       throw persistenceFailure("PATH_IDENTITY_CHANGED", "Restore stage changed at intent publication");
     }
-    assertExpectedPrimaryIdentity(layout, request.expectedCurrent);
+    assertExpectedPrimaryIdentity(layout, terminalPrimary);
     let intentIdentity: FileIdentity;
     try {
       intentIdentity = writeExclusiveFile(layout.restoreIntentPath, intentBytes);

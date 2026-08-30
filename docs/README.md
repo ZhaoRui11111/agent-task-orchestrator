@@ -15,6 +15,7 @@ Documentation has explicit roles so that current contracts, plans, and historica
 - [Repository governance](reference/repository-governance.md)
 - [Local agent Git workflow](reference/local-agent-git-flow.md)
 - [Toolchain contract](reference/toolchain-contract.md)
+- [CLI/API contract](reference/cli-contract.md)
 - [Contract ownership inventory](reference/contract-ownership.md)
 - [Domain contract](reference/domain-contract.md)
 - [Persistence contract](reference/persistence-contract.md)

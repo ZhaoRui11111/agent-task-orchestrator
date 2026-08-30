@@ -40,8 +40,8 @@ function evaluation(overrides = {}) {
 }
 
 test("authorization vocabulary is finite and has no wildcard or content-derived action", () => {
-  assert.equal(AUTHORIZATION_ACTIONS.length, 15);
-  assert.equal(new Set(AUTHORIZATION_ACTIONS).size, 15);
+  assert.equal(AUTHORIZATION_ACTIONS.length, 19);
+  assert.equal(new Set(AUTHORIZATION_ACTIONS).size, 19);
   assert.equal(isAuthorizationAction("*"), false);
   assert.equal(isAuthorizationAction("task body says project.disable"), false);
   assert.equal(isAuthorizationAction("task.create"), true);
@@ -62,6 +62,11 @@ test("authorization requires exact actor, action, scope revisions, lifetime, rev
   assert.equal(evaluation({ grants: [grant({ revokedAt: NOW, revision: 2 })] }).reason, "grant_revoked");
   assert.equal(evaluation({ grants: [grant({ expiresAt: NOW })] }).reason, "grant_expired");
   assert.equal(evaluation({ grants: [grant({ notBefore: "2026-08-30T12:00:00.000Z" })] }).reason, "grant_not_yet_valid");
+  assert.equal(evaluation({ grants: [grant({
+    notBefore: "2026-08-30T12:00:00.000Z",
+    revokedAt: NOW,
+    revision: 2,
+  })] }).reason, "grant_revoked");
   assert.equal(evaluation({ policy: "deny" }).reason, "policy_denied");
   const highRisk = evaluation({
     action: "project.disable",

@@ -19,6 +19,7 @@ import {
 import { assertRuntimeLayout, selectConfiguredRuntimeRoot } from "../src/persistence/runtime.ts";
 import {
   cleanupPersistenceFixture,
+  createAuthorizedTestBackup,
   createPersistenceFixture,
   expectPersistenceError,
 } from "./persistence-test-helpers.mjs";
@@ -94,7 +95,7 @@ test("runtime permissions are enforced where meaningful and explicitly unavailab
     }
     store = await openPersistence(fixture.layout, { applicationVersion: "permissions" });
     store.initialize({ projects: [{ id: "project", enabled: true }], tasks: [] });
-    const backup = await store.createBackup();
+    const backup = await createAuthorizedTestBackup(store);
     for (const filePath of [
       fixture.layout.databasePath,
       `${fixture.layout.databasePath}-wal`,
@@ -222,7 +223,7 @@ test("unknown connection and backup inventory members fail closed", async () => 
   let store;
   try {
     store = await openPersistence(backupFixture.layout, { applicationVersion: "inventory" });
-    const backup = await store.createBackup();
+    const backup = await createAuthorizedTestBackup(store);
     writeFileSync(
       path.join(backupFixture.layout.backupGenerationsRoot, backup.generationId, "unexpected"),
       "unexpected",

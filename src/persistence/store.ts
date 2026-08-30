@@ -1,11 +1,14 @@
 import {
   bindApplicationDatabase,
   readApplicationState,
+  readVersionThreeApplicationState,
   unbindApplicationDatabase,
+  type ApplicationLifecycleAuthorization,
 } from "./application-repository.ts";
 import {
   createBackupUnderLock,
   type BackupGeneration,
+  type BackupTestHooks,
 } from "./backup.ts";
 import {
   checkpointWal,
@@ -50,6 +53,7 @@ export interface OpenPersistenceOptions {
 }
 
 type StoreState = "open" | "database_closed" | "closed";
+const BACKUP_FOR_TESTING = Symbol("backup-for-testing");
 
 function enforcePrivatePrimaryFiles(layout: RuntimeLayout): void {
   assertRuntimeLayout(layout);
@@ -70,7 +74,8 @@ function inspectBeforeWritableOpen(layout: RuntimeLayout): number | null {
   try {
     const evidence = inspectSchemaEvidence(database);
     verifyDatabaseIntegrity(database);
-    if (evidence.schemaVersion >= 3) readApplicationState(database);
+    if (evidence.schemaVersion >= 4) readApplicationState(database);
+    else if (evidence.schemaVersion === 3) readVersionThreeApplicationState(database);
     else if (evidence.schemaVersion >= 2) readDomainSnapshot(database);
     return evidence.schemaVersion;
   } finally {
@@ -93,7 +98,7 @@ export interface PersistenceStore {
   readonly layout: RuntimeLayout;
   readonly applicationVersion: string;
   checkpoint(mode?: "PASSIVE" | "RESTART" | "TRUNCATE"): CheckpointResult;
-  createBackup(): Promise<BackupGeneration>;
+  createBackup(authorization: ApplicationLifecycleAuthorization): Promise<BackupGeneration>;
   close(): Promise<void>;
 }
 
@@ -106,6 +111,7 @@ class PersistenceStoreOwner implements PersistenceStore {
   readonly #database: SqliteDatabase;
   readonly #receipt: ConnectionReceipt;
   #state: StoreState = "open";
+  #applicationWritesBlocked = false;
 
   constructor(
     database: SqliteDatabase,
@@ -121,7 +127,7 @@ class PersistenceStoreOwner implements PersistenceStore {
     this.#receipt = receipt;
     this.migration = migration;
     this.connectionPolicy = connectionPolicy;
-    bindApplicationDatabase(this, database, () => this.#assertOpen());
+    bindApplicationDatabase(this, database, () => this.#assertOpen(), () => this.#assertApplicationWriteAllowed());
   }
 
   #assertOpen(): void {
@@ -132,22 +138,53 @@ class PersistenceStoreOwner implements PersistenceStore {
     assertConnectionReceiptHeld(this.layout, this.#receipt);
   }
 
+  #assertApplicationWriteAllowed(): void {
+    if (this.#applicationWritesBlocked) {
+      throw persistenceFailure("BACKUP_CONFLICT", "Application writes are blocked by a lifecycle operation");
+    }
+  }
+
   checkpoint(mode: "PASSIVE" | "RESTART" | "TRUNCATE" = "PASSIVE"): CheckpointResult {
     this.#assertOpen();
     return checkpointWal(this.#database, mode);
   }
 
-  async createBackup(): Promise<BackupGeneration> {
+  async createBackup(authorization: ApplicationLifecycleAuthorization): Promise<BackupGeneration> {
+    return this.#createBackup(authorization, {});
+  }
+
+  async [BACKUP_FOR_TESTING](
+    authorization: ApplicationLifecycleAuthorization,
+    hooks: BackupTestHooks,
+  ): Promise<BackupGeneration> {
+    return this.#createBackup(authorization, hooks);
+  }
+
+  async #createBackup(
+    authorization: ApplicationLifecycleAuthorization,
+    hooks: BackupTestHooks,
+  ): Promise<BackupGeneration> {
     this.#assertOpen();
     return withLifecycleLock(this.layout, "backup", async (token) => {
       this.#assertOpen();
-      return createBackupUnderLock(
-        this.#database,
-        this.layout,
-        this.applicationVersion,
-        "manual",
-        token,
-      );
+      const receiptNames = listConnectionReceiptNames(this.layout);
+      if (receiptNames.length !== 1 || receiptNames[0] !== `${this.#receipt.receiptId}.json`) {
+        throw persistenceFailure("ACTIVE_CONNECTIONS", "Manual backup requires the sole current connection receipt");
+      }
+      this.#applicationWritesBlocked = true;
+      try {
+        return await createBackupUnderLock(
+          this.#database,
+          this.layout,
+          this.applicationVersion,
+          "manual",
+          token,
+          hooks,
+          authorization,
+        );
+      } finally {
+        this.#applicationWritesBlocked = false;
+      }
     });
   }
 
@@ -164,6 +201,17 @@ class PersistenceStoreOwner implements PersistenceStore {
       this.#state = "closed";
     });
   }
+}
+
+export function createBackupForTesting(
+  store: PersistenceStore,
+  authorization: ApplicationLifecycleAuthorization,
+  hooks: BackupTestHooks,
+): Promise<BackupGeneration> {
+  if (!(store instanceof PersistenceStoreOwner)) {
+    throw persistenceFailure("INVALID_INPUT", "Test backup requires a persistence store owner");
+  }
+  return store[BACKUP_FOR_TESTING](authorization, hooks);
 }
 
 export async function openPersistence(

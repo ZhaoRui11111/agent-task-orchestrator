@@ -34,10 +34,12 @@ import {
 } from "./project-registry.ts";
 import type { PersistenceStore } from "./persistence/store.ts";
 import {
+  applicationStateSha256,
   applicationAuditKind,
   readApplicationStateForOwner,
   withApplicationTransaction,
   type ApplicationAuditRecord,
+  type ApplicationAction,
   type ApplicationRequestRecord,
   type ApplicationState,
   type ApplicationTransaction,
@@ -45,6 +47,7 @@ import {
   type NewGrantRecord,
   type RegisteredProject,
 } from "./persistence/application-repository.ts";
+import { canonicalJson, sha256 } from "./persistence/values.ts";
 
 export const APPLICATION_ERROR_CODES = Object.freeze([
   "INVALID_INPUT",
@@ -59,6 +62,7 @@ export const APPLICATION_ERROR_CODES = Object.freeze([
   "STALE_REVISION",
   "DOMAIN_REJECTED",
   "SCOPE_EXPANSION_DENIED",
+  "CAPABILITY_RENEWAL_NOT_DUE",
 ] as const);
 
 export type ApplicationErrorCode = (typeof APPLICATION_ERROR_CODES)[number];
@@ -93,7 +97,7 @@ export interface TrustedActorAssertion {
 
 export interface ConfirmationRequest {
   readonly actorId: string;
-  readonly action: AuthorizationAction;
+  readonly action: ApplicationAction;
   readonly requestId: string;
   readonly correlationId: string;
 }
@@ -101,7 +105,7 @@ export interface ConfirmationRequest {
 export interface ApplicationIngress {
   currentActor(): TrustedActorAssertion;
   now(): string;
-  nextId(kind: "request" | "correlation" | "decision" | "audit" | "grant"): string;
+  nextId(kind: "request" | "correlation" | "decision" | "audit" | "grant" | "epoch" | "lifecycle"): string;
   confirmHighRisk(request: ConfirmationRequest): boolean;
 }
 
@@ -113,6 +117,25 @@ interface ApplicationTestHooks {
 export interface BootstrapCommand {
   readonly kind: "authorization.bootstrap";
   readonly expiresAt: string;
+}
+
+export interface RenewalCommand {
+  readonly kind: "authorization.capability.renew";
+  readonly expiresAt: string;
+}
+
+export interface CapabilityEpochResult {
+  readonly mode: "initialized" | "adopted" | "renewed";
+  readonly expiresAt: string;
+  readonly capabilityCount: number;
+  readonly epochRevision: number;
+}
+
+export interface ProjectCommandResult {
+  readonly projectId: string;
+  readonly enabled: boolean;
+  readonly configRevision: number;
+  readonly resourceRevision: number;
 }
 
 export type ApplicationCommand =
@@ -130,7 +153,10 @@ export type ApplicationCommand =
   | { readonly kind: "task.cancel"; readonly projectId: string; readonly expectedProjectResourceRevision: number; readonly taskId: string; readonly expectedTaskRevision: number; readonly reason: string }
   | { readonly kind: "task.inspect"; readonly projectId: string; readonly expectedProjectResourceRevision: number; readonly taskId: string; readonly expectedTaskRevision: number }
   | { readonly kind: "dependency.add"; readonly projectId: string; readonly expectedProjectResourceRevision: number; readonly taskId: string; readonly expectedTaskRevision: number; readonly dependencyId: string; readonly expectedDependencyRevision: number }
-  | { readonly kind: "dependency.remove"; readonly projectId: string; readonly expectedProjectResourceRevision: number; readonly taskId: string; readonly expectedTaskRevision: number; readonly dependencyId: string; readonly expectedDependencyRevision: number };
+  | { readonly kind: "dependency.remove"; readonly projectId: string; readonly expectedProjectResourceRevision: number; readonly taskId: string; readonly expectedTaskRevision: number; readonly dependencyId: string; readonly expectedDependencyRevision: number }
+  | { readonly kind: "authorization.grant.list"; readonly limit: number; readonly afterGrantId: string | null }
+  | { readonly kind: "runtime.status" }
+  | { readonly kind: "runtime.backup" | "runtime.restore"; readonly backupGenerationId: string };
 
 type ExistingProjectCommand = Extract<ApplicationCommand, {
   readonly kind: "project.update" | "project.disable" | "project.inspect";
@@ -326,10 +352,26 @@ function parseCommand(value: unknown): ApplicationCommand | null {
       case "task.cancel": return ["kind", "projectId", "expectedProjectResourceRevision", "taskId", "expectedTaskRevision", "reason"];
       case "dependency.add":
       case "dependency.remove": return ["kind", "projectId", "expectedProjectResourceRevision", "taskId", "expectedTaskRevision", "dependencyId", "expectedDependencyRevision"];
+      case "authorization.grant.list": return ["kind", "limit", "afterGrantId"];
+      case "runtime.status": return ["kind"];
+      case "runtime.backup":
+      case "runtime.restore": return ["kind", "backupGenerationId"];
     }
   })();
   const record = exactRecord(value, expectedKeys);
   if (record === null) return null;
+  if (kind === "authorization.grant.list") {
+    return Number.isSafeInteger(record.limit) && (record.limit as number) >= 1 && (record.limit as number) <= 100 &&
+      (record.afterGrantId === null || operationalIdentifier(record.afterGrantId))
+      ? Object.freeze({ kind, limit: record.limit as number, afterGrantId: record.afterGrantId as string | null })
+      : null;
+  }
+  if (kind === "runtime.status") return Object.freeze({ kind });
+  if (kind === "runtime.backup" || kind === "runtime.restore") {
+    return operationalIdentifier(record.backupGenerationId)
+      ? Object.freeze({ kind, backupGenerationId: record.backupGenerationId })
+      : null;
+  }
   if (kind === "authorization.grant.issue") {
     const scope = parseScope(record.scope);
     return operationalIdentifier(record.actorId) && isAuthorizationAction(record.action) && scope !== null && timestamp(record.notBefore) && timestamp(record.expiresAt)
@@ -437,8 +479,8 @@ function refreshOperationTime(identity: OperationIdentity, ingress: ApplicationI
   }
 }
 
-function confirmHighRisk(identity: OperationIdentity, action: AuthorizationAction, ingress: ApplicationIngress): boolean {
-  if (!isHighRiskAction(action)) return true;
+function confirmHighRisk(identity: OperationIdentity, action: ApplicationAction, ingress: ApplicationIngress): boolean {
+  if (action !== "authorization.capability.renew" && !isHighRiskAction(action)) return true;
   try {
     return ingress.confirmHighRisk(Object.freeze({
       actorId: identity.actor.actorId,
@@ -455,8 +497,83 @@ function projectById(state: ApplicationState, projectId: string): RegisteredProj
   return state.projects.find((project) => project.projectId === projectId) ?? null;
 }
 
+function projectCommandResult(state: ApplicationState, projectId: string): ProjectCommandResult {
+  const project = projectById(state, projectId);
+  const domainProject = state.domain.projects.find((candidate) => candidate.id === projectId);
+  if (project === null || domainProject === undefined) {
+    throw new TypeError("Project terminal projection is absent");
+  }
+  return Object.freeze({
+    projectId: project.projectId,
+    enabled: domainProject.enabled,
+    configRevision: project.configRevision,
+    resourceRevision: project.resourceRevision,
+  });
+}
+
 function sameRootIdentity(left: ProjectRootIdentity, right: ProjectRootIdentity): boolean {
   return left.rootKey === right.rootKey && left.platform === right.platform && left.device === right.device && left.inode === right.inode && left.mode === right.mode;
+}
+
+function parseRenewal(value: unknown): RenewalCommand | null {
+  const record = exactRecord(value, ["kind", "expiresAt"]);
+  return record !== null && record.kind === "authorization.capability.renew" && timestamp(record.expiresAt)
+    ? Object.freeze({ kind: record.kind, expiresAt: record.expiresAt })
+    : null;
+}
+
+function sameLocalIdentity(state: ApplicationState, identity: OperationIdentity, root: ProjectRootIdentity): boolean {
+  return state.identity !== null &&
+    state.identity.actorId === identity.actor.actorId &&
+    state.identity.principalSha256 === identity.actor.principal &&
+    state.identity.platform === root.platform &&
+    state.identity.runtimeRootKey === root.rootKey;
+}
+
+const CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
+
+interface RenewalAssessment {
+  readonly mode: "adopted" | "renewed";
+  readonly nextEpochRevision: number;
+}
+
+function assessRenewal(
+  state: ApplicationState,
+  identity: OperationIdentity,
+  root: ProjectRootIdentity,
+): RenewalAssessment | "authorization_denied" | "not_due" | "not_initialized" {
+  const bootstrap = state.bootstrap;
+  if (bootstrap === null) return "not_initialized";
+  if (!sameRootIdentity(bootstrap, root)) return "authorization_denied";
+  if (bootstrap.vocabularyVersion === 3 && state.identity === null) {
+    const legacyOrigin = state.grants.filter((grant) =>
+      grant.actorId === bootstrap.actorId &&
+      grant.issuerGrantId === null &&
+      grant.sourceGrantId === null &&
+      grant.notBefore === bootstrap.createdAt &&
+      grant.expiresAt === bootstrap.expiresAt
+    );
+    if (legacyOrigin.some((grant) => grant.revokedAt !== null && grant.expiresAt > identity.now)) return "not_due";
+    return Object.freeze({ mode: "adopted", nextEpochRevision: 1 });
+  }
+  const localIdentity = state.identity;
+  if (localIdentity === null || !sameLocalIdentity(state, identity, root)) return "authorization_denied";
+  const latestEpoch = state.epochs.at(-1);
+  const originActor = localIdentity.actorId;
+  const originCreatedAt = latestEpoch?.createdAt ?? bootstrap.createdAt;
+  const originExpiresAt = latestEpoch?.expiresAt ?? bootstrap.expiresAt;
+  const currentOrigin = state.grants.filter((grant) =>
+    grant.actorId === originActor &&
+    grant.issuerGrantId === null &&
+    grant.sourceGrantId === null &&
+    grant.notBefore === originCreatedAt &&
+    grant.expiresAt === originExpiresAt
+  );
+  if (currentOrigin.length !== AUTHORIZATION_ACTIONS.length) return "authorization_denied";
+  const renewalThreshold = new Date(new Date(identity.now).valueOf() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  if (originExpiresAt > renewalThreshold) return "not_due";
+  if (originExpiresAt > identity.now && currentOrigin.some((grant) => grant.revokedAt !== null)) return "not_due";
+  return Object.freeze({ mode: "renewed", nextEpochRevision: (latestEpoch?.epochRevision ?? 0) + 1 });
 }
 
 function affectedProjectIds(mutation: DomainMutation): readonly string[] {
@@ -484,7 +601,7 @@ function taskById(snapshot: DomainSnapshot, taskId: string): Task | null {
   return snapshot.tasks.find((task) => task.id === taskId) ?? null;
 }
 
-function requestRecord(identity: OperationIdentity, action: AuthorizationAction, target: BoundTarget, result: ApplicationRequestRecord["result"]): ApplicationRequestRecord {
+function requestRecord(identity: OperationIdentity, action: ApplicationAction, target: BoundTarget, result: ApplicationRequestRecord["result"]): ApplicationRequestRecord {
   return Object.freeze({
     requestId: identity.requestId,
     correlationId: identity.correlationId,
@@ -545,7 +662,7 @@ function auditRecord(
 }
 
 function policyFor(action: AuthorizationAction, project: RegisteredProject | null, state: ApplicationState): AuthorizationPolicyResult {
-  if (action.endsWith(".inspect") || action === "policy.evaluate" || action.startsWith("authorization.")) return "read_not_applicable";
+  if (action.endsWith(".inspect") || action === "policy.evaluate" || action.startsWith("authorization.") || action.startsWith("runtime.")) return "read_not_applicable";
   if (action === "project.register" || action === "project.update" || action === "project.disable") return "allow";
   if (project === null) return "allow";
   return state.domain.projects.find((candidate) => candidate.id === project.projectId)?.enabled === true ? "allow" : "deny";
@@ -677,6 +794,12 @@ function targetForCommand(command: ApplicationCommand, state: ApplicationState):
       const project = grant.scope.kind === "project" && grant.scope.projectId !== null ? projectById(state, grant.scope.projectId) : null;
       return Object.freeze({ kind: "grant", id: grant.grantId, revision: command.expectedGrantRevision, project });
     }
+    case "authorization.grant.list":
+    case "runtime.status":
+      return Object.freeze({ kind: "runtime", id: "runtime", revision: null, project: null });
+    case "runtime.backup":
+    case "runtime.restore":
+      return Object.freeze({ kind: "backup", id: command.backupGenerationId, revision: null, project: null });
     case "project.register":
       return Object.freeze({ kind: "project", id: command.projectId, revision: null, project: null });
     case "project.update":
@@ -775,6 +898,30 @@ function outputFor(command: ApplicationCommand, state: ApplicationState): unknow
     case "authorization.grant.inspect":
     case "authorization.grant.revoke":
       return state.grants.find((grant) => grant.grantId === command.grantId) ?? null;
+    case "authorization.grant.list": {
+      const actorId = state.identity?.actorId ?? state.bootstrap?.actorId ?? "";
+      const matches = state.grants
+        .filter((grant) => grant.actorId === actorId && (command.afterGrantId === null || grant.grantId > command.afterGrantId))
+        .sort((left, right) => left.grantId < right.grantId ? -1 : left.grantId > right.grantId ? 1 : 0);
+      const grants = Object.freeze(matches.slice(0, command.limit));
+      return Object.freeze({
+        grants,
+        nextCursor: matches.length > command.limit ? grants.at(-1)?.grantId ?? null : null,
+      });
+    }
+    case "runtime.status":
+      return Object.freeze({
+        initialized: true,
+        schemaVersion: 4,
+        projectCount: state.projects.length,
+        taskCount: state.domain.tasks.length,
+        dependencyCount: state.domain.tasks.reduce((count, task) => count + task.dependencyIds.length, 0),
+        grantCount: state.grants.length,
+        auditCount: state.audit.length,
+      });
+    case "runtime.backup":
+    case "runtime.restore":
+      throw new TypeError("Lifecycle output requires an exact authorization identity");
     case "policy.evaluate": {
       const project = projectById(state, command.projectId);
       return Object.freeze({
@@ -788,7 +935,7 @@ function outputFor(command: ApplicationCommand, state: ApplicationState): unknow
     case "project.update":
     case "project.disable":
     case "project.inspect":
-      return projectById(state, command.projectId);
+      return projectCommandResult(state, command.projectId);
     case "task.create":
     case "task.update":
     case "task.mark_ready":
@@ -802,6 +949,7 @@ function outputFor(command: ApplicationCommand, state: ApplicationState): unknow
 
 export interface ApplicationService {
   bootstrap(command: BootstrapCommand): ApplicationResult<Readonly<{ actorId: string; grantIds: readonly string[] }>>;
+  renew(command: RenewalCommand): ApplicationResult<CapabilityEpochResult>;
   execute(command: ApplicationCommand): ApplicationResult<unknown>;
 }
 
@@ -850,8 +998,20 @@ function createApplicationServiceInternal(
         requestId: identity.requestId,
         createdAt: identity.now,
         expiresAt: command.expiresAt,
+        vocabularyVersion: 4 as const,
       }));
       hooks.afterStage?.("bootstrap");
+      transaction.insertLocalIdentity(Object.freeze({
+        identityVersion: 1 as const,
+        actorId: identity.actor.actorId,
+        principalSha256: identity.actor.principal,
+        platform: runtimeIdentity.platform,
+        runtimeRootKey: runtimeIdentity.rootKey,
+        bootstrapRequestId: identity.requestId,
+        adoptionRequestId: identity.requestId,
+        createdAt: identity.now,
+      }));
+      hooks.afterStage?.("identity");
       for (const [index, action] of AUTHORIZATION_ACTIONS.entries()) {
         const grantId = grantIds[index];
         if (grantId === undefined) throw new TypeError("Trusted bootstrap grant identity is absent");
@@ -880,23 +1040,165 @@ function createApplicationServiceInternal(
     });
   };
 
+  const renew = (value: RenewalCommand): ApplicationResult<CapabilityEpochResult> => {
+    const command = parseRenewal(value);
+    let identity = operationIdentity(ingress);
+    if (command === null || identity === null) return failed("INVALID_INPUT", "Capability renewal input or trusted ingress is invalid");
+    if (!confirmHighRisk(identity, "authorization.capability.renew", ingress)) {
+      return failed("AUTHORIZATION_DENIED", "Trusted capability renewal confirmation is required", identity, { reason: "confirmation_required" });
+    }
+    const refreshedIdentity = refreshOperationTime(identity, ingress);
+    if (refreshedIdentity === null) return failed("INVALID_INPUT", "Trusted renewal time could not be refreshed", identity);
+    identity = refreshedIdentity;
+    const minimumExpiry = new Date(new Date(identity.now).valueOf() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    const maximumExpiry = new Date(new Date(identity.now).valueOf() + 31 * 24 * 60 * 60 * 1000).toISOString();
+    if (command.expiresAt <= minimumExpiry || command.expiresAt > maximumExpiry) {
+      return failed("INVALID_INPUT", "Capability renewal expiry is outside the finite window", identity);
+    }
+    const runtimeIdentity = checkedRuntimeRoot(store.layout.root, identity);
+    if ("ok" in runtimeIdentity) return runtimeIdentity;
+    const preflightState = readApplicationStateForOwner(store);
+    const preflightAssessment = assessRenewal(preflightState, identity, runtimeIdentity);
+    if (preflightAssessment === "not_initialized") {
+      return failed("BOOTSTRAP_REQUIRED", "Trusted authorization bootstrap has not been completed", identity);
+    }
+    if (preflightAssessment === "authorization_denied") {
+      return failed("AUTHORIZATION_DENIED", "Trusted local identity does not match the initialized runtime", identity);
+    }
+    if (preflightAssessment === "not_due") {
+      return failed("CAPABILITY_RENEWAL_NOT_DUE", "Current capability origin is not eligible for renewal", identity);
+    }
+    const preflightStateSha256 = applicationStateSha256(preflightState);
+    const preflightIdentityPresent = preflightState.identity !== null;
+    const preflightEpochRevision = preflightState.epochs.at(-1)?.epochRevision ?? 0;
+    let epochId: string;
+    const grantIds: string[] = [];
+    try {
+      epochId = ingress.nextId("epoch");
+      for (const action of AUTHORIZATION_ACTIONS) {
+        const grantId = ingress.nextId("grant");
+        if (!operationalIdentifier(grantId) || grantIds.includes(grantId) || grantId === epochId) {
+          return failed("INVALID_INPUT", `Trusted renewal grant identity is invalid or repeated for ${action}`, identity);
+        }
+        grantIds.push(grantId);
+      }
+    } catch {
+      return failed("INVALID_INPUT", "Trusted renewal identities could not be obtained", identity);
+    }
+    if (!operationalIdentifier(epochId)) return failed("INVALID_INPUT", "Trusted capability epoch identity is invalid", identity);
+    hooks.beforeTransaction?.();
+    return withApplicationTransaction(store, (transaction) => {
+      const state = transaction.read();
+      if (
+        applicationStateSha256(state) !== preflightStateSha256 ||
+        (state.identity !== null) !== preflightIdentityPresent ||
+        (state.epochs.at(-1)?.epochRevision ?? 0) !== preflightEpochRevision
+      ) {
+        return failed("STALE_REVISION", "Capability renewal preflight is stale", identity);
+      }
+      const assessment = assessRenewal(state, identity, runtimeIdentity);
+      if (typeof assessment === "string") {
+        return assessment === "not_due"
+          ? failed("CAPABILITY_RENEWAL_NOT_DUE", "Current capability origin is not eligible for renewal", identity)
+          : assessment === "not_initialized"
+            ? failed("BOOTSTRAP_REQUIRED", "Trusted authorization bootstrap has not been completed", identity)
+            : failed("AUTHORIZATION_DENIED", "Trusted local identity does not match the initialized runtime", identity);
+      }
+      if (assessment.mode !== preflightAssessment.mode || assessment.nextEpochRevision !== preflightAssessment.nextEpochRevision) {
+        return failed("STALE_REVISION", "Capability renewal lineage is stale", identity);
+      }
+      const target: BoundTarget = Object.freeze({ kind: "runtime", id: "runtime", revision: null, project: null });
+      transaction.insertRequest(requestRecord(identity, "authorization.capability.renew", target, "renewal"));
+      hooks.afterStage?.("request");
+      if (assessment.mode === "adopted") {
+        const bootstrap = state.bootstrap;
+        if (bootstrap === null) throw new TypeError("Legacy bootstrap is absent during adoption");
+        transaction.insertLocalIdentity(Object.freeze({
+          identityVersion: 1 as const,
+          actorId: identity.actor.actorId,
+          principalSha256: identity.actor.principal,
+          platform: runtimeIdentity.platform,
+          runtimeRootKey: runtimeIdentity.rootKey,
+          bootstrapRequestId: bootstrap.requestId,
+          adoptionRequestId: identity.requestId,
+          createdAt: identity.now,
+        }));
+        hooks.afterStage?.("identity");
+      }
+      transaction.insertCapabilityEpoch(Object.freeze({
+        epochId,
+        epochRevision: assessment.nextEpochRevision,
+        actorId: identity.actor.actorId,
+        runtimeRootKey: runtimeIdentity.rootKey,
+        vocabularyVersion: 4 as const,
+        actionSetSha256: CAPABILITY_ACTION_SET_SHA256,
+        requestId: identity.requestId,
+        createdAt: identity.now,
+        expiresAt: command.expiresAt,
+      }));
+      hooks.afterStage?.("epoch");
+      for (const [index, action] of AUTHORIZATION_ACTIONS.entries()) {
+        const grantId = grantIds[index];
+        if (grantId === undefined) throw new TypeError("Trusted renewal grant identity is absent");
+        transaction.insertGrant(Object.freeze({
+          grantId,
+          revision: 1,
+          actorId: identity.actor.actorId,
+          action,
+          scope: Object.freeze({ kind: "runtime", projectId: null, resourceRevision: null, configRevision: null }),
+          notBefore: identity.now,
+          expiresAt: command.expiresAt,
+          revokedAt: null,
+          issuerGrantId: null,
+          sourceGrantId: null,
+          capabilityEpochId: epochId,
+          createdRequestId: identity.requestId,
+        }));
+        hooks.afterStage?.(`grant:${action}`);
+      }
+      transaction.insertDecision(Object.freeze({
+        decisionId: identity.decisionId,
+        requestId: identity.requestId,
+        actorId: identity.actor.actorId,
+        action: "authorization.capability.renew" as const,
+        result: "allow" as const,
+        reason: "allowed" as const,
+        policy: "allow" as const,
+        grantId: null,
+        grantRevision: null,
+        projectId: null,
+        resourceRevision: null,
+        createdAt: identity.now,
+      }));
+      hooks.afterStage?.("decision");
+      transaction.insertAudit(auditRecord(identity, target, "capability.renewed", "accepted", "accepted"));
+      hooks.afterStage?.("audit");
+      const readback = transaction.read();
+      const epoch = readback.epochs.find((candidate) => candidate.epochId === epochId);
+      if (epoch === undefined || epoch.epochRevision !== assessment.nextEpochRevision ||
+          !grantIds.every((grantId) => readback.grants.some((grant) => grant.grantId === grantId))) {
+        throw new TypeError("Capability renewal terminal readback did not match");
+      }
+      return succeeded(Object.freeze({
+        mode: assessment.mode,
+        expiresAt: epoch.expiresAt,
+        capabilityCount: AUTHORIZATION_ACTIONS.length,
+        epochRevision: epoch.epochRevision,
+      }), identity);
+    });
+  };
+
   const execute = (value: ApplicationCommand): ApplicationResult<unknown> => {
     const command = parseCommand(value);
     let identity = operationIdentity(ingress);
     if (command === null || identity === null) return failed("INVALID_INPUT", "Command or trusted ingress is invalid");
 
-    let registrationIdentity: ProjectRootIdentity | null = null;
-    if (command.kind === "project.register") {
-      try {
-        registrationIdentity = inspectProjectRoot(command.root, store.layout.root);
-      } catch (error) {
-        return projectRegistryFailure(error, identity);
-      }
-    }
-
     const preflightState = readApplicationStateForOwner(store);
     if (preflightState.bootstrap === null) {
       return failed("BOOTSTRAP_REQUIRED", "Trusted authorization bootstrap has not been completed", identity);
+    }
+    if (preflightState.bootstrap.vocabularyVersion === 3 && preflightState.identity === null) {
+      return failed("AUTHORIZATION_DENIED", "Legacy authorization must be adopted before this operation", identity);
     }
     const preflightTarget = targetForCommand(command, preflightState);
     if ("ok" in preflightTarget) {
@@ -922,6 +1224,17 @@ function createApplicationServiceInternal(
       }
       if (!operationalIdentifier(issuedGrantId)) return failed("INVALID_INPUT", "Trusted grant identity is invalid", identity);
     }
+    let lifecycleAuthorizationId: string | null = null;
+    if (command.kind === "runtime.backup" || command.kind === "runtime.restore") {
+      try {
+        lifecycleAuthorizationId = ingress.nextId("lifecycle");
+      } catch {
+        return failed("INVALID_INPUT", "Trusted lifecycle authorization identity could not be obtained", identity);
+      }
+      if (!operationalIdentifier(lifecycleAuthorizationId)) {
+        return failed("INVALID_INPUT", "Trusted lifecycle authorization identity is invalid", identity);
+      }
+    }
 
     let preflightCancelProjectIds: readonly string[] | null = null;
     if (command.kind === "task.cancel" && preflightAuthorization.allowed) {
@@ -935,6 +1248,21 @@ function createApplicationServiceInternal(
     if ("ok" in currentRuntimeIdentity) return currentRuntimeIdentity;
     if (!sameRootIdentity(preflightState.bootstrap, currentRuntimeIdentity)) {
       return failed("AUTHORIZATION_DENIED", "Authorization bootstrap is bound to another runtime-root identity", identity, { reason: "scope_mismatch" });
+    }
+    const localIdentityRequired = identity.actor.actorId.startsWith("local-v1:") ||
+      identity.actor.actorId === preflightState.identity?.actorId ||
+      command.kind === "authorization.grant.list" || command.kind === "runtime.status" ||
+      command.kind === "runtime.backup" || command.kind === "runtime.restore";
+    if (localIdentityRequired && !sameLocalIdentity(preflightState, identity, currentRuntimeIdentity)) {
+      return failed("AUTHORIZATION_DENIED", "Trusted local identity does not match the initialized runtime", identity, { reason: "actor_mismatch" });
+    }
+    let registrationIdentity: ProjectRootIdentity | null = null;
+    if (command.kind === "project.register") {
+      try {
+        registrationIdentity = inspectProjectRoot(command.root, store.layout.root);
+      } catch (error) {
+        return projectRegistryFailure(error, identity);
+      }
     }
     if (registrationIdentity !== null) {
       const checked = checkedProjectRoot(registrationIdentity, store.layout.root, identity);
@@ -976,6 +1304,9 @@ function createApplicationServiceInternal(
       if (state.bootstrap === null) return failed("BOOTSTRAP_REQUIRED", "Trusted authorization bootstrap has not been completed", identity);
       if (!sameRootIdentity(state.bootstrap, currentRuntimeIdentity)) {
         return failed("AUTHORIZATION_DENIED", "Authorization bootstrap is bound to another runtime-root identity", identity, { reason: "scope_mismatch" });
+      }
+      if (localIdentityRequired && !sameLocalIdentity(state, identity, currentRuntimeIdentity)) {
+        return failed("AUTHORIZATION_DENIED", "Trusted local identity changed after preflight", identity, { reason: "actor_mismatch" });
       }
       let target = targetForCommand(command, state);
       if ("ok" in target) return Object.freeze({ ...target, requestId: identity.requestId, correlationId: identity.correlationId });
@@ -1033,7 +1364,12 @@ function createApplicationServiceInternal(
       const commandAuthorization = authorizeCommand(identity, command, target, state, confirmed);
       let evaluation = commandAuthorization.evaluation;
       const issuanceProof = commandAuthorization.issuanceProof;
-      if (!evaluation.allowed) return recordDenied(transaction, identity, command.kind, target, evaluation, hooks);
+      if (!evaluation.allowed) {
+        const denial = recordDenied(transaction, identity, command.kind, target, evaluation, hooks);
+        return command.kind === "authorization.grant.issue" && evaluation.reason === "scope_mismatch"
+          ? failed("SCOPE_EXPANSION_DENIED", "Requested grant exceeds the current issuance authority", identity)
+          : denial;
+      }
 
       const mutation = domainMutation(command, state);
       if (mutation !== null && "ok" in mutation) {
@@ -1220,7 +1556,53 @@ function createApplicationServiceInternal(
       hooks.afterStage?.("decision");
       transaction.insertAudit(auditRecord(identity, target, applicationAuditKind(command.kind), "accepted", "accepted"));
       hooks.afterStage?.("audit");
+      if (command.kind === "runtime.backup" || command.kind === "runtime.restore") {
+        if (lifecycleAuthorizationId === null || evaluation.grantId === null || evaluation.grantRevision === null) {
+          throw new TypeError("Lifecycle authorization evidence is incomplete");
+        }
+        const authorizedState = transaction.read();
+        const localIdentity = authorizedState.identity;
+        const evaluatedGrant = authorizedState.grants.find((grant) => grant.grantId === evaluation.grantId);
+        if (
+          localIdentity === null ||
+          localIdentity.actorId !== identity.actor.actorId ||
+          evaluatedGrant === undefined ||
+          evaluatedGrant.revision !== evaluation.grantRevision ||
+          evaluatedGrant.revokedAt !== null
+        ) {
+          throw new TypeError("Lifecycle authorization changed before durable handoff");
+        }
+        const fiveMinutes = new Date(new Date(identity.now).valueOf() + 5 * 60 * 1000).toISOString();
+        transaction.insertLifecycleAuthorization(Object.freeze({
+          authorizationId: lifecycleAuthorizationId,
+          operation: command.kind,
+          backupGenerationId: command.backupGenerationId,
+          actorId: identity.actor.actorId,
+          runtimeRootKey: localIdentity.runtimeRootKey,
+          grantId: evaluatedGrant.grantId,
+          grantRevision: evaluatedGrant.revision,
+          requestId: identity.requestId,
+          decisionId: identity.decisionId,
+          auditId: identity.auditId,
+          authorizedStateSha256: transaction.stateSha256(),
+          expectedRequestCount: authorizedState.requests.length,
+          expectedDecisionCount: authorizedState.decisions.length,
+          expectedAuditCount: authorizedState.audit.length,
+          issuedAt: identity.now,
+          expiresAt: evaluatedGrant.expiresAt < fiveMinutes ? evaluatedGrant.expiresAt : fiveMinutes,
+        }));
+        hooks.afterStage?.("lifecycle");
+      }
       const readback = transaction.read();
+      if (lifecycleAuthorizationId !== null) {
+        const authorization = readback.lifecycle.find(
+          (candidate) => candidate.authorizationId === lifecycleAuthorizationId,
+        );
+        if (authorization === undefined) {
+          throw new TypeError("Lifecycle terminal readback is absent");
+        }
+        return succeeded(authorization, identity);
+      }
       if (issuedGrantId !== null) {
         const grant = readback.grants.find((candidate) => candidate.grantId === issuedGrantId);
         if (grant === undefined) throw new TypeError("Grant terminal readback is absent");
@@ -1232,6 +1614,7 @@ function createApplicationServiceInternal(
 
   return Object.freeze({
     bootstrap,
+    renew,
     execute,
   });
 }

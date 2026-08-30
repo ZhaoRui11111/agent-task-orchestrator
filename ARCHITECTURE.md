@@ -2,19 +2,21 @@
 
 ## Current system
 
-The repository has a governance and architecture-contract baseline, a minimal
+The repository has a governance and architecture-contract baseline, an
 executable toolchain and feasibility harness, a pure in-memory TypeScript
 Domain Core, a filesystem-identity ProjectRegistry, a finite local runtime
-authorization owner, a typed Project/Task/dependency application service, and
-a local SQLite persistence foundation. Schema versions `1` through `3` own
-metadata, exact Domain snapshots, ProjectRegistry, grants, requests,
-authorization decisions, and append-only application audit. The application
-service orchestrates those owners in one transaction; persistence never
-selects a Domain command or grants authority. These Phase 1 components are not
-an execution runtime. The repository still implements no product CLI,
-dispatcher, port, adapter, scheduler, MCP component, execution
-claim/completion loop, product compatibility, platform-integration, or product
-safety claim.
+authorization owner, a typed Project/Task/dependency application service, a
+local SQLite persistence foundation, and a composable local Phase 1 product
+CLI. Schema versions `1` through `4` own metadata, exact Domain snapshots,
+ProjectRegistry, local identity and authorization epochs, grants, requests,
+authorization decisions, lifecycle coordination, and append-only application
+audit. The application service orchestrates business owners in one
+transaction; persistence never selects a Domain command or grants authority.
+The CLI is only typed ingress, trusted local identity/confirmation setup,
+presentation, and public error mapping. These Phase 1 components are not an
+execution runtime. The repository still implements no dispatcher, port,
+adapter, scheduler, MCP component, execution claim/completion loop, supported
+platform integration, or product safety claim.
 
 ## Authority and ownership
 
@@ -25,6 +27,7 @@ safety claim.
 | Documentation roles and navigation | [docs/README.md](docs/README.md) |
 | Repository governance invariants | [docs/reference/repository-governance.md](docs/reference/repository-governance.md) |
 | Executable toolchain, package boundary, and local validation entry points | [docs/reference/toolchain-contract.md](docs/reference/toolchain-contract.md) |
+| Product CLI grammar, output, and public error/exit contract | [docs/reference/cli-contract.md](docs/reference/cli-contract.md) |
 | Local maintainer task branches, worktrees, integration, and Git recovery | [docs/reference/local-agent-git-flow.md](docs/reference/local-agent-git-flow.md) |
 | Validation routing and evidence | [docs/reference/validation-policy.md](docs/reference/validation-policy.md) |
 | Development plan lifecycle | [docs/plans/README.md](docs/plans/README.md) |
@@ -50,18 +53,20 @@ The architecture separates:
   exact-query owner, including trusted ingress, authorization decisions,
   Domain command selection, transaction orchestration, and result mapping.
 - `persistence`: the implemented SQLite runtime-root, connection, staged
-  migration, combined schema-v3 repository, transaction, backup, restore, and
-  typed-corruption owner; later records are added only by their implementing
-  phase.
+  migration, combined schema-v4 repository, transaction, lifecycle handoff,
+  backup, restore, read-only doctor, and typed-corruption owner; later records
+  are added only by their implementing phase.
 - `dispatcher`: durable claim, launch, reconciliation, and recovery workflows.
 - `ports`: execution, workspace, scheduler, project-policy, and completion contracts.
 - `adapters`: replaceable implementations, including Manual and Codex execution backends.
-- `interfaces`: CLI and MCP surfaces sharing the application layer.
+- `interfaces`: the implemented local product CLI, plus a planned MCP surface;
+  every business operation shares the application layer.
 
-Only `domain`, `project-registry`, `authorization`, `application`, and
-`persistence` as narrowly described above are implemented. Every later name in
-this list remains accepted design direction rather than a current runtime
-component. No implemented boundary authorizes an external action.
+Only `domain`, `project-registry`, `authorization`, `application`,
+`persistence`, and the local CLI portion of `interfaces` as narrowly described
+above are implemented. Every later name in this list remains accepted design
+direction rather than a current runtime component. No implemented boundary
+authorizes an external action.
 
 ## Cross-module dependency constraints
 

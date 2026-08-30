@@ -7,7 +7,7 @@ that rule. Follow the linked owner for normative language.
 The repository has a governance and architecture-contract baseline, a minimal
 executable toolchain and feasibility harness, an implemented Domain Core, and
 implemented Phase 1 ProjectRegistry, local authorization, application service,
-and schema-v3 persistence foundation. Entries marked "planned runtime
+schema-v4 persistence, and local product CLI. Entries marked "planned runtime
 contract" or a planned portion of a mixed contract are requirements for future implementation, not claims that an
 orchestrator runtime, adapter, supported platform, or product security control
 exists.
@@ -21,11 +21,12 @@ Each artifact appears exactly once in this inventory.
 | [Repository governance](repository-governance.md) | Current repository-governance owner | Authority, capability truthfulness, task-owned development scope, and separation of local edits, commits, and external actions |
 | [Local agent Git workflow](local-agent-git-flow.md) | Current repository-development contract | Maintainer task branches, linked worktrees, coordinator state, integration reservation, exact-head gates, FF-only integration, push retry, recovery, and owned cleanup; not a product runtime contract |
 | [Toolchain contract](toolchain-contract.md) | Current repository-toolchain contract | Exact Node, pnpm, and TypeScript selections; ESM/package entry boundaries; executable validation commands; CI skeleton; and dependency maintenance |
+| [CLI/API contract](cli-contract.md) | Current local product-interface contract | Exact command grammar, bounded input, confirmation phrases, output schemas, redaction, stable public errors, and exit codes; no business-rule ownership |
 | [Contract ownership inventory](contract-ownership.md) | Current inventory owner | The mapping from contract subject to authoritative artifact; no domain or runtime rule |
 | [Domain contract](domain-contract.md) | Current implemented Domain Core contract | Project binding, Task state, hierarchy, dependency, eligibility, waiting, and Task revision |
 | [Persistence contract](persistence-contract.md) | Current implemented foundation and staged future owner | Current SQLite runtime root, Phase 1 metadata/Domain/ProjectRegistry/authorization/application storage, ingress, connections, transactions, migrations, backup/restore and corruption handling; future tables only when their implementing phase appends them |
 | [Reliability protocol](reliability-protocol.md) | Planned runtime contract | Operation identity, claims, leases, fencing, CAS, intents, receipts, publication, recovery, retries, and fan-out outcomes |
-| [Authorization contract](authorization-contract.md) | Current Phase 1 local authorization contract | Trusted bootstrap, finite Project/Task/dependency action vocabulary, grants, narrowing policy, high-risk confirmation, and fail-closed application decisions; no external or execution authority |
+| [Authorization contract](authorization-contract.md) | Current Phase 1 local authorization contract | Trusted bootstrap and identity, finite local-management action vocabulary, grants and epochs, narrowing policy, high-risk confirmation, lifecycle handoff, and fail-closed application decisions; no external or execution authority |
 | [Adapter contracts](adapter-contracts.md) | Planned runtime contract | Port direction, current port versions, operation envelopes, receipts, and adapter error taxonomy |
 | [Scheduler contract](scheduler-contract.md) | Planned runtime contract | Reconcile-first dispatch and duplicate, missed-trigger, and worker-death behavior |
 | [Completion and workspace contract](completion-workspace-contract.md) | Planned runtime contract | Gate freshness, isolated workspace topology, worktree ownership, integration reservation, Git partial success, path safety, and cleanup refusal |

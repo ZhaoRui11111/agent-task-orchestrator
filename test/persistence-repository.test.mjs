@@ -537,7 +537,7 @@ for (const corruption of applicationRelationCorruptions) {
       store = await openPersistence(fixture.layout, { applicationVersion: "relation-setup" });
       let sequence = 0;
       const service = createApplicationService(store, {
-        currentActor: () => ({ actorId: "owner", principal: "os:owner" }),
+        currentActor: () => ({ actorId: "owner", principal: "A".repeat(64) }),
         now: () => "2026-08-29T12:00:00.000Z",
         nextId: (kind) => `${kind}-relation-${++sequence}`,
         confirmHighRisk: () => true,

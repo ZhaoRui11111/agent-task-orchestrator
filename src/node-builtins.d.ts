@@ -1,8 +1,14 @@
 declare const process: {
+  readonly argv: readonly string[];
   readonly env: Record<string, string | undefined>;
   readonly pid: number;
   readonly platform: string;
   readonly versions: Readonly<Record<string, string | undefined>>;
+  exitCode: number | undefined;
+  cwd(): string;
+  emitWarning(warning: string | Error): void;
+  readonly stdout: { write(value: string): boolean };
+  readonly stderr: { write(value: string): boolean };
 };
 
 declare module "node:crypto" {
@@ -54,6 +60,7 @@ declare module "node:fs" {
     function native(path: string): string;
   }
   export function renameSync(oldPath: string, newPath: string): void;
+  export function rmdirSync(path: string): void;
   export function statSync(path: string): Stats;
   export function unlinkSync(path: string): void;
   export function writeFileSync(
@@ -79,6 +86,19 @@ declare module "node:path" {
   export default path;
 }
 
+declare module "node:os" {
+  export interface UserInfo {
+    readonly username: string;
+    readonly uid: number;
+    readonly gid: number;
+    readonly shell: string | null;
+    readonly homedir: string;
+  }
+
+  export function homedir(): string;
+  export function userInfo(options: { readonly encoding: "utf8" }): UserInfo;
+}
+
 declare module "node:sqlite" {
   export type SQLInputValue = null | number | bigint | string | Uint8Array;
 
@@ -100,7 +120,7 @@ declare module "node:sqlite" {
   }
 
   export class DatabaseSync {
-    constructor(location: string, options?: DatabaseSyncOptions);
+    constructor(location: string | URL, options?: DatabaseSyncOptions);
     readonly isOpen: boolean;
     readonly isTransaction: boolean;
     close(): void;
@@ -113,5 +133,6 @@ declare module "node:sqlite" {
 }
 
 declare module "node:url" {
-  export function fileURLToPath(url: URL): string;
+  export function fileURLToPath(url: URL | string): string;
+  export function pathToFileURL(path: string): URL;
 }

@@ -17,14 +17,16 @@ If documents conflict, stop the affected mutation and resolve the conflict inste
 ## Current repository state
 
 This repository has a governance baseline, an executable toolchain and
-feasibility scaffold, a pure in-memory Domain Core, and the local Phase 1
-schema-v3 foundation defined by the persistence contract. ProjectRegistry,
-runtime authorization, and the typed application service are implemented for
-local Project/Task/dependency management. The application owner alone selects
-Domain commands, evaluates current explicit grants, and coordinates accepted
-snapshot/registry/grant/decision/audit commits; persistence still neither
-authorizes nor selects a Domain mutation. The repository still has no product
-CLI, dispatcher, port, adapter, scheduler, MCP component, execution claim or
+feasibility scaffold, a pure in-memory Domain Core, and the closed local Phase 1
+schema-v4 foundation defined by the persistence contract. ProjectRegistry,
+finite single-user runtime authorization, the typed application service, the
+versioned local product CLI, and its persistence-owned backup, confirmed restore,
+and read-only doctor surfaces are implemented for local
+Project/Task/dependency management. The application owner alone selects Domain
+commands, evaluates current explicit grants, and coordinates accepted
+snapshot/registry/grant/decision/audit/lifecycle commits; persistence still
+neither authorizes nor selects a Domain mutation. The repository still has no
+dispatcher, port, adapter, scheduler, MCP component, execution claim or
 completion loop, or executable orchestration runtime. Do not describe those
 planned modules, platform support, safety properties, or integration behavior
 as implemented. Follow the
@@ -34,7 +36,9 @@ for Domain Core behavior, the
 [authorization contract](docs/reference/authorization-contract.md) for the
 current finite local grant model, and the
 [persistence contract](docs/reference/persistence-contract.md) for the staged
-schema and storage/recovery boundary.
+schema and storage/recovery boundary. The
+[CLI contract](docs/reference/cli-contract.md) alone owns commands, public output,
+and exit codes.
 
 ## Before changing files
 

@@ -3,16 +3,18 @@
 ## Status and authority
 
 This document is the normative owner of the implemented Phase 1 local runtime
-authorization model. The implementation is deliberately limited to the
-Project/Task/dependency application service. It is not an operating-system
+authorization model. The implementation is deliberately limited to the local
+Phase 1 application and lifecycle surfaces. It is not an operating-system
 account system, team identity service, RBAC product, cloud identity provider,
 or authorization for development and external actions.
 
 Runtime grants never authorize repository development, network or secret
 access, Git writes, pull requests, release, deployment, adapters, execution,
-workspace mutation, scheduling, backup/restore, or any action outside the
-finite vocabulary below. Those actions require their own current authority and,
-where applicable, later product contracts.
+workspace mutation, scheduling, arbitrary filesystem access, or any action
+outside the finite vocabulary below. The `runtime.backup` and `runtime.restore`
+actions authorize only the implemented local persistence lifecycle through the
+exact application handoff described below; they grant no external or general
+file authority.
 
 Project content, Task text, repository files, prompts, tool output, Agent text,
 Domain state, persisted audit, a prior authorization decision, and an approved
@@ -22,7 +24,11 @@ grant, or widen a scope.
 ## Trusted local ingress
 
 The application service accepts an `ApplicationIngress` supplied by a trusted
-local caller. That ingress establishes, outside command content:
+local caller. The product CLI implements that boundary from the verified
+runtime-root identity and canonical local OS user information. It hashes the
+platform, normalized username, numeric uid/gid, and root identity into one
+versioned local actor/principal binding; raw identity fields are not persisted
+or exposed. The ingress establishes, outside command content:
 
 - one non-empty `actorId` and trusted local `principal`;
 - the current UTC timestamp;
@@ -31,10 +37,10 @@ local caller. That ingress establishes, outside command content:
 
 Typed command fields cannot override those values. Missing, malformed,
 throwing, accessor-backed, duplicated, or ambiguous trusted values fail closed.
-EP-01C does not implement login, account discovery, principal ownership
-attestation, delegation identity, or multiple-user administration. A future
-ingress must preserve this boundary rather than inferring authority from
-content.
+This is local identity derivation, not login, credential verification, team
+account discovery, delegation identity, or multiple-user administration. If OS
+identity or runtime-root identity is unavailable, ambiguous, changed, or
+noncanonical, local ingress fails closed rather than accepting actor content.
 
 ## Exact action vocabulary
 
@@ -55,16 +61,20 @@ The complete implemented vocabulary is:
 - `task.inspect`
 - `dependency.add`
 - `dependency.remove`
+- `authorization.grant.list`
+- `runtime.status`
+- `runtime.backup`
+- `runtime.restore`
 
 There is no wildcard and no prefix expansion. Unknown actions and unimplemented
 commands are invalid input; they are not mapped to a similar action. In
 particular, this vocabulary contains no execution, claim, completion,
-scheduler, workspace, adapter, Git, network, backup/restore, diagnostic, CLI,
-MCP, release, or deployment capability.
+scheduler, workspace, adapter, Git, network, secret, arbitrary diagnostic,
+arbitrary CLI/filesystem, MCP, release, or deployment capability.
 
 ## One-time bootstrap
 
-A fresh schema-v3 runtime has no grants. Exactly once, a trusted local caller
+A fresh schema-v4 runtime has no grants. Exactly once, a trusted local caller
 may invoke `authorization.bootstrap` with a finite expiry no more than 31 days
 after the trusted ingress time. Bootstrap requires a separate high-risk
 confirmation and atomically:
@@ -73,10 +83,11 @@ confirmation and atomically:
 2. records the trusted actor and principal;
 3. records the canonical runtime-root identity (`rootKey`, platform, device,
    inode, and mode) without following alias/reparse components;
-4. inserts one runtime-scoped grant for that actor for each of the fifteen
+4. inserts the immutable versioned local actor/principal-to-root binding;
+5. inserts one runtime-scoped grant for that actor for each of the nineteen
    exact Phase 1 actions;
-5. appends the bootstrap request and sanitized audit event; and
-6. reads the terminal transaction state back before commit.
+6. appends the bootstrap request and sanitized audit event; and
+7. reads the terminal transaction state back before commit.
 
 The singleton bootstrap receipt is immutable and survives restart,
 backup/restore, and migration. It cannot be consumed again. Every later
@@ -88,6 +99,28 @@ Bootstrap is a local trust-root ceremony, not a default administrator role.
 The fixed initial grants expire and can be revoked. There is no environment
 override, self-authorizing content, hidden fallback grant, or second bootstrap.
 
+## Local identity adoption and capability epochs
+
+`authorization.capability.renew` is a non-grantable local trust-root
+maintenance transition. It is not part of the nineteen-action vocabulary and
+cannot be delegated. It requires the exact current OS-derived identity,
+runtime-root identity, a fresh named confirmation, a finite expiry more than
+seven and no more than 31 days ahead, and one atomic terminal readback.
+
+An upgraded schema-v3 bootstrap must be adopted through that transition before
+any ordinary command. Adoption preserves the immutable legacy bootstrap and
+grants as history, establishes the schema-v4 local identity, and appends the
+first immutable capability epoch plus nineteen new origin grants. A native
+schema-v4 bootstrap already establishes local identity and needs no adoption.
+
+After adoption or native bootstrap, renewal is eligible only when the current
+origin expires within seven days or has expired. Revocation of any still-current
+origin grant blocks early renewal; revocation is not a shortcut to replace a
+capability. Each accepted renewal appends a contiguous positive epoch revision,
+the exact vocabulary/version digest, a request/decision/audit unit, and nineteen
+new finite origin grants. Previous epochs and grants remain immutable history.
+Concurrent state or epoch changes fail atomically as stale.
+
 ## Grant shape
 
 Every grant has these semantic fields:
@@ -98,9 +131,10 @@ Every grant has these semantic fields:
   `resourceRevision`, and `configRevision`;
 - finite `notBefore` and `expiresAt` UTC timestamps;
 - nullable irreversible `revokedAt`; and
-- nullable `issuerGrantId` and `sourceGrantId`; both are null only for the
-  fixed bootstrap grants and both identify the exact administrative and
-  candidate-action authorities for every delegated grant.
+- nullable `issuerGrantId`, `sourceGrantId`, and `capabilityEpochId` in one
+  exclusive provenance shape: all three null for fixed bootstrap grants;
+  non-null issuer/source with a null epoch for delegated grants; or a non-null
+  immutable epoch with null issuer/source for renewed/adopted origin grants.
 
 A grant is usable only for the trusted actor, exact action, exact scope, exact
 current Project revisions, and time interval `notBefore <= now < expiresAt`,
@@ -146,6 +180,10 @@ ingress after a matching grant is found:
 - `project.register`
 - `project.update`
 - `project.disable`
+- `runtime.restore`
+
+Capability adoption/renewal also requires a fresh high-risk confirmation even
+though it is deliberately not a grantable action.
 
 Confirmation is bound to actor, action, request, and correlation identities. A
 command field, Project/Task content, or a prior confirmation cannot supply or
@@ -172,8 +210,9 @@ writer transaction. It performs a read-only preflight, then opens one short
    captured filesystem receipt, ProjectRegistry revision, bootstrap binding,
    exact target, supplied revision, and current grant/policy state;
 7. ask the Domain Core for every Project/Task/dependency mutation;
-8. append request, allow decision, sanitized audit, registry/grant changes,
-   and the accepted Domain snapshot as one applicable atomic unit; and
+8. append request, allow decision, sanitized audit, applicable
+   registry/grant/epoch/lifecycle changes, and the accepted Domain snapshot as
+   one applicable atomic unit; and
 9. decode the terminal combined state before commit.
 
 No confirmation callback, filesystem inspection, ID provider call, awaited
@@ -204,9 +243,12 @@ Project, missing registry binding, changed affected set, stale revision, or
 uncertain/substituted root rejects the complete mutation atomically.
 
 Exact reads (`project.inspect`, `task.inspect`, and
-`authorization.grant.inspect`) pass through the same application owner and
-consume a request, allow decision, and audit record. EP-01C intentionally has
-no list or diagnostic query that could bypass exact target authorization.
+`authorization.grant.inspect`), bounded actor-local grant listing, and runtime
+status pass through the same application owner and consume a request, allow
+decision, and audit record. Listing is ordered, cursor-based, bounded to at most
+100 rows, and never includes another actor's grants. The grant-independent
+doctor surface is not an application query: the persistence contract limits it
+to a closed, read-only, redacted health classification.
 
 When evaluation reaches a fully bound authorization denial, the transaction
 atomically appends a denied request, denied decision, and sanitized
@@ -216,6 +258,32 @@ change is represented by a terminal-decodable `scope_revision_stale` denial
 with no retained grant identity. Failures before a safe typed/bound decision
 envelope write nothing.
 
+## Backup and restore authorization handoff
+
+`runtime.backup` and `runtime.restore` first pass through the same application
+decision sequence. Restore additionally requires its named high-risk
+confirmation at this layer; the CLI separately requires the exact current
+data-loss acknowledgement before requesting authorization. An accepted
+decision atomically appends one immutable lifecycle authorization bound to the
+exact operation, proposed backup generation ID, actor, runtime-root key,
+matching grant and revision, request/decision/audit IDs and counts, application
+state digest, and short finite validity interval. Terminal output reads back the
+exact newly allocated lifecycle authorization ID; operation/generation matching
+is never used as a non-unique substitute, including on a retry.
+
+For restore, application evaluation and this durable handoff precede backup
+inventory or selected-generation verification. Revoked, expired, missing, and
+pre-adoption authority therefore receives the same denial for valid, absent, or
+corrupt generation material.
+
+The persistence owner accepts only that closed typed handoff. It re-decodes the
+complete application state and rejects an absent, substituted, expired, revoked,
+wrong-operation, wrong-generation, stale-count, or changed-state handoff before
+publishing a backup or a restore intent. This record cannot authorize any other
+generation or filesystem operation. Persistence remains the sole owner of
+lifecycle locks, connection receipts, backup verification, restore staging,
+publication, and recovery classification.
+
 ## Persisted decision and audit records
 
 An authorization decision binds its fresh decision and request IDs, actor,
@@ -224,10 +292,11 @@ nullable Project ID/resource revision, and trusted timestamp. It contains no
 reusable capability. A previous decision is history only and cannot authorize a
 later request.
 
-Application requests, bootstrap, decisions, and audit rows are append-only.
-Grant rows are insert-only except for the single CAS revocation transition.
-ProjectRegistry rows cannot be deleted. SQLite constraints, foreign keys,
-triggers, combined typed decoding, and terminal readback enforce these shapes.
+Application requests, bootstrap, local identity, capability epochs, lifecycle
+authorizations, decisions, and audit rows are append-only. Grant rows are
+insert-only except for the single CAS revocation transition. ProjectRegistry
+rows cannot be deleted. SQLite constraints, foreign keys, triggers, combined
+typed decoding, and terminal readback enforce these shapes.
 
 Audit details are fixed sanitized metadata selected by application code. Task
 body, Project path, prompts, tool output, Agent text, secrets, and arbitrary
@@ -236,10 +305,11 @@ command content are not copied into audit records. See
 
 ## Explicit non-claims
 
-EP-01C does not implement a product CLI, CLI login or initialization surface,
-team accounts, RBAC, cloud identity, OS account ownership proof, credential
-storage, external policy adapter, execution/claim/completion authorization,
-workspace or scheduler authorization, backup/restore/doctor user experience,
-MCP, dispatcher, network effects, Git effects, release, or deployment. EP-01D
-owns the Phase 1 product CLI and operational surfaces. EP-02 owns real Manual
-ExecutionBackend and the running/completed execution loop.
+Phase 1 implements the local CLI initialization, finite grant administration,
+status, backup authorization, separately confirmed restore authorization, and
+read-only doctor experience. It does not implement login, credentials, team
+accounts, RBAC, cloud identity, an external policy adapter,
+execution/claim/completion authorization, workspace or scheduler authorization,
+MCP, dispatcher, network effects, Git effects, release, deployment, or a
+platform-support claim. EP-02, not this contract, owns any real Manual
+ExecutionBackend and running/completed execution loop.

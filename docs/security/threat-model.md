@@ -7,12 +7,14 @@ cases, mitigations, residual risks, negative-test obligations, and explicit
 security non-claims for the planned local-first orchestrator. The repository
 implements the Phase 1 persistence and local task-management subset: validated
 runtime and Project roots, identity-bound lifecycle/connection files, strict
-typed schema-v3 SQLite ingress, one-time runtime-root-bound bootstrap, finite
-revision-aware grants, typed application commands/queries, narrowing policy,
-separate high-risk confirmation, append-only decisions/audit, and verified
-backup/restore recovery. It still has no product CLI, execution runtime, MCP
-server, adapter, scheduler, workspace control, external-effect protocol, team
-identity/RBAC, or supported platform security boundary.
+typed schema-v4 SQLite ingress, OS-derived local identity and capability epochs,
+one-time runtime-root-bound bootstrap, finite revision-aware grants, typed
+application commands/queries and lifecycle handoffs, narrowing policy, separate
+high-risk confirmation, append-only decisions/audit, a strict redacted product
+CLI/read-only doctor, and verified backup/restore recovery. It still has no
+execution runtime, MCP server, adapter, scheduler, workspace control,
+external-effect protocol, team identity/RBAC, or supported platform security
+boundary.
 
 The model assumes one local operator and treats repository content, Task text,
 prompts, adapter responses, tool output, filesystem entries, Git metadata, MCP
@@ -73,7 +75,7 @@ into a support claim.
 | T5 | Logs or diagnostic bundles disclose personal data, source paths/content, prompts, external identifiers, or credentials. | Current application audit uses only fixed allowlisted metadata and omits Task bodies and Project paths under the [privacy contract](privacy-and-logging.md). Future operational logs/diagnostics require pre-sink redaction from the [observability contract](../reference/observability-contract.md), authorization for read/export, a disclosed bundle manifest, and default no telemetry. | Stable actor, correlation, target IDs, timing, counts, and operator-approved future bundles can still be sensitive metadata. |
 | T6 | SQLite corruption, disabled foreign keys, forged migration history, stale/partial backup, concurrent writer, or newer-schema access causes silent state loss or false completion. | Enforce the [persistence contract](../reference/persistence-contract.md): verified connection settings, one application product ingress, bounded transactions, immutable migration checksums, backup-before-upgrade, combined typed decoding, integrity checks, read-only failure, and restore to a private generation. | SQLite/OS/hardware defects and loss of every valid backup can make recovery impossible. |
 | T7 | Duplicate/missed scheduler triggers or worker death duplicates execution, skips reconciliation, or loses candidate outcomes. | Require the [scheduler contract](../reference/scheduler-contract.md) reconcile-first sequence and the reliability claim/fence/idempotency/fan-out records. Treat delivery as at least once. | Extended scheduler outage delays work; it does not provide availability or deadlines. |
-| T8 | MCP exposes arbitrary shell, SQL, filesystem, cleanup, or external actions; malformed/oversized input bypasses application rules. | Offer only narrow versioned command schemas; validate size/type/version server-side; call the same application/authorization owners as CLI; omit arbitrary shell/SQL/filesystem endpoints; require distinct grants for destructive/external actions. | A vulnerable MCP host/plugin or compromised local account is outside the narrow server's application checks. |
+| T8 | CLI or a future MCP surface exposes arbitrary shell, SQL, filesystem, cleanup, or external actions; malformed/oversized input bypasses application rules. | Offer only narrow versioned command schemas; validate size/type/version before runtime open; call the same application/authorization owners; omit arbitrary shell/SQL/filesystem endpoints; require distinct current grants and confirmation for the implemented high-risk actions. | A compromised local account remains outside the application's checks; no MCP surface exists yet. |
 | T9 | A stale lease holder, replayed receipt, or stale gate writes after takeover or HEAD/policy change. | Bind fencing token, Task/resource revision, policy/config revision, workspace generation, and HEAD to every mutation; reject stale values before write; use the [gate freshness owner](../reference/completion-workspace-contract.md#gate-identity-and-freshness). | External effects already performed by an old worker may still require reconciliation. |
 | T10 | A policy adapter, dependency, or external API changes behavior/version without detection. | Use exact port/version negotiation, policy revision binding, evidence-bound support claims, and incompatibility errors from the [adapter](../reference/adapter-contracts.md) and [versioning](../reference/versioning-compatibility-contract.md) owners. | A correctly versioned but compromised dependency can still act maliciously within granted OS permissions. |
 
@@ -84,8 +86,9 @@ produce binary evidence for every applicable row.
 
 The current Phase 1 implementation covers the runtime-root and ProjectRegistry
 portions of N1, the local content/authorization portion of N3, the application
-audit subset of N4, and the schema-v3 SQLite/application portions of N5 and
-N11. Workspace, operational-logger, external-effect, scheduler, MCP,
+audit plus CLI/doctor disclosure subset of N4, the schema-v4
+SQLite/application/lifecycle portions of N5 and N11, and the CLI portion of N8.
+Workspace, operational-logger, external-effect, scheduler, MCP,
 completion, and adapter portions remain future obligations; passing Phase 1
 tests cannot satisfy them.
 
@@ -98,10 +101,10 @@ tests cannot satisfy them.
 | N5 | Foreign keys disabled, busy writer, corrupt/truncated database, broken row JSON, migration checksum mismatch, failed/interrupted migration, invalid backup, and newer-schema database | No normal mutation or false terminal result; failure is typed, database remains recoverable/read-only, and only a verified backup may publish. |
 | N6 | Crash before/after intent, effect, observation, verification, finalization, and publication CAS; late old-fence write | Restart reconciles without duplicate verified effect; old writes fail; unresolved state becomes explicit waiting/ambiguity. |
 | N7 | Duplicate simultaneous triggers, missed intervals, clock/config change, and worker kill in each run phase | Reconciliation precedes new claims, at most one valid claim exists per Task, and every candidate/old run has an observable outcome. |
-| N8 | Malformed, unknown-version, overlong, nested, unauthorized, and injection-bearing MCP request; request for arbitrary shell/SQL/filesystem operation | Ingress rejects before mutation; excluded endpoints do not exist; stable redacted error/correlation evidence is produced. |
+| N8 | Malformed, unknown-version, overlong, control-character, unauthorized, and injection-bearing CLI or future MCP request; request for arbitrary shell/SQL/filesystem operation | Ingress rejects before runtime mutation; excluded endpoints do not exist; the current CLI produces only its stable redacted public error. |
 | N9 | Replay pass receipt after Task, fence, workspace generation, HEAD, policy, gate version, or validity time changes | Completion/integration rejects it as stale and dependency remains locked. |
 | N10 | Timeout, lost adapter response, changed remote ref, or incompatible adapter/API version | No blind retry or support claim; authoritative inspection determines success/absence, otherwise state is ambiguous or incompatible. |
-| N11 | Missing/false trusted bootstrap confirmation; second bootstrap; wrong actor/action/scope/revision; not-yet-valid, expired, or revoked grant; attempted authority expansion; disabled Project policy; replayed request/decision; Project/Task text that claims authority | No unauthorized Project/Task/dependency/grant mutation; bounded denials are atomic and sanitized; content never changes actor, action, policy, confirmation, or grant state. |
+| N11 | Missing/false trusted bootstrap, renewal, grant-management, Project, or restore confirmation; second bootstrap; wrong local identity/action/scope/revision; not-yet-valid, expired, or revoked grant; attempted authority expansion; stale lifecycle handoff; disabled Project policy; replayed request/decision; Project/Task text that claims authority | No unauthorized Project/Task/dependency/grant/backup/restore mutation; bounded denials are atomic and sanitized; content never changes actor, action, policy, confirmation, capability epoch, or grant state. |
 
 Test fixtures are untrusted and disposable. Fake/contract tests may prove local
 logic but cannot satisfy a real platform/API support row.

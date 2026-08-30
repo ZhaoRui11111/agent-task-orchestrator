@@ -3,11 +3,12 @@
 This file is the sole normative owner of the repository's current executable
 toolchain, package boundary, and repeatable validation entry points. It does
 not define the Domain Core's behavior, authorization semantics, persistence
-semantics, a product runtime, adapter, or support promise. Domain,
-authorization, and persistence behavior are owned by the
+semantics, product CLI behavior, an execution runtime, adapter, or support
+promise. Domain, authorization, persistence, and CLI behavior are owned by the
 [domain contract](domain-contract.md),
-[authorization contract](authorization-contract.md), and
-[persistence contract](persistence-contract.md), respectively.
+[authorization contract](authorization-contract.md),
+[persistence contract](persistence-contract.md), and
+[CLI/API contract](cli-contract.md), respectively.
 
 ## Frozen toolchain
 
@@ -73,22 +74,26 @@ and generation-local store, then pack the declared distribution, install it
 into a disposable consumer without registry access, typecheck the public
 declarations without undeclared Node type dependencies, import the library
 entry, exercise trusted bootstrap plus Project/Task application commands and a
-fresh persistence backup, and invoke the console entry.
+fresh persistence backup, and invoke the console entry. The console portion
+compares source, built, and packed-installed CLI behavior for an exact
+successful JSON response, successful human response, invalid-input JSON
+response, public exit codes, and absence of read-only doctor side effects.
 
 The package-root library export exposes a truthful capability status, the pure
 TypeScript Domain Core, ProjectRegistry identity owner, finite authorization
-owner, typed application service, and schema-v3 persistence foundation. The
-packed inventory includes the immutable SQL files under `migrations/`, and the
-compiled migration registry consumes those same bytes. The `ato` console
-remains only the matching status projection; it is not a product CLI.
+owner, typed application service, schema-v4 persistence foundation, local
+lifecycle surfaces, and product CLI API. The packed inventory includes the
+immutable SQL files under `migrations/`, and the compiled migration registry
+consumes those same bytes. The `ato` console is the local Phase 1 product CLI
+defined by the [CLI/API contract](cli-contract.md).
 
 Production source is limited to `src/index.ts`, `src/domain.ts`, `src/cli.ts`,
-`src/project-registry.ts`, `src/authorization.ts`, `src/application.ts`, the
-narrow built-in declarations in `src/node-builtins.d.ts`, and
-`src/persistence/`. `node:sqlite` is confined to the persistence owner. The
-package has no production dependency and must not acquire a dispatcher, port,
-adapter, scheduler, MCP, product CLI, execution/completion loop, or executable
-orchestrator as part of this boundary.
+`src/cli-api.ts`, `src/project-registry.ts`, `src/authorization.ts`,
+`src/application.ts`, the narrow built-in declarations in
+`src/node-builtins.d.ts`, and `src/persistence/`. `node:sqlite` is confined to
+the persistence owner. The package has no production dependency and must not
+acquire a dispatcher, port, adapter, scheduler, MCP, execution/completion loop,
+or executable orchestrator as part of this boundary.
 
 ## Validation entry points
 
@@ -99,8 +104,8 @@ The following package scripts are the public local entry points:
 | `pnpm lint` | Repository hygiene, frozen configuration, source-boundary, and diff checks |
 | `pnpm typecheck` | Strict TypeScript checking without output |
 | `pnpm build` | Produce the ESM package and declarations |
-| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application atomicity, persistence, and real local feasibility contracts |
-| `pnpm test:persistence` | Run the targeted migration, repository, concurrency, path-security, backup, and restore suite through the same artifact-baseline gate |
+| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application atomicity, persistence, CLI, doctor, and real local feasibility contracts |
+| `pnpm test:persistence` | Run the targeted migration, repository, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
 | `pnpm docs:check` | Resolve exact-case repository-relative Markdown links and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |
 | `pnpm package:smoke` | Pack and consume the declared package boundary offline |

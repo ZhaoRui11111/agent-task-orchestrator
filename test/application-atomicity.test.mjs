@@ -6,12 +6,18 @@ import test from "node:test";
 import { createApplicationService, openPersistence } from "../src/index.ts";
 import { createApplicationServiceWithHooks } from "../src/application.ts";
 import { readApplicationStateForOwner } from "../src/persistence/application-repository.ts";
-import { cleanupPersistenceFixture, createPersistenceFixture } from "./persistence-test-helpers.mjs";
+import {
+  cleanupPersistenceFixture,
+  createPersistenceFixture,
+  createVersionThreeDatabase,
+} from "./persistence-test-helpers.mjs";
+
+const TEST_PRINCIPAL_SHA256 = "A".repeat(64);
 
 function ingress(label = "atomic") {
   let sequence = 0;
   return {
-    currentActor: () => ({ actorId: "atomic-actor", principal: "os:atomic-actor" }),
+    currentActor: () => ({ actorId: "atomic-actor", principal: TEST_PRINCIPAL_SHA256 }),
     now: () => "2026-08-29T12:00:00.000Z",
     nextId: (kind) => `${kind}-${label}-${++sequence}`,
     confirmHighRisk: () => true,
@@ -54,7 +60,8 @@ const bootstrapStages = [
     "authorization.grant.issue", "authorization.grant.inspect", "authorization.grant.revoke",
     "policy.evaluate", "project.register", "project.update", "project.disable", "project.inspect",
     "task.create", "task.update", "task.mark_ready", "task.cancel", "task.inspect",
-    "dependency.add", "dependency.remove",
+    "dependency.add", "dependency.remove", "authorization.grant.list", "runtime.status",
+    "runtime.backup", "runtime.restore",
   ].map((action) => `grant:${action}`),
   "audit",
 ];
@@ -84,6 +91,122 @@ for (const stage of bootstrapStages) {
       if (store) await store.close();
       cleanupPersistenceFixture(fixture);
     }
+  });
+}
+
+const renewalStages = [
+  "request",
+  "epoch",
+  ...[
+    "authorization.grant.issue", "authorization.grant.inspect", "authorization.grant.revoke",
+    "policy.evaluate", "project.register", "project.update", "project.disable", "project.inspect",
+    "task.create", "task.update", "task.mark_ready", "task.cancel", "task.inspect",
+    "dependency.add", "dependency.remove", "authorization.grant.list", "runtime.status",
+    "runtime.backup", "runtime.restore",
+  ].map((action) => `grant:${action}`),
+  "decision",
+  "audit",
+];
+
+for (const stage of renewalStages) {
+  test(`capability renewal failpoint after ${stage} leaves the prior origin exact`, async () => {
+    const fixture = createPersistenceFixture(`renewal-${stage.replaceAll(/[^a-z]/gu, "-")}`);
+    let store;
+    try {
+      store = await openPersistence(fixture.layout, { applicationVersion: "atomic-renewal" });
+      const trusted = ingress(`renewal-${stage}`);
+      const setup = createApplicationService(store, trusted);
+      assert.equal(setup.bootstrap({
+        kind: "authorization.bootstrap",
+        expiresAt: "2026-09-04T12:00:00.000Z",
+      }).ok, true);
+      const before = readApplicationStateForOwner(store);
+      const service = createApplicationServiceWithHooks(store, trusted, {
+        afterStage(current) {
+          if (current === stage) throw new Error(`failpoint:${stage}`);
+        },
+      });
+      assert.throws(() => service.renew({
+        kind: "authorization.capability.renew",
+        expiresAt: "2026-09-20T12:00:00.000Z",
+      }), (error) => expectFailpoint(error, stage));
+      assert.deepEqual(readApplicationStateForOwner(store), before);
+    } finally {
+      if (store) await store.close();
+      cleanupPersistenceFixture(fixture);
+    }
+  });
+}
+
+for (const stage of ["request", "identity", "epoch", "grant:runtime.restore", "decision", "audit"]) {
+  test(`legacy adoption failpoint after ${stage} leaves no local identity or epoch`, async () => {
+    const fixture = createPersistenceFixture(`adoption-${stage.replaceAll(/[^a-z]/gu, "-")}`);
+    let store;
+    try {
+      createVersionThreeDatabase(fixture.layout);
+      store = await openPersistence(fixture.layout, { applicationVersion: "atomic-adoption" });
+      const trusted = ingress(`adoption-${stage}`);
+      const before = readApplicationStateForOwner(store);
+      const service = createApplicationServiceWithHooks(store, trusted, {
+        afterStage(current) {
+          if (current === stage) throw new Error(`failpoint:${stage}`);
+        },
+      });
+      assert.throws(() => service.renew({
+        kind: "authorization.capability.renew",
+        expiresAt: "2026-09-20T12:00:00.000Z",
+      }), (error) => expectFailpoint(error, stage));
+      assert.deepEqual(readApplicationStateForOwner(store), before);
+      assert.equal(readApplicationStateForOwner(store).identity, null);
+    } finally {
+      if (store) await store.close();
+      cleanupPersistenceFixture(fixture);
+    }
+  });
+}
+
+test("a competing capability renewal wins once and makes the stale preflight a no-write rejection", async () => {
+  const fixture = createPersistenceFixture("renewal-cas-winner");
+  let store;
+  try {
+    store = await openPersistence(fixture.layout, { applicationVersion: "atomic-renewal-cas" });
+    const trusted = ingress("renewal-cas");
+    const winner = createApplicationService(store, trusted);
+    assert.equal(winner.bootstrap({
+      kind: "authorization.bootstrap",
+      expiresAt: "2026-09-04T12:00:00.000Z",
+    }).ok, true);
+    let competitorResult;
+    const stale = createApplicationServiceWithHooks(store, trusted, {
+      beforeTransaction() {
+        competitorResult = winner.renew({
+          kind: "authorization.capability.renew",
+          expiresAt: "2026-09-20T12:00:00.000Z",
+        });
+      },
+    }).renew({
+      kind: "authorization.capability.renew",
+      expiresAt: "2026-09-21T12:00:00.000Z",
+    });
+    assert.equal(competitorResult.ok, true);
+    assert.equal(stale.ok, false);
+    assert.equal(stale.error.code, "STALE_REVISION");
+    const state = readApplicationStateForOwner(store);
+    assert.equal(state.epochs.length, 1);
+    assert.equal(state.grants.length, 38);
+    assert.equal(state.requests.filter((request) => request.action === "authorization.capability.renew").length, 1);
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+for (const stage of ["request", "decision", "audit", "lifecycle"]) {
+  test(`lifecycle authorization failpoint after ${stage} leaves no backup handoff fragment`, async () => {
+    await expectApplicationOperationRollback("lifecycle-backup", stage, () => ({
+      kind: "runtime.backup",
+      backupGenerationId: "11111111-1111-4111-8111-111111111111",
+    }));
   });
 }
 
@@ -186,7 +309,7 @@ test("fully bound authorization denial appends only one deny request, decision, 
     const before = readApplicationStateForOwner(store);
     let outsiderSequence = 0;
     const outsider = createApplicationService(store, {
-      currentActor: () => ({ actorId: "outsider", principal: "os:outsider" }),
+      currentActor: () => ({ actorId: "outsider", principal: TEST_PRINCIPAL_SHA256 }),
       now: () => "2026-08-29T12:00:00.000Z",
       nextId: (kind) => `${kind}-outsider-${++outsiderSequence}`,
       confirmHighRisk: () => true,
@@ -226,10 +349,10 @@ test("request replay rolls back and append-only request, decision, and audit row
     assert.equal(service.execute({ kind: "project.register", projectId: "project", root: fixture.projectRoot }).ok, true);
     const beforeReplay = readApplicationStateForOwner(store);
     const replay = createApplicationService(store, {
-      currentActor: () => ({ actorId: "atomic-actor", principal: "os:atomic-actor" }),
+      currentActor: () => ({ actorId: "atomic-actor", principal: TEST_PRINCIPAL_SHA256 }),
       now: () => "2026-08-29T12:00:00.000Z",
       nextId: (kind) => ({
-        request: "request-atomic-20",
+        request: "request-atomic-24",
         correlation: "correlation-replay",
         decision: "decision-replay",
         audit: "audit-replay",
@@ -274,7 +397,7 @@ test("high-risk confirmation runs before the authoritative writer transaction", 
     let confirmationOperation = null;
     let confirmationResult = null;
     const primaryIngress = {
-      currentActor: () => ({ actorId: "owner", principal: "os:owner" }),
+      currentActor: () => ({ actorId: "owner", principal: TEST_PRINCIPAL_SHA256 }),
       now: () => "2026-08-29T12:00:00.000Z",
       nextId: (kind) => `${kind}-primary-${++sequence}`,
       confirmHighRisk(request) {
@@ -292,7 +415,7 @@ test("high-risk confirmation runs before the authoritative writer transaction", 
     competitor = await openPersistence(fixture.layout, { applicationVersion: "confirmation-competitor" });
     let competitorSequence = 0;
     const competingService = createApplicationService(competitor, {
-      currentActor: () => ({ actorId: "owner", principal: "os:owner" }),
+      currentActor: () => ({ actorId: "owner", principal: TEST_PRINCIPAL_SHA256 }),
       now: () => "2026-08-29T12:00:00.000Z",
       nextId: (kind) => `${kind}-confirmation-competitor-${++competitorSequence}`,
       confirmHighRisk: () => true,
@@ -326,7 +449,7 @@ test("registered Project identity is revalidated after confirmation and before t
     let replaceDuringConfirmation = false;
     const moved = path.join(fixture.generation, "project-before-confirmation");
     const trusted = {
-      currentActor: () => ({ actorId: "owner", principal: "os:owner" }),
+      currentActor: () => ({ actorId: "owner", principal: TEST_PRINCIPAL_SHA256 }),
       now: () => "2026-08-29T12:00:00.000Z",
       nextId: (kind) => `${kind}-revalidate-${++sequence}`,
       confirmHighRisk(request) {

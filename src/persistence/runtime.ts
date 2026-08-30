@@ -107,6 +107,12 @@ function pathsOverlap(left: string, right: string, platform: string): boolean {
   );
 }
 
+function pathIsWithin(child: string, parent: string, platform: string): boolean {
+  const childKey = comparablePath(child, platform);
+  const parentKey = comparablePath(parent, platform);
+  return childKey === parentKey || childKey.startsWith(`${parentKey}${path.sep}`);
+}
+
 function rejectLexicalAmbiguity(value: string): void {
   if (!path.isAbsolute(value)) {
     throw persistenceFailure("UNSAFE_RUNTIME_ROOT", "Runtime root must be absolute");
@@ -144,7 +150,11 @@ function canonicalExistingRoot(value: string, label: string): string {
   }
 }
 
-function createPrivateDirectoryTree(candidate: string, platform: string): string {
+function createPrivateDirectoryTree(
+  candidate: string,
+  platform: string,
+  trustedWindowsHome: string | null = null,
+): string {
   const absolute = path.resolve(candidate);
   const parsed = path.parse(absolute);
   let current = parsed.root;
@@ -187,7 +197,12 @@ function createPrivateDirectoryTree(candidate: string, platform: string): string
 
   const resolved = realpathSync.native(absolute);
   if (comparablePath(resolved, platform) !== comparablePath(absolute, platform)) {
-    throw persistenceFailure("UNSAFE_RUNTIME_ROOT", "Runtime root resolves through an alias");
+    const trustedWindowsVirtualization = platform === "win32" && trustedWindowsHome !== null &&
+      pathIsWithin(absolute, trustedWindowsHome, platform) &&
+      pathIsWithin(resolved, trustedWindowsHome, platform);
+    if (!trustedWindowsVirtualization) {
+      throw persistenceFailure("UNSAFE_RUNTIME_ROOT", "Runtime root resolves through an alias");
+    }
   }
   if (platform !== "win32" && (parentIdentity.mode & 0o077) !== 0) {
     throw persistenceFailure("UNSAFE_RUNTIME_ROOT", "Runtime directory permissions are not user-only");
@@ -232,7 +247,7 @@ export function selectConfiguredRuntimeRoot(
   return path.join(localApplicationData, RUNTIME_DIRECTORY_NAME);
 }
 
-export function prepareRuntimeLayout(value: unknown): RuntimeLayout {
+function prepareRuntimeLayoutInternal(value: unknown, trustedWindowsHome: string | null): RuntimeLayout {
   const request = parseRuntimeRequest(value);
   const selected = selectConfiguredRuntimeRoot(request.runtimeRoot);
   rejectLexicalAmbiguity(selected);
@@ -247,7 +262,7 @@ export function prepareRuntimeLayout(value: unknown): RuntimeLayout {
     }
   }
 
-  const root = createPrivateDirectoryTree(candidate, process.platform);
+  const root = createPrivateDirectoryTree(candidate, process.platform, trustedWindowsHome);
   for (const protectedRoot of [sourceCheckoutRoot, ...projectRoots]) {
     if (pathsOverlap(root, protectedRoot, process.platform)) {
       throw persistenceFailure("UNSAFE_RUNTIME_ROOT", "Resolved runtime root overlaps a protected root");
@@ -293,6 +308,71 @@ export function prepareRuntimeLayout(value: unknown): RuntimeLayout {
       ].map((directory) => Object.freeze({ path: directory, identity: identityOfDirectory(directory) })),
     ),
   );
+  return layout;
+}
+
+export function prepareRuntimeLayout(value: unknown): RuntimeLayout {
+  return prepareRuntimeLayoutInternal(value, null);
+}
+
+export function prepareTrustedRuntimeLayoutForLocalIngress(
+  value: unknown,
+  trustedUserHome: string,
+): RuntimeLayout {
+  const canonicalHome = canonicalExistingRoot(trustedUserHome, "trusted OS user home");
+  return prepareRuntimeLayoutInternal(value, canonicalHome);
+}
+
+export function inspectExistingRuntimeLayout(value: unknown): RuntimeLayout {
+  const request = parseRuntimeRequest(value);
+  if (request.runtimeRoot === null) {
+    throw persistenceFailure("INVALID_INPUT", "Read-only runtime inspection requires an explicit root");
+  }
+  rejectLexicalAmbiguity(request.runtimeRoot);
+  const sourceCheckoutRoot = canonicalExistingRoot(request.sourceCheckoutRoot, "source checkout root");
+  const projectRoots = request.projectRoots.map((root, index) =>
+    canonicalExistingRoot(root, `Project root ${index}`),
+  );
+  const root = canonicalExistingRoot(request.runtimeRoot, "runtime root");
+  for (const protectedRoot of [sourceCheckoutRoot, ...projectRoots]) {
+    if (pathsOverlap(root, protectedRoot, process.platform)) {
+      throw persistenceFailure("UNSAFE_RUNTIME_ROOT", "Resolved runtime root overlaps a protected root");
+    }
+  }
+  const backupsRoot = canonicalExistingRoot(path.join(root, "backups"), "backups root");
+  const backupStagingRoot = canonicalExistingRoot(path.join(backupsRoot, ".staging"), "backup staging root");
+  const backupGenerationsRoot = canonicalExistingRoot(path.join(backupsRoot, "generations"), "backup generations root");
+  const connectionsRoot = canonicalExistingRoot(path.join(root, "connections"), "connections root");
+  const restoreRoot = canonicalExistingRoot(path.join(root, "restore"), "restore root");
+  const restoreStagingRoot = canonicalExistingRoot(path.join(restoreRoot, "staging"), "restore staging root");
+  const restoreRetainedRoot = canonicalExistingRoot(path.join(restoreRoot, "retained"), "restore retained root");
+  const restoreReceiptsRoot = canonicalExistingRoot(path.join(restoreRoot, "receipts"), "restore receipts root");
+  const layout = Object.freeze({
+    root,
+    databasePath: path.join(root, "state.sqlite3"),
+    backupsRoot,
+    backupStagingRoot,
+    backupGenerationsRoot,
+    connectionsRoot,
+    restoreRoot,
+    restoreStagingRoot,
+    restoreRetainedRoot,
+    restoreReceiptsRoot,
+    restoreIntentPath: path.join(restoreRoot, "intent.json"),
+    lifecycleLockPath: path.join(root, "lifecycle.lock"),
+    privatePermissionsEnforced: process.platform !== "win32",
+  });
+  runtimeLayouts.set(layout, Object.freeze([
+    root,
+    backupsRoot,
+    backupStagingRoot,
+    backupGenerationsRoot,
+    connectionsRoot,
+    restoreRoot,
+    restoreStagingRoot,
+    restoreRetainedRoot,
+    restoreReceiptsRoot,
+  ].map((directory) => Object.freeze({ path: directory, identity: identityOfDirectory(directory) }))));
   return layout;
 }
 

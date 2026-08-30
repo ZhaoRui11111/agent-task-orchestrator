@@ -9,17 +9,18 @@ import {
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import { userInfo } from "node:os";
 import { gunzipSync } from "node:zlib";
 import { createOwnedGeneration, invariant, removeOwnedGeneration, repoRoot } from "./repo-utils.mjs";
 
-function pnpm(args, cwd, storeDir = undefined) {
+function pnpm(args, cwd, storeDir = undefined, extraEnv = {}) {
   const cli = process.env.npm_execpath;
   invariant(cli && existsSync(cli), "package smoke must run through the pinned pnpm command");
   const invocation = storeDir === undefined ? args : [`--store-dir=${storeDir}`, ...args];
   const result = spawnSync(process.execPath, [cli, ...invocation], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, npm_config_offline: "true" },
+    env: { ...process.env, ...extraEnv, npm_config_offline: "true" },
     windowsHide: true,
   });
   invariant(result.status === 0, `pnpm ${invocation.join(" ")} failed: ${result.stderr || result.stdout}`);
@@ -72,6 +73,20 @@ function tarEntries(tgzPath) {
   return entries.filter((item) => item.startsWith("package/")).sort();
 }
 
+function invokeNodeCli(entryPath, args, cwd, extraEnv = {}) {
+  const result = spawnSync(process.execPath, [entryPath, ...args], {
+    cwd,
+    encoding: "utf8",
+    env: { ...process.env, ...extraEnv },
+    windowsHide: true,
+  });
+  return Object.freeze({
+    status: result.status,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  });
+}
+
 const expectedEntries = [
   "package/LICENSE",
   "package/README.md",
@@ -83,6 +98,10 @@ const expectedEntries = [
   "package/dist/authorization.d.ts.map",
   "package/dist/authorization.js",
   "package/dist/authorization.js.map",
+  "package/dist/cli-api.d.ts",
+  "package/dist/cli-api.d.ts.map",
+  "package/dist/cli-api.js",
+  "package/dist/cli-api.js.map",
   "package/dist/cli.d.ts",
   "package/dist/cli.d.ts.map",
   "package/dist/cli.js",
@@ -107,6 +126,10 @@ const expectedEntries = [
   "package/dist/persistence/database.d.ts.map",
   "package/dist/persistence/database.js",
   "package/dist/persistence/database.js.map",
+  "package/dist/persistence/doctor.d.ts",
+  "package/dist/persistence/doctor.d.ts.map",
+  "package/dist/persistence/doctor.js",
+  "package/dist/persistence/doctor.js.map",
   "package/dist/persistence/errors.d.ts",
   "package/dist/persistence/errors.d.ts.map",
   "package/dist/persistence/errors.js",
@@ -115,6 +138,10 @@ const expectedEntries = [
   "package/dist/persistence/index.d.ts.map",
   "package/dist/persistence/index.js",
   "package/dist/persistence/index.js.map",
+  "package/dist/persistence/local-ingress.d.ts",
+  "package/dist/persistence/local-ingress.d.ts.map",
+  "package/dist/persistence/local-ingress.js",
+  "package/dist/persistence/local-ingress.js.map",
   "package/dist/persistence/migrations.d.ts",
   "package/dist/persistence/migrations.d.ts.map",
   "package/dist/persistence/migrations.js",
@@ -142,6 +169,7 @@ const expectedEntries = [
   "package/migrations/0001-persistence-metadata.sql",
   "package/migrations/0002-phase1-task-storage.sql",
   "package/migrations/0003-phase1-application.sql",
+  "package/migrations/0004-phase1-cli.sql",
   "package/package.json",
 ].sort();
 
@@ -254,21 +282,23 @@ void ingress;
     [
       "--input-type=module",
       "--eval",
-      `import("agent-task-orchestrator").then(async (m) => {
+      `import { randomUUID } from "node:crypto";
+      import("agent-task-orchestrator").then(async (m) => {
         const layout = m.prepareRuntimeLayout({
           runtimeRoot: process.env.ATO_SMOKE_RUNTIME,
           sourceCheckoutRoot: process.env.ATO_SMOKE_CHECKOUT,
           projectRoots: [process.env.ATO_SMOKE_PROJECT],
         });
         const store = await m.openPersistence(layout, { applicationVersion: "package-smoke" });
-        let sequence = 0;
+        const issuedAt = new Date().toISOString();
+        const expiresAt = new Date(Date.parse(issuedAt) + 30 * 24 * 60 * 60 * 1000).toISOString();
         const service = m.createApplicationService(store, {
-          currentActor: () => ({ actorId: "package-actor", principal: "os:package-actor" }),
-          now: () => "2026-08-29T12:00:00.000Z",
-          nextId: (kind) => kind + "-package-" + (++sequence),
+          currentActor: () => ({ actorId: "package-actor", principal: "A".repeat(64) }),
+          now: () => issuedAt,
+          nextId: () => randomUUID(),
           confirmHighRisk: () => true,
         });
-        const bootstrap = service.bootstrap({ kind: "authorization.bootstrap", expiresAt: "2026-09-20T12:00:00.000Z" });
+        const bootstrap = service.bootstrap({ kind: "authorization.bootstrap", expiresAt });
         if (!bootstrap.ok) throw new Error("package bootstrap was rejected");
         const project = service.execute({ kind: "project.register", projectId: "project", root: process.env.ATO_SMOKE_PROJECT });
         if (!project.ok) throw new Error("package Project registration was rejected");
@@ -281,7 +311,13 @@ void ingress;
           supersedesTaskId: null,
         });
         if (!task.ok) throw new Error("package Task creation was rejected");
-        const backup = await store.createBackup();
+        const generationId = randomUUID();
+        const backupAuthorization = service.execute({
+          kind: "runtime.backup",
+          backupGenerationId: generationId,
+        });
+        if (!backupAuthorization.ok) throw new Error("package backup authorization was rejected");
+        const backup = await store.createBackup(backupAuthorization.value);
         const verified = m.verifyBackupGeneration(layout, backup.generationId);
         await store.close();
         console.log(JSON.stringify({
@@ -308,22 +344,74 @@ void ingress;
   invariant(importResult.status === 0, `package export failed: ${importResult.stderr}`);
   const imported = JSON.parse(importResult.stdout.trim());
   invariant(
-    imported.status.phase === "phase1-application-service" &&
+    imported.status.phase === "phase1-local-product-cli" &&
       imported.status.domainCoreImplemented === true &&
       imported.status.persistenceFoundationImplemented === true &&
       imported.status.projectRegistryImplemented === true &&
       imported.status.runtimeAuthorizationImplemented === true &&
       imported.status.applicationServiceImplemented === true &&
+      imported.status.localPhase1ProductCliImplemented === true &&
+      imported.status.backupRestoreDoctorImplemented === true &&
       imported.status.productRuntimeImplemented === false &&
+      imported.status.executionRuntimeImplemented === false &&
       JSON.stringify(imported.states) === JSON.stringify(["idea", "ready", "running", "waiting", "completed", "cancelled"]) &&
       imported.snapshot === true &&
-      imported.schema === 3 &&
+      imported.schema === 4 &&
       imported.backup === true,
     "package export Domain Core, persistence registry, or capability status drifted",
   );
 
-  const cliResult = pnpm(["exec", "ato"], consumer);
-  invariant(JSON.parse(cliResult.stdout).productRuntimeImplemented === false, "console entry overstated runtime capability");
+  const cliEnvironment = {};
+  const parityRoot = path.join(
+    userInfo({ encoding: "utf8" }).homedir,
+    "AppData",
+    "Local",
+    "agent-task-orchestrator",
+    `package-smoke-${path.basename(generation)}`,
+  );
+  const positiveArgs = ["--format", "json", "--runtime-root", parityRoot, "doctor"];
+  const humanArgs = ["--format", "human", "--runtime-root", parityRoot, "doctor"];
+  const negativeArgs = ["--format", "json", "unknown", "private-input-must-not-echo"];
+  const sourceCli = path.join(repoRoot, "src", "cli.ts");
+  const builtCli = path.join(repoRoot, "dist", "cli.js");
+  const installedCli = path.join(consumer, "node_modules", "agent-task-orchestrator", "dist", "cli.js");
+  const positiveResults = [sourceCli, builtCli, installedCli].map((entry) =>
+    invokeNodeCli(entry, positiveArgs, consumer, cliEnvironment));
+  const humanResults = [sourceCli, builtCli, installedCli].map((entry) =>
+    invokeNodeCli(entry, humanArgs, consumer, cliEnvironment));
+  const negativeResults = [sourceCli, builtCli, installedCli].map((entry) =>
+    invokeNodeCli(entry, negativeArgs, consumer, cliEnvironment));
+  const expectedPositive = {
+    status: 0,
+    stdout: '{"apiVersion":"ato.api/v1","command":"doctor","ok":true,"result":{"health":"not_initialized","initialized":false,"schemaVersion":null,"activeUse":false,"backupInventory":"empty","restoreState":"none"}}\n',
+    stderr: "",
+  };
+  const expectedNegative = {
+    status: 2,
+    stdout: '{"apiVersion":"ato.api/v1","command":"unknown","ok":false,"error":{"code":"CLI_INVALID_INPUT","message":"The command input is invalid."}}\n',
+    stderr: "",
+  };
+  const expectedHuman = {
+    status: 0,
+    stdout: 'OK doctor health="not_initialized" initialized=false schemaVersion=null activeUse=false backupInventory="empty" restoreState="none"\n',
+    stderr: "",
+  };
+  for (const observed of positiveResults) {
+    invariant(JSON.stringify(observed) === JSON.stringify(expectedPositive), `positive CLI parity drifted: ${JSON.stringify(observed)}`);
+  }
+  for (const observed of negativeResults) {
+    invariant(JSON.stringify(observed) === JSON.stringify(expectedNegative), `negative CLI parity drifted: ${JSON.stringify(observed)}`);
+    invariant(!observed.stdout.includes("private-input-must-not-echo"), "CLI reflected private input");
+  }
+  for (const observed of humanResults) {
+    invariant(
+      JSON.stringify(observed) === JSON.stringify(expectedHuman),
+      `human CLI parity drifted: ${JSON.stringify(observed)}`,
+    );
+  }
+  invariant(!existsSync(parityRoot), "read-only doctor created the absent runtime root");
+  const installedBin = pnpm(["exec", "ato", ...positiveArgs], consumer, undefined, cliEnvironment);
+  invariant(installedBin.stdout === expectedPositive.stdout && installedBin.stderr === "", "installed package bin drifted from direct CLI entry");
 
   pnpm(["remove", "agent-task-orchestrator"], consumer, storeDir);
   invariant(!existsSync(path.join(consumer, "node_modules", "agent-task-orchestrator")), "package uninstall left the installed package");
@@ -336,7 +424,7 @@ void ingress;
       consumerTypes: "passed",
       export: "passed",
       persistence: "passed",
-      console: "passed",
+      console: "source-built-installed parity passed",
       uninstall: "passed",
     }),
   );

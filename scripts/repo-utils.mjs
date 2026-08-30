@@ -21,6 +21,7 @@ const ownedGenerationReceipts = new Map();
 export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/application.ts",
   "src/authorization.ts",
+  "src/cli-api.ts",
   "src/cli.ts",
   "src/domain.ts",
   "src/index.ts",
@@ -28,8 +29,10 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/persistence/application-repository.ts",
   "src/persistence/backup.ts",
   "src/persistence/database.ts",
+  "src/persistence/doctor.ts",
   "src/persistence/errors.ts",
   "src/persistence/index.ts",
+  "src/persistence/local-ingress.ts",
   "src/persistence/migrations.ts",
   "src/persistence/repository.ts",
   "src/persistence/runtime.ts",
@@ -42,11 +45,13 @@ export const EXPECTED_MIGRATION_FILES = Object.freeze([
   "migrations/0001-persistence-metadata.sql",
   "migrations/0002-phase1-task-storage.sql",
   "migrations/0003-phase1-application.sql",
+  "migrations/0004-phase1-cli.sql",
 ]);
 
 const ALLOWED_PERSISTENCE_BUILTINS = new Set([
   "node:crypto",
   "node:fs",
+  "node:os",
   "node:path",
   "node:sqlite",
   "node:url",
@@ -129,8 +134,10 @@ export function productionBoundaryFailures(inventory, readSource) {
       ...source.matchAll(/\bimport\s*\(\s*["'](node:[^"']+)["']\s*\)/gu),
     ].map((match) => match[1]);
     for (const builtin of builtins) {
-      const registryBuiltin = relative === "src/project-registry.ts" && (builtin === "node:fs" || builtin === "node:path");
-      if (!relative.startsWith("src/persistence/") && !registryBuiltin) {
+    const registryBuiltin = relative === "src/project-registry.ts" && (builtin === "node:fs" || builtin === "node:path");
+    const cliBuiltin = (relative === "src/cli.ts" || relative === "src/cli-api.ts") &&
+      (builtin === "node:crypto" || builtin === "node:path" || builtin === "node:url");
+    if (!relative.startsWith("src/persistence/") && !registryBuiltin && !cliBuiltin) {
         failures.push(`${relative}: Node built-in escaped the persistence owner boundary`);
       } else if (!ALLOWED_PERSISTENCE_BUILTINS.has(builtin)) {
         failures.push(`${relative}: undeclared persistence built-in ${builtin}`);
@@ -411,6 +418,24 @@ function assertDirectGeneration(generation) {
   invariant(path.basename(resolved).length > 8, "generation name is not specific enough");
 }
 
+function quarantineOwnedGeneration(generation, quarantine, receipt) {
+  const waitCell = new Int32Array(new SharedArrayBuffer(4));
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      renameSync(generation, quarantine);
+      return;
+    } catch (error) {
+      const retryableWindowsRelease = process.platform === "win32" &&
+        error instanceof Error && "code" in error &&
+        (error.code === "EPERM" || error.code === "EBUSY") && attempt < 200;
+      if (!retryableWindowsRelease) throw error;
+      invariant(existsSync(generation) && !existsSync(quarantine), "cleanup rename has an ambiguous result");
+      inspectOwnedGeneration(generation, receipt);
+      Atomics.wait(waitCell, 0, 0, 10);
+    }
+  }
+}
+
 export function inventoryTree(root) {
   const resolvedRoot = path.resolve(root);
   const result = [];
@@ -452,7 +477,7 @@ export function removeOwnedGeneration(generation, options = undefined) {
   const quarantine = uniqueTombstone(taskArtifactsRoot);
   let quarantined = false;
   try {
-    renameSync(generation, quarantine);
+    quarantineOwnedGeneration(generation, quarantine, receipt);
     quarantined = true;
     inspectOwnedGeneration(quarantine, receipt, quarantine);
     hooks.afterQuarantine?.(Object.freeze({ generation, quarantine }));

@@ -60,6 +60,7 @@ const MIGRATION_SOURCES = Object.freeze([
   Object.freeze({ version: 1, id: "persistence-metadata", fileName: "0001-persistence-metadata.sql" }),
   Object.freeze({ version: 2, id: "phase1-task-storage", fileName: "0002-phase1-task-storage.sql" }),
   Object.freeze({ version: 3, id: "phase1-application", fileName: "0003-phase1-application.sql" }),
+  Object.freeze({ version: 4, id: "phase1-product-cli", fileName: "0004-phase1-cli.sql" }),
 ] satisfies readonly MigrationSource[]);
 
 let cachedRegistry: readonly MigrationDescriptor[] | undefined;

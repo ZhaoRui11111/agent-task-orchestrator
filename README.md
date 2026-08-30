@@ -6,17 +6,19 @@ This is an independent community project. It is not made, sponsored, or endorsed
 
 ## Current status
 
-The repository contains a governance and architecture-contract baseline, a
-minimal executable TypeScript/Node toolchain and feasibility harness, a pure
-in-memory Domain Core for Project/Task rules, a safe local ProjectRegistry, a
-finite runtime authorization model, one typed Project/Task/dependency
-application service, and schema-v3 SQLite persistence. The application service
-is the sole public product command/query owner and atomically coordinates
-Domain snapshots, registry/grant changes, authorization decisions, and
-sanitized audit. It still has no executable orchestrator, product CLI, MCP
-server, plugin, dispatcher, scheduler, execution backend or claim/completion
-loop, supported adapter, supported release, or validated product platform
-integration. The current `ato` console entry reports capability status only.
+The repository contains a governance and architecture-contract baseline, an
+executable TypeScript/Node toolchain and feasibility harness, a pure in-memory
+Domain Core for Project/Task rules, a safe local ProjectRegistry, a finite
+runtime authorization model, one typed Project/Task/dependency application
+service, schema-v4 SQLite persistence, and a composable local Phase 1 `ato`
+product CLI. The application service remains the sole business command/query
+owner and atomically coordinates Domain snapshots, registry/grant changes,
+authorization decisions, and sanitized audit. The CLI provides initialization,
+finite grant management, Project/Task/dependency management, status, backup,
+confirmed restore, and read-only doctor surfaces without copying those rules.
+It still has no executable orchestrator, MCP server, plugin, dispatcher,
+scheduler, execution backend or claim/completion loop, supported adapter,
+supported release, or validated product platform integration.
 
 Unimplemented planned capabilities are not current capabilities. Design
 proposals and roadmaps must remain clearly labeled until their implementations
@@ -62,6 +64,8 @@ the finite local grant model by the
 [authorization contract](docs/reference/authorization-contract.md), and the
 implemented storage boundary by the
 [persistence contract](docs/reference/persistence-contract.md).
+The exact product command grammar, output, redaction, and exit behavior are
+owned by the [CLI/API contract](docs/reference/cli-contract.md).
 With the exact toolchain installed, the local repository gate is:
 
 ```powershell
@@ -71,6 +75,35 @@ pnpm verify:offline
 
 `pnpm dependency:audit` is a separate network-dependent query. Neither the CI
 skeleton nor a command that was not run is evidence of a passing gate.
+
+## Local Phase 1 CLI
+
+The source, build, and packed-install entry points implement the same contract:
+
+```powershell
+node src/cli.ts doctor
+pnpm build
+node dist/cli.js doctor
+ato doctor
+```
+
+Initialization is a one-time, explicitly confirmed operation. It creates only
+the fixed local daily capability set; subsequent authorized Project, Task,
+dependency, query, and backup operations do not prompt again. For example:
+
+```powershell
+$expiry = (Get-Date).ToUniversalTime().AddDays(30).ToString("yyyy-MM-dd'T'HH:mm:ss.fff'Z'")
+ato init --expires-at $expiry --confirm "INITIALIZE LOCAL RUNTIME"
+ato status
+ato authorization list --limit 100
+```
+
+Restore always requires both current `runtime.restore` authority and its two
+exact request-local confirmations. Doctor is grant-independent and read-only.
+Use `--format json --api-version ato.api/v1` for the versioned single-line
+machine surface. The exhaustive command tree and stable public error/exit table
+are in the [CLI/API contract](docs/reference/cli-contract.md). This development
+package is not a release or platform-support claim.
 
 ## Maintainer development workflow
 
