@@ -12,7 +12,7 @@ successful narrow check does not waive another applicable route.
 
 | Impact | Required route when that surface exists |
 | --- | --- |
-| Documentation or governance | Repository documentation gate, authority review, and capability-truthfulness review |
+| Documentation or governance | Repository documentation gate, including exact-case local targets and same-file/cross-file fragments, plus authority review and capability-truthfulness review |
 | Domain or state machine | Targeted unit tests plus property/state-machine tests for legal and illegal histories |
 | ProjectRegistry or application service | Canonical path/identity and revision negatives, typed command/query parity with Domain, accepted/denied atomicity, restart readback, concurrent writers, injected failure, and public-boundary tests |
 | Persistence, schema, migration, backup, restore, or doctor | Targeted repository tests, fresh/upgrade/downgrade matrix, canonical migration identity from uniform LF and CRLF transports, malformed/mixed-EOL pre-mutation refusal, concurrent-reader/writer tests, read-only diagnostic tests, and interruption or corruption recovery |

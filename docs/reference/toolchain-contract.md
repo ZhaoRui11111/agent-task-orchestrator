@@ -136,7 +136,7 @@ The following package scripts are the public local entry points:
 | `pnpm build` | Produce the ESM package and declarations |
 | `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application atomicity, persistence, CLI, doctor, and real local feasibility contracts |
 | `pnpm test:persistence` | Run the targeted migration, repository, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
-| `pnpm docs:check` | Resolve exact-case repository-relative Markdown links and reject forbidden evidence artifacts |
+| `pnpm docs:check` | Resolve exact-case repository-relative Markdown links, validate same-file and cross-file heading fragments, and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |
 | `pnpm package:smoke` | Pack and consume the declared package boundary offline |
 | `pnpm spike:sqlite` | Run the local Windows SQLite feasibility procedure |

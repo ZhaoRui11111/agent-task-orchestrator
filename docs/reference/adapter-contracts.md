@@ -56,7 +56,7 @@ declared by that query. It has no mutating intent, idempotency key, or final
 mutation-decision reference. It MUST NOT reserve, create, update, remove, or
 finalize a resource. External credentials/network authority required to perform
 the read remain separate fail-closed preconditions. The exact read decision is
-owned by the [authorization contract](authorization-contract.md#read-and-inspection-authorization).
+owned by the [authorization contract](authorization-contract.md#application-decision-sequence).
 
 ### ProjectPolicy decision-input call
 
@@ -69,8 +69,10 @@ mutation decision because the returned policy receipt is an input to that final
 decision.
 
 This class is side-effect-free. It cannot mutate core/external state, issue a
-grant, reserve a resource, or invoke a mutating port. Its sequencing authority
-is the [authorization contract](authorization-contract.md#preliminary-projectpolicy-query).
+grant, reserve a resource, or invoke a mutating port. Its preliminary
+`policy.evaluate` authority and transaction sequencing are owned by the
+[local-policy rules](authorization-contract.md#local-policy-and-high-risk-confirmation)
+and [application decision sequence](authorization-contract.md#application-decision-sequence).
 
 ### Inbound scheduler trigger
 

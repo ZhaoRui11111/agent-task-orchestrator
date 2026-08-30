@@ -124,7 +124,7 @@ Acquisition, renewal, takeover, and stale-writer rejection use the generic
 lease/fencing mechanics, while this contract owns the status meanings and
 target-ref exclusivity. The durable schema, writer/reader closure, transaction,
 and unique-index rules are in the
-[persistence contract](persistence-contract.md#transaction-boundaries). The
+[persistence contract](persistence-contract.md#transaction-and-repository-boundary). The
 reservation authorizes no merge, push, release, deployment, or cleanup; each is
 a separate policy and authorization decision. Loss or expiry stops further Git
 mutation and routes observation/reconciliation.

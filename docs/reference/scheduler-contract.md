@@ -44,7 +44,7 @@ claims, fencing, recovery, and fan-out outcomes by the
 Trusted ingress derives the scheduler actor and evaluates `dispatch.run` before
 the ingress transaction. Tuple ownership, the allow/deny canonical run record,
 and every delivery observation then follow the schema/index/transaction rules in the
-[persistence contract](persistence-contract.md#transaction-boundaries) before
+[persistence contract](persistence-contract.md#transaction-and-repository-boundary) before
 dispatcher work begins. A malformed or stale-config delivery is still observed
 but cannot derive a current tuple and creates no run.
 
