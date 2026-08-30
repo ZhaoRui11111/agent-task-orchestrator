@@ -32,6 +32,10 @@ All notable changes to this project will be documented in this file.
   versioned human/JSON ingress, Project/Task/dependency workflows, authorized
   online backup, separately confirmed provenance-bound restore, read-only
   doctor, packaged-entry parity, and fail-closed lifecycle evidence.
+- Made all four released migration identities reproducible across LF and CRLF
+  checkouts by freezing their historical canonical bytes in the sole registry,
+  adding explicit per-file checkout EOL policy, and rejecting malformed or
+  content-drifted sources before SQLite mutation without rewriting history.
 
 These entries do not announce a release or supported runtime. The executable
 material is limited to the development package, feasibility harness, pure

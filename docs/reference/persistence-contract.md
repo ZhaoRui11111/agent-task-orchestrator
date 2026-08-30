@@ -315,9 +315,33 @@ trusted confirmation, or expose direct SQL.
 
 Migration files use immutable names `NNNN-short-name.sql`. `NNNN` is the
 strictly increasing four-digit version, `migration_id` is the registry's
-non-empty semantic ID, and `checksum_sha256` is uppercase SHA-256 of the exact
-committed UTF-8 file bytes. One lazily loaded registry is used by source,
-tests, build, and the packed `migrations/` inventory.
+non-empty semantic ID, and `checksum_sha256` is uppercase SHA-256 of the
+registry-declared canonical UTF-8 representation. It is not derived from the
+checkout transport or Git's normalized storage representation. Each registry
+entry freezes both that checksum and one canonical line ending:
+
+| Version | Canonical line ending | Canonical `checksum_sha256` |
+| --- | --- | --- |
+| `1` | CRLF | `E31C5A3D24E4DB99620635A9CE83F752978C5FD2AF7A15C84CE13BEECAC9C34F` |
+| `2` | CRLF | `0FC2DEECBC8ABBA31F9E5063A870706320F66C5AEE882E4A05DA0CADCF9CEC7E` |
+| `3` | CRLF | `58D428B10198B7483ECB6CED2F88D8DA81A97B052CF650ED4CD012D7183F0702` |
+| `4` | LF | `3446455B4A49C2339EC22E6B99FFF5DD43908D0BEB45EFCE099A79D732CF6557` |
+
+The sole lazily loaded registry accepts a migration source only when it is the
+complete exact logical content transported with uniformly LF or uniformly
+CRLF line endings. Before any SQLite mutation, it rejects an empty or
+BOM-prefixed source, invalid UTF-8, a missing terminal newline, mixed endings,
+a lone carriage return, content drift, or a canonical checksum mismatch. It
+then reconstructs the entry's declared line ending, verifies the frozen
+checksum, and publishes that canonical SQL to every consumer. Source, tests,
+build, and the packed `migrations/` inventory all use this registry; there is
+no fallback identity.
+
+`.gitattributes` records one explicit historical checkout line ending for each
+shipped migration. That checkout policy is a reproducibility guard, not an
+identity owner. A future migration must add its own reviewed registry identity
+and matching per-file attribute; no wildcard assigns identities to future
+files.
 
 Before writable open, an existing database is inspected read-only. The runner
 rejects an absent/incomplete metadata owner, unknown or newer version,
@@ -338,9 +362,11 @@ postcondition establish one SQLite transaction. Failure or interruption leaves
 that migration wholly absent or wholly committed; restart begins at the first
 absent registry member.
 
-Released migration bytes are never edited, reordered, or skipped. Later plans
-append new files and must test every shipped earlier prefix they claim to
-upgrade.
+Released migration Git blobs, registry-declared canonical representations,
+IDs, and checksums are never edited, reordered, or skipped. Existing history
+is never rewritten or repaired to accommodate an unknown checksum or registry
+identity. Later plans append new files and must test every shipped earlier
+prefix they claim to upgrade.
 
 ## Backup generations
 

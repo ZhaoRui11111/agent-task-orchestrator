@@ -6,6 +6,7 @@ import { packagePolicyFailures, repoRoot } from "../scripts/repo-utils.mjs";
 
 const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const npmrc = readFileSync(path.join(repoRoot, ".npmrc"), "utf8");
+const gitAttributes = readFileSync(path.join(repoRoot, ".gitattributes"), "utf8");
 
 test("package commands and pnpm configuration are exact and fail closed", () => {
   assert.deepEqual(packagePolicyFailures(packageJson, npmrc), []);
@@ -39,4 +40,16 @@ test("Dependabot is limited to the npm ecosystem and weekly updates", () => {
   assert.equal(config.version, 2);
   assert.deepEqual(config.updates.map((item) => item["package-ecosystem"]), ["npm"]);
   assert.deepEqual(config.updates.map((item) => item.schedule.interval), ["weekly"]);
+});
+
+test("every shipped migration has one explicit canonical checkout line ending", () => {
+  assert.deepEqual(
+    gitAttributes.split("\n").filter((line) => line.startsWith("migrations/")),
+    [
+      "migrations/0001-persistence-metadata.sql text eol=crlf",
+      "migrations/0002-phase1-task-storage.sql text eol=crlf",
+      "migrations/0003-phase1-application.sql text eol=crlf",
+      "migrations/0004-phase1-cli.sql text eol=lf",
+    ],
+  );
 });

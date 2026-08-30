@@ -54,13 +54,39 @@ interface MigrationSource {
   readonly version: number;
   readonly id: string;
   readonly fileName: string;
+  readonly canonicalLineEnding: "lf" | "crlf";
+  readonly checksumSha256: string;
 }
 
 const MIGRATION_SOURCES = Object.freeze([
-  Object.freeze({ version: 1, id: "persistence-metadata", fileName: "0001-persistence-metadata.sql" }),
-  Object.freeze({ version: 2, id: "phase1-task-storage", fileName: "0002-phase1-task-storage.sql" }),
-  Object.freeze({ version: 3, id: "phase1-application", fileName: "0003-phase1-application.sql" }),
-  Object.freeze({ version: 4, id: "phase1-product-cli", fileName: "0004-phase1-cli.sql" }),
+  Object.freeze({
+    version: 1,
+    id: "persistence-metadata",
+    fileName: "0001-persistence-metadata.sql",
+    canonicalLineEnding: "crlf",
+    checksumSha256: "E31C5A3D24E4DB99620635A9CE83F752978C5FD2AF7A15C84CE13BEECAC9C34F",
+  }),
+  Object.freeze({
+    version: 2,
+    id: "phase1-task-storage",
+    fileName: "0002-phase1-task-storage.sql",
+    canonicalLineEnding: "crlf",
+    checksumSha256: "0FC2DEECBC8ABBA31F9E5063A870706320F66C5AEE882E4A05DA0CADCF9CEC7E",
+  }),
+  Object.freeze({
+    version: 3,
+    id: "phase1-application",
+    fileName: "0003-phase1-application.sql",
+    canonicalLineEnding: "crlf",
+    checksumSha256: "58D428B10198B7483ECB6CED2F88D8DA81A97B052CF650ED4CD012D7183F0702",
+  }),
+  Object.freeze({
+    version: 4,
+    id: "phase1-product-cli",
+    fileName: "0004-phase1-cli.sql",
+    canonicalLineEnding: "lf",
+    checksumSha256: "3446455B4A49C2339EC22E6B99FFF5DD43908D0BEB45EFCE099A79D732CF6557",
+  }),
 ] satisfies readonly MigrationSource[]);
 
 let cachedRegistry: readonly MigrationDescriptor[] | undefined;
@@ -72,6 +98,52 @@ function compareStrings(left: string, right: string): number {
 
 function migrationUrl(fileName: string): URL {
   return new URL(`../../migrations/${fileName}`, import.meta.url);
+}
+
+function canonicalMigrationSql(source: MigrationSource, bytes: Uint8Array): string {
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) {
+    throw persistenceFailure("MIGRATION_CHECKSUM_MISMATCH", "Migration source starts with a BOM", {
+      version: source.version,
+    });
+  }
+  const decoded = decodeUtf8(bytes, `migration ${source.fileName}`);
+  if (decoded.trim().length === 0) {
+    throw persistenceFailure("MIGRATION_CHECKSUM_MISMATCH", "Migration source is empty", {
+      version: source.version,
+    });
+  }
+  if (!decoded.endsWith("\n")) {
+    throw persistenceFailure("MIGRATION_CHECKSUM_MISMATCH", "Migration source has no terminal newline", {
+      version: source.version,
+    });
+  }
+  const lfTransport = decoded.replaceAll("\r\n", "\n");
+  if (lfTransport.includes("\r")) {
+    throw persistenceFailure("MIGRATION_CHECKSUM_MISMATCH", "Migration source contains a lone carriage return", {
+      version: source.version,
+    });
+  }
+  const crlfTransport = lfTransport.replaceAll("\n", "\r\n");
+  if (decoded !== lfTransport && decoded !== crlfTransport) {
+    throw persistenceFailure("MIGRATION_CHECKSUM_MISMATCH", "Migration source has mixed line endings", {
+      version: source.version,
+    });
+  }
+  const canonical = source.canonicalLineEnding === "lf" ? lfTransport : crlfTransport;
+  if (sha256(canonical) !== source.checksumSha256) {
+    throw persistenceFailure("MIGRATION_CHECKSUM_MISMATCH", "Migration source does not match its released checksum", {
+      version: source.version,
+    });
+  }
+  return canonical;
+}
+
+export function canonicalizeMigrationSqlForTesting(version: number, bytes: Uint8Array): string {
+  const source = MIGRATION_SOURCES[version - 1];
+  if (!Number.isSafeInteger(version) || source === undefined || source.version !== version) {
+    throw persistenceFailure("INVALID_INPUT", "Migration version has no source descriptor", { version });
+  }
+  return canonicalMigrationSql(source, bytes);
 }
 
 function validateRegistry(registry: readonly MigrationDescriptor[]): void {
@@ -93,15 +165,12 @@ export function loadMigrationRegistry(): readonly MigrationDescriptor[] {
   if (cachedRegistry !== undefined) return cachedRegistry;
   const descriptors = MIGRATION_SOURCES.map((source) => {
     const migrationPath = fileURLToPath(migrationUrl(source.fileName));
-    const sql = decodeUtf8(readRegularFile(migrationPath).bytes, `migration ${source.fileName}`);
-    if (sql.charCodeAt(0) === 0xfeff || sql.trim().length === 0) {
-      throw persistenceFailure("MIGRATION_CHECKSUM_MISMATCH", "Migration source is empty or starts with a BOM", {
-        version: source.version,
-      });
-    }
+    const sql = canonicalMigrationSql(source, readRegularFile(migrationPath).bytes);
     return Object.freeze({
-      ...source,
-      checksumSha256: sha256(sql),
+      version: source.version,
+      id: source.id,
+      fileName: source.fileName,
+      checksumSha256: source.checksumSha256,
       sql,
     });
   });

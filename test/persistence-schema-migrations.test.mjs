@@ -14,6 +14,7 @@ import {
   readDomainForOwner,
 } from "../src/persistence/application-repository.ts";
 import {
+  canonicalizeMigrationSqlForTesting,
   inspectSchemaEvidence,
   loadMigrationRegistry,
   migrateDatabaseWithRegistryForTesting,
@@ -52,7 +53,26 @@ function readV3ContentProjection(database) {
   );
 }
 
-test("committed migration registry is contiguous and checksums exact source bytes", () => {
+const EXPECTED_MIGRATION_IDENTITIES = Object.freeze([
+  Object.freeze({
+    checksumSha256: "E31C5A3D24E4DB99620635A9CE83F752978C5FD2AF7A15C84CE13BEECAC9C34F",
+    lineEnding: "crlf",
+  }),
+  Object.freeze({
+    checksumSha256: "0FC2DEECBC8ABBA31F9E5063A870706320F66C5AEE882E4A05DA0CADCF9CEC7E",
+    lineEnding: "crlf",
+  }),
+  Object.freeze({
+    checksumSha256: "58D428B10198B7483ECB6CED2F88D8DA81A97B052CF650ED4CD012D7183F0702",
+    lineEnding: "crlf",
+  }),
+  Object.freeze({
+    checksumSha256: "3446455B4A49C2339EC22E6B99FFF5DD43908D0BEB45EFCE099A79D732CF6557",
+    lineEnding: "lf",
+  }),
+]);
+
+test("committed migration registry canonicalizes LF and CRLF transport to released bytes", () => {
   const registry = loadMigrationRegistry();
   assert.equal(currentSchemaVersion(), 4);
   assert.deepEqual(
@@ -64,16 +84,43 @@ test("committed migration registry is contiguous and checksums exact source byte
       { version: 4, id: "phase1-product-cli", fileName: "0004-phase1-cli.sql" },
     ],
   );
-  for (const migration of registry) {
-    assert.equal(
-      migration.checksumSha256,
-      sha256(readFileSync(path.join(import.meta.dirname, "..", "migrations", migration.fileName))),
-    );
+  for (const [index, migration] of registry.entries()) {
+    const expected = EXPECTED_MIGRATION_IDENTITIES[index];
+    assert.ok(expected);
+    const raw = readFileSync(path.join(import.meta.dirname, "..", "migrations", migration.fileName), "utf8");
+    const lfTransport = raw.replaceAll("\r\n", "\n");
+    const crlfTransport = lfTransport.replaceAll("\n", "\r\n");
+    const fromLf = canonicalizeMigrationSqlForTesting(migration.version, Buffer.from(lfTransport, "utf8"));
+    const fromCrlf = canonicalizeMigrationSqlForTesting(migration.version, Buffer.from(crlfTransport, "utf8"));
+    assert.equal(fromLf, fromCrlf);
+    assert.equal(migration.sql, fromLf);
+    assert.equal(migration.checksumSha256, expected.checksumSha256);
+    assert.equal(sha256(migration.sql), expected.checksumSha256);
+    assert.equal(migration.sql.includes("\r\n"), expected.lineEnding === "crlf");
+    if (expected.lineEnding === "lf") assert.equal(migration.sql.includes("\r"), false);
     assert.equal(Object.isFrozen(migration), true);
   }
-  assert.equal(registry[0].checksumSha256, "E31C5A3D24E4DB99620635A9CE83F752978C5FD2AF7A15C84CE13BEECAC9C34F");
-  assert.equal(registry[1].checksumSha256, "0FC2DEECBC8ABBA31F9E5063A870706320F66C5AEE882E4A05DA0CADCF9CEC7E");
-  assert.equal(registry[2].checksumSha256, "58D428B10198B7483ECB6CED2F88D8DA81A97B052CF650ED4CD012D7183F0702");
+});
+
+test("migration source canonicalization rejects noncanonical transport before SQLite mutation", () => {
+  const raw = readFileSync(path.join(import.meta.dirname, "..", "migrations", "0004-phase1-cli.sql"), "utf8");
+  const lf = raw.replaceAll("\r\n", "\n");
+  const firstBreak = lf.indexOf("\n");
+  assert.notEqual(firstBreak, -1);
+  const invalidSources = [
+    Buffer.from("", "utf8"),
+    Buffer.from(`\uFEFF${lf}`, "utf8"),
+    Buffer.from(lf.slice(0, -1), "utf8"),
+    Buffer.from(`${lf.slice(0, firstBreak)}\r${lf.slice(firstBreak + 1)}`, "utf8"),
+    Buffer.from(`${lf.slice(0, firstBreak)}\r\n${lf.slice(firstBreak + 1)}`, "utf8"),
+    Buffer.from(lf.replace("PRAGMA defer_foreign_keys=ON;", "PRAGMA defer_foreign_keys=OFF;"), "utf8"),
+  ];
+  for (const source of invalidSources) {
+    assert.throws(
+      () => canonicalizeMigrationSqlForTesting(4, source),
+      (error) => expectPersistenceError(error, "MIGRATION_CHECKSUM_MISMATCH"),
+    );
+  }
 });
 
 test("fresh initialization atomically applies the complete staged schema", async () => {

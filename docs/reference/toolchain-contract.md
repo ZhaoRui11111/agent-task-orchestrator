@@ -83,9 +83,14 @@ The package-root library export exposes a truthful capability status, the pure
 TypeScript Domain Core, ProjectRegistry identity owner, finite authorization
 owner, typed application service, schema-v4 persistence foundation, local
 lifecycle surfaces, and product CLI API. The packed inventory includes the
-immutable SQL files under `migrations/`, and the compiled migration registry
-consumes those same bytes. The `ato` console is the local Phase 1 product CLI
-defined by the [CLI/API contract](cli-contract.md).
+immutable SQL files under `migrations/`. The source and compiled migration
+registry consume either a uniform LF or CRLF transport of those files and
+reconstruct the same frozen per-migration canonical bytes before checksum
+verification and execution. `.gitattributes` declares an explicit historical
+checkout EOL for every shipped migration; a future migration requires its own
+reviewed registry identity and per-file attribute rather than inheriting a
+wildcard. The `ato` console is the local Phase 1 product CLI defined by the
+[CLI/API contract](cli-contract.md).
 
 Production source is limited to `src/index.ts`, `src/domain.ts`, `src/cli.ts`,
 `src/cli-api.ts`, `src/project-registry.ts`, `src/authorization.ts`,
