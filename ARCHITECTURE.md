@@ -7,7 +7,7 @@ executable toolchain and feasibility harness, a pure in-memory TypeScript
 Domain Core, a filesystem-identity ProjectRegistry, a finite local runtime
 authorization owner, a typed Project/Task/dependency application service, a
 local SQLite persistence foundation, and a composable local Phase 1 product
-CLI. Schema versions `1` through `6` own metadata, exact Domain snapshots,
+CLI. Schema versions `1` through `7` own metadata, exact Domain snapshots,
 ProjectRegistry, local identity and authorization epochs, grants, requests,
 authorization decisions, lifecycle coordination, and append-only application
 audit; schema `5` additionally owns ordered execution attempts, one active
@@ -16,7 +16,11 @@ Schema `6` adds only the reliable Manual-loop authorization lineage,
 operation requests/decisions/audit, semantic intents and their immutable
 prepare/act/finalize authorization-binding chain, ordered observations,
 verified receipts, finalizations, execution terminal facts, a durable Manual
-turn/operation journal, and Manual completion decisions.
+ turn/operation journal, and Manual completion decisions. Schema `7` adds only
+ vocabulary-7 authorization lineage, lifecycle-digest provenance version 4,
+ and bounded explicit-Manual dispatcher records for trigger decisions, run
+ ownership/heartbeat, reconciliation, immutable candidate membership, member
+ outcomes, and completeness-gated summaries.
 The application service orchestrates business owners in one
 transaction; persistence never selects a Domain command or grants authority.
 The CLI is only typed ingress, trusted local identity/confirmation setup,
@@ -28,10 +32,13 @@ production `manual-local` adapter implements a durable, independently
 inspectable no-workspace turn journal; a distinct trusted Manual outcome
 control supplies bounded lifecycle facts, and a separately authorized and
 confirmed application decision alone may complete a Task from verified
-`turn_succeeded` evidence. The repository still implements no dispatcher,
-scheduler, MCP component, Codex/Git/workspace adapter, ProjectPolicy,
-CompletionBackend or gates, public Phase 2 CLI, multi-candidate run, supported
-platform integration, or executable orchestration runtime.
+`turn_succeeded` evidence. The library-only Manual dispatcher coordinates those
+owners after one explicit trigger: it durably reconciles old work, seals a
+finite candidate set, resolves every member, and publishes a summary only after
+complete readback. The repository still implements no SchedulerBackend or
+scheduled trigger, MCP component, Codex/Git/workspace adapter, ProjectPolicy,
+CompletionBackend or gates, public Phase 2 CLI, supported platform integration,
+or product orchestration runtime.
 
 ## Authority and ownership
 
@@ -73,11 +80,13 @@ The architecture separates:
   acceptance. It depends on injected port/control interfaces, never a concrete
   backend.
 - `persistence`: the implemented SQLite runtime-root, connection, staged
-  migration, combined schema-v6 repository, transaction, lifecycle handoff,
-  execution attempt/sequence and Manual-loop record storage, backup, restore,
-  read-only doctor, and typed-corruption owner; later records are added only by
-  their implementing phase.
-- `dispatcher`: planned reconcile-first launch and recovery workflows.
+  migration, combined schema-v7 repository, transaction, lifecycle handoff,
+  execution attempt/sequence, Manual-loop and dispatcher record storage,
+  backup, restore, read-only doctor, and typed-corruption owner; later records
+  are added only by their implementing phase.
+- `dispatcher`: the implemented library-only explicit-Manual reconcile-first
+  run, ownership/takeover, finite fan-out, and recovery coordinator. It calls
+  application and reliable owners rather than duplicating their decisions.
 - `ports`: the implemented pure `ato.execution/v1` contract kit, plus planned
   workspace, scheduler, project-policy, and completion contracts.
 - `adapters`: the implemented local Manual execution backend and outcome
@@ -109,16 +118,19 @@ runtime component.
 - the Manual-loop application coordinator calls injected execution and outcome
   ports outside writer transactions; it neither imports the concrete Manual
   adapter nor accepts adapter facts as authority or Domain decisions.
-- `dispatcher` will coordinate application services and ports without embedding project-specific policy.
+- `dispatcher` coordinates application services and the reliable execution
+  loop without embedding authorization, Domain eligibility/state transitions,
+  adapter verification, or project-specific policy.
 - `ports` expose contracts without importing vendor SDKs; `adapters` depend inward on ports and application contracts.
 - `interfaces` call the application layer, and `observability` consumes structured events without becoming a state owner.
 
 The exact behavior behind these boundaries belongs to the
 [contract ownership inventory](docs/reference/contract-ownership.md). Domain
 behavior is current only to the extent implemented and validated by its owner;
-the same rule applies to ProjectRegistry, authorization, application, and
-persistence, and every later behavior remains a design requirement rather than
-an implemented guarantee until matching code and validation evidence land.
+the same rule applies to ProjectRegistry, authorization, application,
+persistence, and dispatcher, and every later behavior remains a design
+requirement rather than an implemented guarantee until matching code and
+validation evidence land.
 
 The repository's current
 [local agent Git workflow](docs/reference/local-agent-git-flow.md) coordinates

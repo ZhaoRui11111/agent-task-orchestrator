@@ -3,10 +3,10 @@
 ## Status and authority
 
 This document is the normative owner of the implemented local runtime
-authorization model through the library-only reliable Manual execution loop.
+authorization model through the library-only reconcile-first Manual dispatcher.
 The implementation is deliberately limited to the local Phase 1 application
 and lifecycle surfaces, four database-local execution claim/lease actions, and
-six schema-v6 Manual-loop actions. It
+six schema-v6 Manual-loop actions, and one schema-v7 dispatcher action. It
 is not an operating-system
 account system, team identity service, RBAC product, cloud identity provider,
 or authorization for development and external actions.
@@ -19,7 +19,10 @@ lease renewal, and reconcile-gated takeover. The six Manual-loop actions
 authorize only the exact local no-workspace port/journal, inspection,
 continuation, cancellation-request, and verified-completion operations defined
 below; they grant no network, Project filesystem, Codex, Git, workspace,
-scheduler, dispatcher, or completion-gate authority. The `runtime.backup` and `runtime.restore`
+scheduler or completion-gate authority. `dispatch.run` authorizes only one
+bounded dispatcher trigger/run ownership and continuation; it does not imply
+execution claim/start/takeover, adapter, Project, filesystem, network, or
+completion authority. The `runtime.backup` and `runtime.restore`
 actions authorize only the implemented local persistence lifecycle through the
 exact application handoff described below; they grant no external or general
 file authority.
@@ -61,6 +64,14 @@ confirmation. Capability upgrade still uses `ApplicationIngress`; every
 execution operation independently requires its current explicit grant.
 Invalid, throwing, repeated, accessor-backed, or ambiguous values fail closed.
 
+The dispatcher uses a narrower trusted ingress for the same actor/principal and
+runtime-root binding, trusted UTC time, fresh bounded identities, and one
+worker-owner identity supplied outside command content. Every trigger and every
+run continuation independently evaluates current `dispatch.run`. A command
+cannot select or replace the worker owner, actor, principal, time, or
+authorization evidence. Dispatcher idempotency content is parsed as a bounded
+identifier and persisted only as its stable digest identity.
+
 ## Exact action vocabulary
 
 The complete grantable implemented vocabulary is the nineteen Phase 1 actions:
@@ -101,9 +112,13 @@ plus the six reliable Manual-loop actions:
 - `execution.cancel`
 - `execution.completion.accept`
 
+plus the one reconcile-first Manual dispatcher action:
+
+- `dispatch.run`
+
 There is no wildcard and no prefix expansion. Unknown actions and unimplemented
 commands are invalid input; they are not mapped to a similar action. These
-actions do not imply scheduler, dispatcher, workspace, Codex, Git, network,
+actions do not imply scheduler, scheduled delivery, workspace, Codex, Git, network,
 secret, arbitrary diagnostic, arbitrary CLI/filesystem, MCP, release, or
 deployment capability. `execution.completion.accept` accepts only exact current
 verified Manual-turn evidence; it is not CompletionBackend or gate authority.
@@ -112,7 +127,7 @@ implemented local trust-root transitions but are deliberately non-grantable.
 
 ## One-time bootstrap
 
-A fresh schema-v6 runtime has no grants. Exactly once, a trusted local caller
+A fresh schema-v7 runtime has no grants. Exactly once, a trusted local caller
 may invoke `authorization.bootstrap` with a finite expiry no more than 31 days
 after the trusted ingress time. Bootstrap requires a separate high-risk
 confirmation and atomically:
@@ -149,8 +164,8 @@ An upgraded schema-v3 bootstrap must be adopted through that transition before
 any ordinary command. Adoption preserves the immutable legacy bootstrap and
 grants as history, establishes the schema-v4 local identity, and appends the
 first immutable capability epoch plus nineteen new origin grants. A native
-schema-v4, schema-v5, or schema-v6 bootstrap already establishes local identity
-and needs no adoption. Native schema-v6 bootstrap still establishes a
+schema-v4, schema-v5, schema-v6, or schema-v7 bootstrap already establishes local identity
+and needs no adoption. Native schema-v7 bootstrap still establishes a
 vocabulary-4 bootstrap and only the nineteen Phase 1 origin grants; it creates
 no capability epoch.
 
@@ -160,8 +175,10 @@ OS-derived actor, principal and runtime-root binding, a fresh named high-risk
 confirmation, a finite expiry more than seven and no more than 31 days ahead,
 and an eligible current origin. Each call advances exactly one contiguous step:
 vocabulary 4 to 5 appends one origin grant for each of the twenty-three Phase 2A
-actions, while vocabulary 5 to 6 appends one origin grant for each of all
-twenty-nine current actions. A vocabulary-4 runtime cannot skip directly to 6.
+actions, vocabulary 5 to 6 appends one origin grant for each of the twenty-nine
+Phase-2B actions, and vocabulary 6 to 7 appends one origin grant for each of all
+thirty current actions. A vocabulary-4 runtime cannot skip directly to 6 or 7,
+and a vocabulary-5 runtime cannot skip directly to 7.
 The epoch, exact grant set, request/allow-decision/audit unit, and terminal
 readback commit together. Migration, bootstrap, an earlier decision, Task
 readiness, ordinary grant issue, and renewal cannot substitute for either
@@ -174,8 +191,11 @@ origin grant blocks early renewal; revocation is not a shortcut to replace a
 capability. Each accepted renewal appends a contiguous positive epoch revision,
 the exact vocabulary/version digest, a request/decision/audit unit, and one new
 finite origin grant for every action in the already-current vocabulary:
-nineteen for vocabulary 4, twenty-three for vocabulary 5, or twenty-nine for
-vocabulary 6. Renewal never changes a vocabulary version. Previous epochs and
+nineteen for vocabulary 4, twenty-three for vocabulary 5, twenty-nine for
+vocabulary 6, or thirty for vocabulary 7. A vocabulary-7 epoch is physically
+partitioned as twenty-three linked legacy grants, six linked v6 grants, and one
+v7 `dispatch.run` grant; global grant IDs and the exact epoch action set remain
+one logical inventory. Renewal never changes a vocabulary version. Previous epochs and
 grants remain immutable history.
 Concurrent state or epoch changes fail atomically as stale.
 
@@ -345,6 +365,27 @@ receipt/finalization can atomically record the Manual completion decision,
 invoke Domain `completion_accepted`, terminalize the execution, append audit,
 and read the completed Task back.
 
+The dispatcher application owner follows the same fail-closed pattern without
+borrowing execution authority. An explicit Manual trigger atomically records
+one sanitized request, final `dispatch.run` decision/audit, and—only on allow—
+one `starting` run. Every reconciliation, seal, member-resolution, heartbeat,
+takeover, and terminal-summary transition revalidates the trusted runtime and
+actor, evaluates current `dispatch.run`, and CAS-matches the run owner/revision.
+Candidate claim and start preparation then consume their own current
+`execution.claim` and `execution.start` decisions in the application-owned
+atomic unit; `dispatch.run` cannot substitute for either. Revocation or expiry
+may therefore stop run coordination without retroactively invalidating its
+immutable historical decisions or permitting a new effect.
+
+If claim authorization allows but the fully bound `execution.start`
+authorization denies, the same member-resolution transaction records one
+dedicated sanitized denied request, denied decision, and
+`authorization.denied` audit event. The triple binds the run/member, actor,
+exact sealed Project resource/config revisions, proposed execution identity,
+and closed reason. It terminalizes that member as `authorization_denied` but
+creates no execution attempt, Task transition, operation intent, or adapter
+effect; replay and restart return the same immutable lineage.
+
 When one Domain command would mutate Tasks owned by more than one Project,
 every affected Project must be covered. In Phase 1 the only such implemented
 case is cancellation propagation to ready dependents. A Project-scoped
@@ -413,7 +454,8 @@ later request.
 
 Application requests, bootstrap, local identity, capability epochs, lifecycle
 authorizations, execution attempts, operation evidence, Manual completion
-decisions, authorization decisions, and audit rows are append-only apart from
+decisions, dispatcher trigger/decision/audit/reconciliation/membership/summary
+evidence, authorization decisions, and audit rows are append-only apart from
 the narrowly constrained lease/attempt, intent-state, and Manual-turn CAS
 transitions. Grant rows are
 insert-only except for the single CAS revocation transition. ProjectRegistry
@@ -431,8 +473,10 @@ Phase 1 implements the local CLI initialization, finite grant administration,
 status, backup authorization, separately confirmed restore authorization, and
 read-only doctor experience. Phase 2A adds the four local claim/lease grants;
 Phase 2B adds one separately confirmed vocabulary-6 step and the six exact
-Manual-loop grants and decisions described above. It does not implement login,
+Manual-loop grants and decisions described above. Phase 2C adds one separately
+confirmed vocabulary-7 step and the exact `dispatch.run` decision path for the
+library-only explicit-Manual dispatcher. It does not implement login,
 credentials, team accounts, RBAC, cloud identity, an external policy adapter,
-workspace or scheduler authorization, public Phase 2 CLI, MCP, dispatcher,
-Codex/Git/network effects, ProjectPolicy, CompletionBackend/gates, release,
-deployment, or a platform-support claim.
+workspace or scheduler authorization, SchedulerBackend/scheduled delivery,
+public Phase 2 CLI, MCP, Codex/Git/network effects, ProjectPolicy,
+CompletionBackend/gates, release, deployment, or a platform-support claim.

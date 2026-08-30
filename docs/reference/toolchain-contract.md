@@ -99,9 +99,10 @@ and generation-local store, then pack the declared distribution, install it
 into a disposable consumer without registry access, typecheck the public
   declarations without undeclared Node type dependencies, import the library
   entry, exercise trusted bootstrap plus Project/Task commands, both explicit
-  capability upgrades, an atomic execution claim, the local Manual
+  capability upgrades through vocabulary 7, an atomic execution claim, the local Manual
   start/inspect/outcome/finalization/completion library loop after restart, and
-  a fresh persistence backup, and invoke the console entry. The console portion
+  a fresh persistence backup, verify the exported reconcile-first dispatcher
+  surface/status, and invoke the console entry. The console portion
 compares source, built, and packed-installed CLI behavior for an exact
 successful JSON response, successful human response, invalid-input JSON
 response, public exit codes, and absence of read-only doctor side effects.
@@ -110,8 +111,8 @@ The package-root library export exposes a truthful capability status, the pure
 TypeScript Domain Core, ProjectRegistry identity owner, finite authorization
 owner, typed Phase 1 and claim application services, the pure execution port
 kit, production local Manual backend/control, reliable execution loop,
-schema-v6 persistence foundation, local lifecycle surfaces, and product CLI
-API. The packed inventory includes the
+library-only reconcile-first Manual dispatcher, schema-v7 persistence
+foundation, local lifecycle surfaces, and product CLI API. The packed inventory includes the
 immutable SQL files under `migrations/`. The source and compiled migration
 registry consume either a uniform LF or CRLF transport of those files and
 reconstruct the same frozen per-migration canonical bytes before checksum
@@ -124,11 +125,12 @@ wildcard. The `ato` console is the local Phase 1 product CLI defined by the
 Production source is limited to `src/index.ts`, `src/domain.ts`, `src/cli.ts`,
 `src/cli-api.ts`, `src/project-registry.ts`, `src/authorization.ts`,
 `src/application.ts`, `src/execution-application.ts`, `src/execution-port.ts`,
-`src/execution-loop.ts`, `src/manual-execution-backend.ts`, the narrow built-in
+`src/execution-loop.ts`, `src/manual-execution-backend.ts`,
+`src/dispatcher-application.ts`, `src/dispatcher.ts`, the narrow built-in
 declarations in `src/node-builtins.d.ts`, and `src/persistence/`. `node:sqlite`
 is confined to the persistence owner; `node:crypto` is used only for bounded
 Manual receipt integrity and existing identity/digest owners. The package has
-no production dependency and must not acquire a dispatcher, scheduler, MCP,
+no production dependency and must not acquire a scheduler, MCP,
 Codex/Git/workspace adapter, ProjectPolicy, CompletionBackend/gates, or
 executable orchestrator as part of this boundary. The Fake backend remains
 test-only and absent from the packed inventory.
@@ -142,8 +144,8 @@ The following package scripts are the public local entry points:
 | `pnpm lint` | Repository hygiene, frozen configuration, source-boundary, and diff checks |
 | `pnpm typecheck` | Strict TypeScript checking without output |
 | `pnpm build` | Produce the ESM package and declarations |
-| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop atomicity and security, port/adapter contracts, crash/restart recovery, persistence, CLI, doctor, and real local feasibility contracts |
-| `pnpm test:persistence` | Run the targeted schema-v6 migration, repository/decoder, Manual journal/evidence, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
+| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop/dispatcher atomicity and security, port/adapter contracts, crash/restart recovery, persistence, CLI, doctor, and real local feasibility contracts |
+| `pnpm test:persistence` | Run the targeted schema-v7 migration, repository/decoder, Manual journal/evidence, dispatcher, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
 | `pnpm docs:check` | Resolve exact-case repository-relative Markdown links, validate same-file and cross-file heading fragments, and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |
 | `pnpm package:smoke` | Pack and consume the declared package boundary offline |

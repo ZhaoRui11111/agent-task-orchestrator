@@ -201,6 +201,7 @@ export interface ReliableExecutionView {
 
 export interface ReliableExecutionService {
   start(command: ExecutionLoopStartCommand): ReliableExecutionResult;
+  reconcileExpiredStartNoEffect(command: ExecutionLoopStartCommand): ReliableExecutionResult;
   inspect(command: ExecutionLoopInspectCommand): ReliableExecutionResult;
   resume(command: ExecutionLoopResumeCommand): ReliableExecutionResult;
   retry(command: ExecutionLoopResumeCommand): ReliableExecutionResult;
@@ -2800,8 +2801,44 @@ function createReliableExecutionServiceInternal(
     ) return failed("STALE_REVISION", "Reconciliation command does not match the unfinished intent");
     return processIntent(store, unfinished.intentId, ingress, backend, control, hooks, reconciliationOptions);
   };
+  const reconcileExpiredStartNoEffect = (value: ExecutionLoopStartCommand): ReliableExecutionResult => {
+    const command = parseOperationCommand(value);
+    if (command === null || command.kind !== "execution.start") {
+      return failed("INVALID_INPUT", "Expired start reconciliation command is invalid");
+    }
+    const context = trustedContext(ingress);
+    if (context === null) return failed("INVALID_INPUT", "Trusted expired start reconciliation ingress is invalid");
+    try {
+      const state = readApplicationStateForOwner(store);
+      const runtimeFailure = runtimeActorFailure(store, state, context);
+      if (runtimeFailure !== null) return runtimeFailure;
+      const intent = state.executionIntents.find((candidate) => candidate.idempotencyKey === command.idempotencyKey);
+      if (intent === undefined || intent.operationKind !== "start" || !intentTupleMatches(state, intent, command)) {
+        return failed("RECONCILIATION_REQUIRED", "Prepared start intent is absent or does not match");
+      }
+      if (intent.state === "finalized") return successForIntent(state, intent, true);
+      const execution = state.executions.find((candidate) => candidate.executionId === intent.executionId);
+      if (execution === undefined) return failed("EXECUTION_NOT_FOUND", "Prepared start execution is absent");
+      if (execution.ownerId === context.ownerId && execution.leaseExpiresAt > context.now) {
+        return failed("RECONCILIATION_REQUIRED", "A current owner lease cannot be finalized as proven no-effect");
+      }
+      if (state.manualTurns.some((candidate) => candidate.executionId === intent.executionId) ||
+        state.manualBackendOperations.some((candidate) => candidate.intentId === intent.intentId)) {
+        return failed("RECONCILIATION_REQUIRED", "Manual journal evidence requires ordinary inspect reconciliation");
+      }
+      return finalizeProvenNoEffect(
+        store,
+        intent.intentId,
+        context,
+        Object.freeze({ allowExpiredLease: true, allowDifferentOwner: true }),
+      );
+    } catch {
+      return failed("PERSISTENCE_FAILURE", "Expired start no-effect reconciliation failed closed");
+    }
+  };
   return Object.freeze({
     start: (command: ExecutionLoopStartCommand) => runOperation(store, command, "execution.start", ingress, backend, control, hooks),
+    reconcileExpiredStartNoEffect,
     inspect: (command: ExecutionLoopInspectCommand) => runOperation(store, command, "execution.inspect", ingress, backend, control, hooks),
     resume: (command: ExecutionLoopResumeCommand) => runOperation(store, command, "execution.resume", ingress, backend, control, hooks),
     retry: (command: ExecutionLoopResumeCommand) => runOperation(store, command, "execution.retry", ingress, backend, control, hooks),

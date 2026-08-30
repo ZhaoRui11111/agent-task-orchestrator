@@ -41,9 +41,18 @@ export const MANUAL_EXECUTION_AUTHORIZATION_ACTIONS = Object.freeze([
   "execution.completion.accept",
 ] as const);
 
-export const AUTHORIZATION_ACTIONS = Object.freeze([
+export const PHASE2B_AUTHORIZATION_ACTIONS = Object.freeze([
   ...PHASE2A_AUTHORIZATION_ACTIONS,
   ...MANUAL_EXECUTION_AUTHORIZATION_ACTIONS,
+] as const);
+
+export const DISPATCH_AUTHORIZATION_ACTIONS = Object.freeze([
+  "dispatch.run",
+] as const);
+
+export const AUTHORIZATION_ACTIONS = Object.freeze([
+  ...PHASE2B_AUTHORIZATION_ACTIONS,
+  ...DISPATCH_AUTHORIZATION_ACTIONS,
 ] as const);
 
 export const HIGH_RISK_ACTIONS = Object.freeze([

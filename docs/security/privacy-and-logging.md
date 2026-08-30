@@ -4,8 +4,9 @@
 
 This file is the sole normative owner of data classification, prompt and secret
 handling, log-content redaction, retention, diagnostic disclosure, and default
-no telemetry. The schema-v6 application owners implement sanitized append-only
-Phase 1, claim, and reliable Manual-loop audit/evidence subsets, and the local product CLI/read-only doctor implement
+no telemetry. The schema-v7 application owners implement sanitized append-only
+Phase 1, claim, reliable Manual-loop, and explicit-Manual dispatcher
+audit/evidence subsets, and the local product CLI/read-only doctor implement
 the closed display subset described below. No runtime logger, secret provider,
 diagnostic bundle exporter, retention job, or telemetry implementation exists
 today; the corresponding sections remain requirements for later implementations.
@@ -81,6 +82,16 @@ The durable intent failure projection is limited to the closed adapter
 category, bounded code, retryable/ambiguous booleans, nullable canonical retry
 time, and integer retry count. Raw adapter messages, payloads, stacks, SQL, and
 Task/source content are discarded before that projection.
+
+The dispatcher stores only opaque trigger/request/run/resource/member/
+execution/intent identities, owner and revision facts, timestamps, bounded
+counts, and closed action/result/disposition/outcome/reason codes. Caller
+idempotency text is replaced by a stable digest identity before persistence.
+Task bodies, Project paths, prompts, environment values, credentials, raw
+adapter payload/errors, SQL, stacks, and arbitrary caller text are neither
+dispatcher records nor library result fields. A malformed value fails before
+trusted ingress/state access; an unrecognized persisted enum or code is typed
+corruption rather than displayable text.
 
 Task body, Project canonical path, prompts, source/repository content, tool or
 Agent output, free text, raw commands, environment values, credentials, and

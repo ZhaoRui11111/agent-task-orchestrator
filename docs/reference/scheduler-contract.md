@@ -2,10 +2,12 @@
 
 ## Status and authority
 
-This file is the sole normative owner of planned reconcile-first scheduling and
-duplicate-trigger, missed-trigger, and dispatcher-worker-death semantics. No
-scheduler registration, hourly trigger, daemon, or supported platform behavior
-exists today.
+This file is the sole normative owner of the implemented library-only
+explicit-Manual reconcile-first dispatcher order and of planned scheduling,
+duplicate scheduled-trigger, missed-trigger, and dispatcher-worker-death
+semantics. The Manual trigger/run/heartbeat/takeover/recovery subset exists; no
+SchedulerBackend, schedule registration, hourly trigger, daemon, public Phase 2
+ingress, or supported platform behavior exists today.
 
 The scheduler delivers hints; it is not the owner of Task eligibility or
 exactly-once correctness. Trigger shapes are defined by the
@@ -15,16 +17,16 @@ claims, fencing, recovery, and fan-out outcomes by the
 
 ## Trigger and run identity
 
-- The authoritative scheduled deduplication identity is exactly
+- For future scheduled delivery, the authoritative deduplication identity is exactly
   (`schedule_id`, schedule config revision, intended `scheduled_for` instant).
   Core derives it after typed ingress; an adapter-provided trigger ID or claimed
   deduplication string is observation data and cannot replace the tuple.
-- Every delivered trigger creates a durable trigger-observation record with its
+- A future delivered scheduled trigger creates a durable trigger-observation record with its
   adapter/contract identity, delivery time, sanitized fields,
   `attachment_role=canonical|duplicate|none`, and disposition
   `accepted|authorization_denied|rejected_stale_config|malformed`.
   Repeated delivery of the same external trigger ID remains a new observation.
-- The first allowed, schema-valid, current-config observation for one scheduled
+- The future first allowed, schema-valid, current-config observation for one scheduled
   tuple creates exactly one canonical `dispatcher_run`, bound to its final
   `dispatch.run` allow decision and left `starting`. Every later allowed
   observation for that tuple references that same run while retaining its own
@@ -32,7 +34,8 @@ claims, fencing, recovery, and fan-out outcomes by the
   a terminal one. A denied observation is recorded unattached and creates no
   tuple, run, Task, or external effect; a later allowed delivery may still
   create the tuple's canonical run.
-- A manual trigger has no scheduled tuple. Each allowed schema-valid manual
+- The implemented Manual trigger has no scheduled tuple. Each allowed
+  schema-valid Manual
   observation creates its own `starting` canonical run bound to its final allow
   decision. Denial records only an unattached observation and no run. A manual
   trigger is never deduplicated merely because it arrived near a scheduled one.
@@ -41,7 +44,7 @@ claims, fencing, recovery, and fan-out outcomes by the
 - Schedule cadence affects latency only. It does not grant permissions, reserve
   a Task, or change Task state.
 
-Trusted ingress derives the scheduler actor and evaluates `dispatch.run` before
+Future scheduled ingress derives the scheduler actor and evaluates `dispatch.run` before
 the ingress transaction. Tuple ownership, the allow/deny canonical run record,
 and every delivery observation then follow the schema/index/transaction rules in the
 [persistence contract](persistence-contract.md#transaction-and-repository-boundary) before
@@ -50,8 +53,8 @@ but cannot derive a current tuple and creates no run.
 
 ## Reconcile-first run order
 
-Every allowed dispatcher run that enters `starting` performs these phases in
-order:
+Every allowed explicit-Manual dispatcher run that enters `starting` currently
+performs these phases in order; a future scheduled run must use the same order:
 
 1. verify the canonical run and its trigger observation are durably linked;
 2. reconcile unfinished external intents, verified-but-unfinalized receipts,
@@ -70,6 +73,10 @@ an in-memory clean flag.
 
 ## Duplicate triggers
 
+This section remains a SchedulerBackend/scheduled-delivery requirement. Manual
+triggers intentionally create distinct runs, subject only to exact request
+idempotency replay for the same observation identity.
+
 The scheduler provides at-least-once delivery semantics. Concurrent deliveries
 of one scheduled tuple race only to create its unique persisted tuple row and
 canonical run. The unique winner is reused inside the ingress transaction; all
@@ -86,6 +93,8 @@ applies to the canonical scheduled run, not delivery.
 
 ## Missed triggers and clock changes
 
+Scheduled cadence and clock/config handling in this section remain planned.
+
 A missed, delayed, disabled, or lost trigger leaves durable Task, lease, intent,
 and receipt state unchanged. The next scheduled or manual run performs the full
 reconcile-first sequence and may claim every then-eligible Task. Correctness
@@ -98,8 +107,15 @@ or config mismatch is recorded and deferred rather than guessed.
 
 ## Worker death
 
-- A live run updates a durable heartbeat while it owns dispatcher work; Task
-  executions use their separate durable leases and fences.
+The run-owner heartbeat, exact-expiry takeover, stale-owner fencing, and sealed
+member recovery rules below are implemented for explicit Manual runs. Scheduler
+delivery remains unnecessary to exercise them.
+
+- A live run performs forward-only heartbeat CAS at bounded checkpoints around
+  each reconciliation resource and sealed-member reliable-loop operation,
+  carrying the resulting run revision into the next mutation. Task executions
+  use their separate durable leases and fences. A checkpoint at or after run
+  expiry cannot renew or resurrect the same owner.
 - If a worker dies, no in-memory callback or process cleanup is treated as
   evidence of external failure or cancellation.
 - A later worker observes an expired heartbeat and CAS-takes recovery ownership

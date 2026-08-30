@@ -8,7 +8,7 @@ security non-claims for the planned local-first orchestrator. The repository
 implements the Phase 1 persistence/local task-management subset and the
 library-only reliable Manual execution loop: validated
 runtime and Project roots, identity-bound lifecycle/connection files, strict
-typed schema-v6 SQLite ingress, OS-derived local identity and capability epochs,
+typed schema-v7 SQLite ingress, OS-derived local identity and capability epochs,
 one-time runtime-root-bound bootstrap, finite revision-aware grants, typed
 application commands/queries and lifecycle handoffs, narrowing policy, separate
 high-risk confirmation, append-only decisions/audit, a strict redacted product
@@ -17,8 +17,10 @@ confirmation-bound one-step execution-capability upgrades, atomic claim/lease/
 fence handling, strict `ato.execution/v1` ingress, durable authorization-bound
 intent/observation/verified-receipt/finalization, a local no-workspace Manual
 journal/control, reconcile-first recovery, verified interruption, separately
-confirmed Manual completion, redaction, and stale-fence refusal. It still has no
-MCP server, dispatcher, scheduler, workspace control, Codex/Git adapter,
+confirmed Manual completion, redaction, stale-fence refusal, and a library-only
+explicit-Manual dispatcher with bounded trusted ingress, run-owner fencing,
+reconcile-before-seal ordering, immutable membership, and complete outcomes. It still has no
+MCP server, SchedulerBackend or scheduled trigger, workspace control, Codex/Git adapter,
 ProjectPolicy, CompletionBackend/gates, team identity/RBAC, public Phase 2
 interface, or supported platform security boundary.
 
@@ -80,7 +82,7 @@ into a support claim.
 | T4 | Secrets are stored in Tasks, database rows, prompts, receipts, command lines, logs, diagnostics, or error bodies. | Apply the [privacy and logging contract](privacy-and-logging.md): external credential references, least disclosure, secret-value omission, fail-closed redaction, and separately authorized backend disclosure. | A secret deliberately included in source/prompt content may reach the configured backend; best-effort pattern detection cannot find every secret. |
 | T5 | Logs or diagnostic bundles disclose personal data, source paths/content, prompts, external identifiers, or credentials. | Current application audit uses only fixed allowlisted metadata and omits Task bodies and Project paths under the [privacy contract](privacy-and-logging.md). Future operational logs/diagnostics require pre-sink redaction from the [observability contract](../reference/observability-contract.md), authorization for read/export, a disclosed bundle manifest, and default no telemetry. | Stable actor, correlation, target IDs, timing, counts, and operator-approved future bundles can still be sensitive metadata. |
 | T6 | SQLite corruption, disabled foreign keys, forged migration history, stale/partial backup, concurrent writer, or newer-schema access causes silent state loss or false completion. | Enforce the [persistence contract](../reference/persistence-contract.md): verified connection settings, one application product ingress, bounded transactions, immutable migration checksums, backup-before-upgrade, combined typed decoding, integrity checks, read-only failure, and restore to a private generation. | SQLite/OS/hardware defects and loss of every valid backup can make recovery impossible. |
-| T7 | Duplicate/missed scheduler triggers or worker death duplicates execution, skips reconciliation, or loses candidate outcomes. | Require the [scheduler contract](../reference/scheduler-contract.md) reconcile-first sequence and the reliability claim/fence/idempotency/fan-out records. Treat delivery as at least once. | Extended scheduler outage delays work; it does not provide availability or deadlines. |
+| T7 | Duplicate/missed future scheduler triggers or current dispatcher worker death duplicates execution, skips reconciliation, or loses candidate outcomes. | The current explicit-Manual dispatcher enforces the [scheduler contract](../reference/scheduler-contract.md) reconcile-first sequence and reliability claim/fence/idempotency/fan-out records with exact run-owner takeover. Future scheduled delivery must additionally treat delivery as at least once. | Extended scheduler outage would delay future scheduled work; no availability or deadline guarantee exists. |
 | T8 | CLI or a future MCP surface exposes arbitrary shell, SQL, filesystem, cleanup, or external actions; malformed/oversized input bypasses application rules. | Offer only narrow versioned command schemas; validate size/type/version before runtime open; call the same application/authorization owners; omit arbitrary shell/SQL/filesystem endpoints; require distinct current grants and confirmation for the implemented high-risk actions. | A compromised local account remains outside the application's checks; no MCP surface exists yet. |
 | T9 | A stale lease holder, replayed receipt, or stale gate writes after takeover or HEAD/policy change. | The current claim and Manual-loop owners bind execution, owner, lease/execution/Task revisions, Project revisions, attempt/fence, intent, independently observed receipt, and finalization; they reconcile before replacement and reject old-fence writes. Future workspace/gate completion must additionally bind workspace generation, HEAD and gate identity under the [gate freshness owner](../reference/completion-workspace-contract.md#gate-identity-and-freshness). | The Manual journal is local and exactly inspectable; effects in a future adapter that cannot prove absence or idempotency may remain ambiguous and require human resolution. |
 | T10 | A policy adapter, dependency, or external API changes behavior/version without detection. | Use exact port/version negotiation, policy revision binding, evidence-bound support claims, and incompatibility errors from the [adapter](../reference/adapter-contracts.md) and [versioning](../reference/versioning-compatibility-contract.md) owners. | A correctly versioned but compromised dependency can still act maliciously within granted OS permissions. |
@@ -92,10 +94,11 @@ produce binary evidence for every applicable row.
 
 The current implementation covers the runtime-root and ProjectRegistry
 portions of N1, the local content/authorization portion of N3, the application
-audit plus CLI/doctor disclosure subset of N4, the schema-v6 SQLite/application/
-lifecycle/Manual-loop portions of N5 and N11, the local Manual intent/effect/
+audit plus CLI/doctor disclosure subset of N4, the schema-v7 SQLite/application/
+lifecycle/Manual-loop/dispatcher portions of N5 and N11, the local Manual intent/effect/
 inspection/receipt/finalization/crash/restart/stale-fence subset of N6 and N10,
-and the CLI portion of N8. Workspace, operational logger, dispatcher, scheduler,
+the explicit-Manual dispatcher worker-death/fan-out subset of N7, and the CLI
+portion of N8. Workspace, operational logger, SchedulerBackend/scheduled delivery,
 MCP, Codex/Git/external-service adapter, ProjectPolicy, CompletionBackend/gate,
 publication, and public Phase 2 interface portions remain future obligations;
 the local Manual evidence cannot satisfy them.
@@ -112,7 +115,7 @@ the local Manual evidence cannot satisfy them.
 | N8 | Malformed, unknown-version, overlong, control-character, unauthorized, and injection-bearing CLI or future MCP request; request for arbitrary shell/SQL/filesystem operation | Ingress rejects before runtime mutation; excluded endpoints do not exist; the current CLI produces only its stable redacted public error. |
 | N9 | Replay pass receipt after Task, fence, workspace generation, HEAD, policy, gate version, or validity time changes | Completion/integration rejects it as stale and dependency remains locked. |
 | N10 | Timeout, lost adapter response, changed remote ref, or incompatible adapter/API version | No blind retry or support claim; authoritative inspection determines success/absence, otherwise state is ambiguous or incompatible. |
-| N11 | Missing/false trusted bootstrap, renewal, upgrade, grant-management, Project, restore, Manual-report, or completion confirmation; second bootstrap; skipped vocabulary step; wrong local principal/runtime-root identity, action, scope, or revision, including finalized replay; not-yet-valid, expired, or revoked grant between prepare, Act, observation, and Finalize; migration/renewal attempted authority expansion; stale lifecycle/effect handoff; cached prior inspection allow/deny; disabled Project policy; replayed request/decision/confirmation; forged inspect cancellation receipt; Project/Task text that claims authority | No unauthorized Project/Task/dependency/grant/backup/restore/execution/Manual effect, result disclosure, or completion; each mutation and finalization consumes its own current immutable authorization binding, each inspection attempt obtains a fresh current evaluation, denial never wedges later authorized recovery, and finalized replay revalidates principal/runtime-root identity; migration and never-upgraded renewal create no newer execution grant; forged receipt shape cannot override the authoritative Manual journal; bounded denials are atomic and sanitized; content never changes actor, action, policy, confirmation, capability epoch, grant, owner, fence, receipt, or completion state. |
+| N11 | Missing/false trusted bootstrap, renewal, upgrade, grant-management, Project, restore, Manual-report, or completion confirmation; second bootstrap; skipped vocabulary step; wrong local principal/runtime-root identity, action, scope, revision, dispatcher owner, or run revision, including finalized replay; not-yet-valid, expired, or revoked grant between prepare, Act, observation, Finalize, or dispatcher transitions; migration/renewal attempted authority expansion; stale lifecycle/effect handoff; cached prior inspection allow/deny; disabled Project policy; replayed request/decision/confirmation; forged inspect cancellation receipt; Project/Task text that claims authority | No unauthorized Project/Task/dependency/grant/backup/restore/execution/Manual effect, dispatcher claim, result disclosure, or completion; each mutation/finalization/run transition consumes its own current immutable authorization binding, each inspection attempt obtains a fresh current evaluation, denial never wedges later authorized recovery, and finalized replay revalidates principal/runtime-root identity; migration and never-upgraded renewal create no newer execution or dispatcher grant; forged receipt shape cannot override the authoritative Manual journal; bounded denials are atomic and sanitized; content never changes actor, action, policy, confirmation, capability epoch, grant, owner, run revision, fence, receipt, or completion state. |
 
 Test fixtures are untrusted and disposable. Fake/contract tests may prove local
 logic but cannot satisfy a real platform/API support row.
@@ -135,8 +138,9 @@ logic but cannot satisfy a real platform/API support row.
 
 ## Explicit non-claims
 
-The implemented controls are limited to the Phase 1 local boundaries and
-library-only reliable Manual loop named above. This model does not claim release
+The implemented controls are limited to the Phase 1 local boundaries and the
+library-only reliable Manual loop and explicit-Manual dispatcher named above.
+This model does not claim release
 readiness, multi-user isolation, RBAC,
 cloud security, remote availability, arbitrary-code sandboxing, malware
 detection, perfect secret/PII detection, guaranteed rollback of external

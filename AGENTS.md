@@ -18,30 +18,35 @@ If documents conflict, stop the affected mutation and resolve the conflict inste
 
 This repository has a governance baseline, an executable toolchain and
 feasibility scaffold, a pure in-memory Domain Core, the closed local Phase 1
-product, and a library-only reliable Manual execution loop. ProjectRegistry,
+product, a library-only reliable Manual execution loop, and a library-only
+reconcile-first Manual dispatcher. ProjectRegistry,
 finite single-user runtime authorization, the typed application services, the
 versioned local product CLI, and its persistence-owned backup, confirmed
 restore, and read-only doctor surfaces are implemented for local
 Project/Task/dependency management. The application owner alone selects Domain
 commands, evaluates current explicit grants, and coordinates accepted
 snapshot/registry/grant/decision/audit/lifecycle commits; persistence still
-neither authorizes nor selects a Domain mutation. Schema v6 and the typed
+neither authorizes nor selects a Domain mutation. Schema v7 and the typed
 execution owners implement atomic claims, ordered attempts, leases, per-Task
 fencing, explicit vocabulary-6 upgrade, the corrected `ato.execution/v1` port,
 one durable local Manual backend journal, and the ordered
 intent/observation/verified-receipt/finalization protocol for start, inspect,
 resume, retry, cancellation, trusted Manual outcome reporting, reconciliation,
-and separately confirmed Manual completion acceptance. Adapter work remains
+and separately confirmed Manual completion acceptance. The explicit
+Manual dispatcher adds a separately upgraded `dispatch.run` capability,
+durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
+immutable finite candidate membership, one terminal outcome per member, and a
+completeness-gated durable summary. Adapter work remains
 outside writer transactions, turn success alone never completes a Task, lease
 expiry never authorizes blind replay, and stale-fence writes are refused.
 
-These capabilities are package-library surfaces only. The Phase 1 CLI exposes
-no Phase 2 execution command, and the repository still has no dispatcher,
-scheduler, MCP component, Codex/Git/workspace adapter, ProjectPolicy or
-CompletionBackend gate, multi-candidate sweep, executable orchestration
-runtime, release, or validated platform-support claim. Do not describe those
-planned modules, platform support, safety properties, or integration behavior
-as implemented. Follow the
+These Phase 2 capabilities are package-library surfaces only. The Phase 1 CLI
+exposes no Phase 2 execution or dispatch command, and the repository still has
+no scheduler or scheduled trigger, MCP component, Codex/Git/workspace adapter,
+ProjectPolicy or CompletionBackend gate, product orchestration runtime,
+release, or validated platform-support claim. Do not describe those planned
+modules, platform support, safety properties, or integration behavior as
+implemented. Follow the
 [toolchain contract](docs/reference/toolchain-contract.md) for current
 executable entry points, the [domain contract](docs/reference/domain-contract.md)
 for Domain Core behavior, the
@@ -50,8 +55,7 @@ current finite local grant model, and the
 [persistence contract](docs/reference/persistence-contract.md) for the staged
 schema and storage/recovery boundary. The
 [reliability protocol](docs/reference/reliability-protocol.md) owns the current
-claim/lease/fence and Manual effect protocol plus the still-planned dispatcher
-fan-out rules. The
+claim/lease/fence, Manual effect, and dispatcher fan-out protocol. The
 [CLI contract](docs/reference/cli-contract.md) alone owns commands, public output,
 and exit codes.
 

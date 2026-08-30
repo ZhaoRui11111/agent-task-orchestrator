@@ -61,12 +61,26 @@ All notable changes to this project will be documented in this file.
   completion decision. The Phase 1 `ato.api/v1` CLI remains unchanged; this
   adds no dispatcher, scheduler, MCP, Codex/Git/workspace adapter, ProjectPolicy,
   CompletionBackend/gate, release, deployment, or platform-support claim.
+- Added the Phase 2 reconcile-first Manual dispatcher library: additive schema
+  v7, explicit one-step vocabulary-7 upgrade with the exact 23+6+1 physical
+  grant partition, durable Manual trigger authorization, run ownership,
+  bounded heartbeat and exact-expiry takeover, complete pre-claim
+  reconciliation, immutable finite candidate membership, atomic
+  claim/start-intent binding, one terminal outcome per sealed member, restart
+  and stale-worker recovery, and completeness-gated durable summaries. Trigger
+  idempotency is persisted only as a stable hash and all dispatcher audit,
+  reconciliation, member, and summary fields are closed bounded metadata. The
+  Phase 1 `ato.api/v1` CLI and `ato.execution/v1` port remain unchanged; this
+  adds no SchedulerBackend or scheduled trigger, MCP, Codex/Git/workspace
+  adapter, ProjectPolicy, CompletionBackend/gate, product execution runtime,
+  release, deployment, or platform-support claim.
 
 These entries do not announce a release or supported runtime. The executable
 material is limited to the development package, feasibility harness, pure
 in-memory Domain Core, ProjectRegistry, runtime authorization, typed
-application services, local schema-v6 persistence, the Phase 1 product CLI, and
-the library-only reliable Manual execution loop. Dispatcher, scheduler, MCP,
+application services, local schema-v7 persistence, the Phase 1 product CLI, the
+library-only reliable Manual execution loop, and the library-only explicit
+Manual reconcile-first dispatcher. Scheduler/SchedulerBackend, MCP,
 Codex/Git/workspace adapters, ProjectPolicy, CompletionBackend/gates, public
-Phase 2 execution ingress, and executable orchestration runtime behavior remain
-unimplemented.
+Phase 2 execution or dispatch ingress, and product orchestration runtime
+behavior remain unimplemented.

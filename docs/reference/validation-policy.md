@@ -82,7 +82,7 @@ current entry points are owned by the
 [toolchain contract](toolchain-contract.md), targeted Domain Core unit/seeded
 state-machine/dependency-direction tests, ProjectRegistry path/identity tests,
 finite authorization and application Domain-parity/atomicity tests, and
-targeted persistence tests for schema v6, migrations from every shipped prefix,
+targeted persistence tests for schema v7, migrations from every shipped prefix,
 frozen canonical checksums from LF and CRLF checkout transports, malformed
 migration-source refusal before SQLite mutation, exact combined repository
 mapping, concurrent reader/writer behavior, runtime-root negatives, lifecycle
@@ -91,7 +91,11 @@ failpoint recovery. The typed execution owners add explicit no-auto-upgrade,
 atomic claim, shared port-contract, real Manual journal, exact idempotency,
 competing writer, lost-response, every-stage crash/restart, independent inspect,
 verified-not-finalized, ambiguity, completion separation, reconciliation,
-higher-fence continuation, stale-fence, corruption, and redaction evidence. The product CLI has strict
+higher-fence continuation, stale-fence, corruption, and redaction evidence. The
+library dispatcher adds trigger/authorization atomicity, bounded
+heartbeat/takeover, reconcile-before-seal ordering, immutable membership,
+claim/start-intent atomicity, competing-worker, every-checkpoint restart,
+summary completeness, corruption, and bounded-redaction evidence. The product CLI has strict
 schema/boundary, security-negative, application-parity, source/build/installed
 parity, end-to-end restart, and human/JSON redaction test surfaces. Local lint,
 typecheck, build, Node tests, documentation,
@@ -99,9 +103,10 @@ dependency-shape, package-consumption, SQLite, and Codex boundary checks can be
 executed against a candidate when the frozen local dependency is installed.
 The committed Windows workflow is a CI skeleton only; hosted enforcement
 remains unverified until an actual run is observed. The Phase 1 application,
-authorization, persistence lifecycle, product CLI, claim foundation, and local
-Manual-loop routes are implemented test surfaces. There is still no dispatcher,
-scheduler, MCP, Codex/Git/workspace adapter, ProjectPolicy,
+authorization, persistence lifecycle, product CLI, claim foundation, local
+Manual-loop, and explicit-Manual dispatcher routes are implemented test
+surfaces. There is still no SchedulerBackend or scheduled trigger, MCP,
+Codex/Git/workspace adapter, ProjectPolicy,
 CompletionBackend/gate, public Phase 2 interface, or support-matrix harness, so
 those routes remain unimplemented and cannot be claimed as passing. Repository task-artifact checks cover only
 maintainer workflow scratch and do not count as product persistence or

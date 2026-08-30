@@ -117,6 +117,14 @@ const expectedEntries = [
   "package/dist/domain.d.ts.map",
   "package/dist/domain.js",
   "package/dist/domain.js.map",
+  "package/dist/dispatcher-application.d.ts",
+  "package/dist/dispatcher-application.d.ts.map",
+  "package/dist/dispatcher-application.js",
+  "package/dist/dispatcher-application.js.map",
+  "package/dist/dispatcher.d.ts",
+  "package/dist/dispatcher.d.ts.map",
+  "package/dist/dispatcher.js",
+  "package/dist/dispatcher.js.map",
   "package/dist/execution-application.d.ts",
   "package/dist/execution-application.d.ts.map",
   "package/dist/execution-application.js",
@@ -199,6 +207,7 @@ const expectedEntries = [
   "package/migrations/0004-phase1-cli.sql",
   "package/migrations/0005-phase2-execution-claim.sql",
   "package/migrations/0006-phase2-manual-execution.sql",
+  "package/migrations/0007-phase2-dispatcher.sql",
   "package/package.json",
 ].sort();
 
@@ -382,10 +391,16 @@ void outcomeControl;
         trustedNow = new Date(Date.parse(issuedAt) + 2000).toISOString();
         const manualUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
         if (!manualUpgrade.ok || manualUpgrade.value.epochRevision !== 2 ||
-            manualUpgrade.value.capabilityCount !== m.AUTHORIZATION_ACTIONS.length) {
+            manualUpgrade.value.capabilityCount !== m.PHASE2B_AUTHORIZATION_ACTIONS.length) {
           throw new Error("package Manual capability upgrade was rejected");
         }
         trustedNow = new Date(Date.parse(issuedAt) + 3000).toISOString();
+        const dispatcherUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
+        if (!dispatcherUpgrade.ok || dispatcherUpgrade.value.epochRevision !== 3 ||
+            dispatcherUpgrade.value.capabilityCount !== m.AUTHORIZATION_ACTIONS.length) {
+          throw new Error("package dispatcher capability upgrade was rejected");
+        }
+        trustedNow = new Date(Date.parse(issuedAt) + 4000).toISOString();
         const execution = m.createExecutionApplicationService(store, trusted);
         const claimed = execution.claim({
           kind: "execution.claim",
@@ -402,7 +417,7 @@ void outcomeControl;
             "package execution claim was rejected: " + claimed.error.code + ":" + claimed.error.message,
           );
         }
-        trustedNow = new Date(Date.parse(issuedAt) + 4000).toISOString();
+        trustedNow = new Date(Date.parse(issuedAt) + 5000).toISOString();
         let manualBackend = m.createManualExecutionBackend(store, { ingress: trusted });
         let manual = m.createReliableExecutionService(store, trusted, manualBackend, manualBackend);
         const startCommand = {
@@ -423,7 +438,7 @@ void outcomeControl;
         };
         const started = manual.start(startCommand);
         if (!started.ok || started.value.lifecycle !== "queued") throw new Error("package Manual start was rejected");
-        trustedNow = new Date(Date.parse(issuedAt) + 5000).toISOString();
+        trustedNow = new Date(Date.parse(issuedAt) + 6000).toISOString();
         const reportCommand = {
           ...startCommand,
           kind: "manual.turn.report",
@@ -449,7 +464,7 @@ void outcomeControl;
         manual = m.createReliableExecutionService(store, trusted, manualBackend, manualBackend);
         const reportReplay = manual.recordManualOutcome(reportCommand);
         if (!reportReplay.ok || !reportReplay.value.replayed) throw new Error("package Manual restart replay was not stable");
-        trustedNow = new Date(Date.parse(issuedAt) + 6000).toISOString();
+        trustedNow = new Date(Date.parse(issuedAt) + 7000).toISOString();
         const completed = manual.acceptManualCompletion({
           kind: "execution.completion.accept",
           projectId: "project",
@@ -482,6 +497,7 @@ void outcomeControl;
           snapshot: project.value.projectId === "project" && task.value.id === "task",
           claim: claimed.value.fencingToken === 1 && claimed.value.taskRevision === 3,
           manual: started.value.lifecycle === "queued" && reported.value.lifecycle === "turn_succeeded" && completed.value.lifecycle === "completed",
+          dispatcherExport: typeof m.createManualDispatcher === "function",
           schema: m.currentSchemaVersion(),
           backup: verified.generationId === backup.generationId,
         }));
@@ -502,7 +518,7 @@ void outcomeControl;
   invariant(importResult.status === 0, `package export failed: ${importResult.stderr}`);
   const imported = JSON.parse(importResult.stdout.trim());
   invariant(
-    imported.status.phase === "phase2-reliable-manual-execution-loop" &&
+    imported.status.phase === "phase2-reconcile-first-manual-dispatcher" &&
       imported.status.domainCoreImplemented === true &&
       imported.status.persistenceFoundationImplemented === true &&
       imported.status.projectRegistryImplemented === true &&
@@ -512,6 +528,7 @@ void outcomeControl;
       imported.status.backupRestoreDoctorImplemented === true &&
       imported.status.durableExecutionClaimFoundationImplemented === true &&
       imported.status.reliableManualExecutionLoopImplemented === true &&
+      imported.status.reconcileFirstManualDispatcherImplemented === true &&
       imported.status.productRuntimeImplemented === false &&
       imported.status.executionRuntimeImplemented === false &&
       JSON.stringify(imported.status.supportedAdapters) === JSON.stringify(["manual-local"]) &&
@@ -519,7 +536,8 @@ void outcomeControl;
       imported.snapshot === true &&
       imported.claim === true &&
       imported.manual === true &&
-      imported.schema === 6 &&
+      imported.dispatcherExport === true &&
+      imported.schema === 7 &&
       imported.backup === true,
     "package export Domain Core, persistence registry, or capability status drifted",
   );

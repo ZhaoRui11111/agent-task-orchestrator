@@ -11,9 +11,13 @@ attempts, leases, per-Task fencing, exact CAS, restart readback, the corrected
 ordered intent/observation/verified-receipt/finalization protocol for start,
 inspect, resume, retry, cancellation, Manual outcome reporting, verified
 interruption, reconcile-first expired execution, and separately accepted Manual
-completion. It has no dispatcher/fan-out run, scheduler, workspace/publication,
-Codex/Git effect, ProjectPolicy, CompletionBackend, or completion gate; those
-sections remain requirements for their implementing plans.
+completion. It also implements one library-only explicit-Manual dispatcher with
+durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
+immutable finite membership, one terminal outcome per member, and
+completeness-gated summaries. It has no SchedulerBackend or scheduled trigger,
+workspace/publication, Codex/Git effect, ProjectPolicy, CompletionBackend, or
+completion gate; those sections remain requirements for their implementing
+plans.
 
 Task-state meaning comes from the [domain contract](domain-contract.md), record
 layout from the [persistence contract](persistence-contract.md), permission from
@@ -300,8 +304,10 @@ successful finalization.
 
 ## Observable fan-out
 
-This section is a later dispatcher requirement and is not implemented by the
-reliable Manual loop.
+Schema v7 implements this section for the library-only explicit-Manual
+dispatcher. The reliable Manual loop remains the sole owner of each claimed
+member's adapter effect and receipt/finalization path; the dispatcher owns only
+ordering, durable run recovery, and complete member accounting.
 
 After reconciliation and before any candidate claim or candidate-bound external
 action, each dispatcher sweep atomically seals its complete finite candidate
@@ -330,8 +336,24 @@ candidate-row revision. The successful claim transaction also records
 `claimed`; a no-claim path records its terminal outcome atomically with any
 related domain/audit mutation. Thus a crash cannot leave an effective claim
 without its outcome, and a stale worker cannot resolve a member after ownership
-changes. Every terminal row also binds correlation ID, reason code, and any
-applicable created execution/intent ID.
+changes. Every terminal row binds one closed reason code and any applicable
+created execution/intent ID; the run's immutable trigger/decision/audit lineage
+carries the correlation identity.
+
+A fully bound `execution.start` denial is a no-effect member outcome with its
+own immutable request/decision/audit triple. That evidence binds the proposed
+execution identity without creating it and commits atomically with the denied
+member; Task state remains `ready` and no intent or adapter call exists. The
+combined decoder rejects a missing, orphaned, mismatched, duplicated, or
+unknown denial record after restart.
+
+While reconciliation and fan-out are in progress, the owner performs
+forward-only heartbeat CAS before and after each potentially long resource or
+member operation and carries the new run revision forward. This permits a live
+owner to finish work lasting longer than one requested lease window without
+banking expiry. An operation that reaches expiry before its next checkpoint
+fails closed; only a different current worker identity may take over at the
+exact expiry boundary.
 
 Crash recovery takes run ownership with a higher owner revision, enumerates the
 sealed rows rather than repeating the eligibility query, and treats every

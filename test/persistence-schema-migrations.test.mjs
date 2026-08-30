@@ -88,11 +88,15 @@ const EXPECTED_MIGRATION_IDENTITIES = Object.freeze([
     checksumSha256: "3D27258B3C9FB4B11B56B989CA2F341CB4DC68C96168D864D3763D93A4799153",
     lineEnding: "lf",
   }),
+  Object.freeze({
+    checksumSha256: "7AB43795AE91C9825E6851393C690144246AFCD14D00C916D978AA708F387987",
+    lineEnding: "lf",
+  }),
 ]);
 
 test("committed migration registry canonicalizes LF and CRLF transport to released bytes", () => {
   const registry = loadMigrationRegistry();
-  assert.equal(currentSchemaVersion(), 6);
+  assert.equal(currentSchemaVersion(), 7);
   assert.deepEqual(
     registry.map(({ version, id, fileName }) => ({ version, id, fileName })),
     [
@@ -102,6 +106,7 @@ test("committed migration registry canonicalizes LF and CRLF transport to releas
       { version: 4, id: "phase1-product-cli", fileName: "0004-phase1-cli.sql" },
       { version: 5, id: "phase2-execution-claim", fileName: "0005-phase2-execution-claim.sql" },
       { version: 6, id: "phase2-manual-execution", fileName: "0006-phase2-manual-execution.sql" },
+      { version: 7, id: "phase2-dispatcher", fileName: "0007-phase2-dispatcher.sql" },
     ],
   );
   for (const [index, migration] of registry.entries()) {
@@ -148,10 +153,10 @@ test("fresh initialization atomically applies the complete staged schema", async
   let store;
   try {
     store = await openPersistence(fixture.layout, { applicationVersion: "fresh" });
-    assert.deepEqual(store.migration.appliedVersions, [1, 2, 3, 4, 5, 6]);
+    assert.deepEqual(store.migration.appliedVersions, [1, 2, 3, 4, 5, 6, 7]);
     assert.equal(store.migration.migratedFrom, 0);
     assert.equal(store.migration.preUpgradeBackupGeneration, null);
-    assert.equal(store.migration.history.length, 6);
+    assert.equal(store.migration.history.length, 7);
     const database = new DatabaseSync(fixture.layout.databasePath, { readOnly: true });
     try {
       const tables = database
@@ -162,15 +167,32 @@ test("fresh initialization atomically applies the complete staged schema", async
         "application_audit",
         "application_lifecycle_authorizations",
         "application_lifecycle_digest_v6",
+        "application_lifecycle_digest_v7",
         "application_requests",
         "authorization_bootstrap",
         "authorization_capability_epochs",
         "authorization_capability_epochs_v6",
+        "authorization_capability_epochs_v7",
         "authorization_decisions",
         "authorization_grant_epoch_v6_links",
+        "authorization_grant_epoch_v7_legacy_links",
+        "authorization_grant_epoch_v7_v6_links",
         "authorization_grants",
         "authorization_grants_v6",
+        "authorization_grants_v7",
         "authorization_local_identity",
+        "dispatcher_audit",
+        "dispatcher_authorization_decisions",
+        "dispatcher_member_denial_audit",
+        "dispatcher_member_denial_decisions",
+        "dispatcher_member_denial_requests",
+        "dispatcher_members",
+        "dispatcher_memberships",
+        "dispatcher_reconciliation_items",
+        "dispatcher_reconciliation_summaries",
+        "dispatcher_run_summaries",
+        "dispatcher_runs",
+        "dispatcher_trigger_requests",
         "execution_attempts",
         "execution_authorization_decisions",
         "execution_finalizations",
@@ -197,7 +219,7 @@ test("fresh initialization atomically applies the complete staged schema", async
         database.prepare("SELECT count(*) AS count FROM pragma_table_info('authorization_grants') WHERE name='source_grant_id'").get().count,
         1,
       );
-      assert.equal(database.prepare("PRAGMA user_version").get().user_version, 6);
+      assert.equal(database.prepare("PRAGMA user_version").get().user_version, 7);
     } finally {
       database.close();
     }
@@ -234,7 +256,7 @@ test("every shipped earlier prefix upgrades only after a verified pre-upgrade ba
   try {
     createVersionOneDatabase(fixture.layout);
     store = await openPersistence(fixture.layout, { applicationVersion: "upgrade" });
-    assert.deepEqual(store.migration.appliedVersions, [2, 3, 4, 5, 6]);
+    assert.deepEqual(store.migration.appliedVersions, [2, 3, 4, 5, 6, 7]);
     assert.equal(store.migration.migratedFrom, 1);
     assert.ok(store.migration.preUpgradeBackupGeneration);
     const generation = verifyBackupGeneration(
@@ -243,20 +265,20 @@ test("every shipped earlier prefix upgrades only after a verified pre-upgrade ba
     );
     assert.equal(generation.manifest.kind, "pre_upgrade");
     assert.equal(generation.manifest.sourceSchemaVersion, 1);
-    assert.equal(store.migration.schemaVersion, 6);
+    assert.equal(store.migration.schemaVersion, 7);
   } finally {
     if (store) await store.close();
     cleanupPersistenceFixture(fixture);
   }
 });
 
-test("the released schema-v2 prefix upgrades through v6 without fabricating ProjectRegistry or execution identity", async () => {
+test("the released schema-v2 prefix upgrades through v7 without fabricating ProjectRegistry or execution identity", async () => {
   const fixture = createPersistenceFixture("migration-v2-upgrade");
   let store;
   try {
     createVersionTwoDatabase(fixture.layout);
     store = await openPersistence(fixture.layout, { applicationVersion: "upgrade-v3" });
-    assert.deepEqual(store.migration.appliedVersions, [3, 4, 5, 6]);
+    assert.deepEqual(store.migration.appliedVersions, [3, 4, 5, 6, 7]);
     assert.equal(store.migration.migratedFrom, 2);
     assert.ok(store.migration.preUpgradeBackupGeneration);
     assert.deepEqual(readDomainForOwner(store), { projects: [{ id: "legacy-project", enabled: true }], tasks: [] });
@@ -269,7 +291,7 @@ test("the released schema-v2 prefix upgrades through v6 without fabricating Proj
   }
 });
 
-test("the released schema-v3 prefix upgrades through v6 with byte-semantic application content and no fabricated authority", async () => {
+test("the released schema-v3 prefix upgrades through v7 with byte-semantic application content and no fabricated authority", async () => {
   const fixture = createPersistenceFixture("migration-v3-upgrade");
   let store;
   try {
@@ -279,7 +301,7 @@ test("the released schema-v3 prefix upgrades through v6 with byte-semantic appli
     beforeDatabase.close();
 
     store = await openPersistence(fixture.layout, { applicationVersion: "upgrade-v4" });
-    assert.deepEqual(store.migration.appliedVersions, [4, 5, 6]);
+    assert.deepEqual(store.migration.appliedVersions, [4, 5, 6, 7]);
     assert.equal(store.migration.migratedFrom, 3);
     assert.ok(store.migration.preUpgradeBackupGeneration);
     const backup = verifyBackupGeneration(fixture.layout, store.migration.preUpgradeBackupGeneration);
@@ -304,13 +326,13 @@ test("the released schema-v3 prefix upgrades through v6 with byte-semantic appli
   }
 });
 
-test("the released schema-v4 prefix upgrades additively through v6 without manufacturing execution authority or attempts", async () => {
+test("the released schema-v4 prefix upgrades additively through v7 without manufacturing execution or dispatcher authority", async () => {
   const fixture = createPersistenceFixture("migration-v4-upgrade");
   let store;
   try {
     createVersionFourDatabase(fixture.layout);
     store = await openPersistence(fixture.layout, { applicationVersion: "upgrade-v5" });
-    assert.deepEqual(store.migration.appliedVersions, [5, 6]);
+    assert.deepEqual(store.migration.appliedVersions, [5, 6, 7]);
     assert.equal(store.migration.migratedFrom, 4);
     assert.ok(store.migration.preUpgradeBackupGeneration);
     const backup = verifyBackupGeneration(fixture.layout, store.migration.preUpgradeBackupGeneration);
@@ -322,6 +344,7 @@ test("the released schema-v4 prefix upgrades additively through v6 without manuf
     assert.deepEqual(state.executionSequences, []);
     assert.deepEqual(state.executions, []);
     assert.equal(state.grants.some((grant) => grant.action.startsWith("execution.")), false);
+    assert.equal(state.grants.some((grant) => grant.action === "dispatch.run"), false);
     const database = new DatabaseSync(fixture.layout.databasePath, { readOnly: true });
     assert.equal(database.prepare("SELECT count(*) AS count FROM task_execution_sequences").get().count, 0);
     assert.equal(database.prepare("SELECT count(*) AS count FROM execution_attempts").get().count, 0);
@@ -333,7 +356,7 @@ test("the released schema-v4 prefix upgrades additively through v6 without manuf
   }
 });
 
-test("populated schema-v4 lifecycle digests and manual backup provenance remain readable through v6 migration", async () => {
+test("populated schema-v4 lifecycle digests and manual backup provenance remain readable through v7 migration", async () => {
   const fixture = createPersistenceFixture("migration-v4-lifecycle-digest");
   let store;
   try {
@@ -395,7 +418,7 @@ test("populated schema-v4 lifecycle digests and manual backup provenance remain 
     assert.equal(verified.manifest.sourceApplicationStateSha256, legacy.authorizedStateSha256);
 
     store = await openPersistence(fixture.layout, { applicationVersion: "upgrade-populated-v4" });
-    assert.deepEqual(store.migration.appliedVersions, [5, 6]);
+    assert.deepEqual(store.migration.appliedVersions, [5, 6, 7]);
     const migrated = readApplicationStateForOwner(store);
     assert.equal(migrated.lifecycle.length, 1);
     assert.equal(migrated.lifecycle[0]?.authorizedStateSha256, legacy.authorizedStateSha256);
@@ -421,7 +444,7 @@ test("populated schema-v4 lifecycle digests and manual backup provenance remain 
   }
 });
 
-test("migrated schema-v4 lifecycle digest provenance survives current-v6 backup and direct or recovered restore", async () => {
+test("migrated schema-v4 lifecycle digest provenance survives current-v7 backup and direct or recovered restore", async () => {
   for (const mode of ["direct", "recover-after-publish"]) {
     const fixture = createPersistenceFixture(`migration-v4-lifecycle-${mode}`);
     let store;
@@ -436,7 +459,7 @@ test("migrated schema-v4 lifecycle digest provenance survives current-v6 backup 
         },
       );
       store = await openPersistence(fixture.layout, { applicationVersion: `upgrade-v4-lifecycle-${mode}` });
-      assert.deepEqual(store.migration.appliedVersions, [5, 6]);
+      assert.deepEqual(store.migration.appliedVersions, [5, 6, 7]);
       const migrated = readApplicationStateForOwner(store);
       const authorization = migrated.lifecycle.find(
         (candidate) => candidate.authorizationId === legacy.authorizationId,
@@ -445,11 +468,11 @@ test("migrated schema-v4 lifecycle digest provenance survives current-v6 backup 
 
       const backup = await store.createBackup(authorization);
       assert.equal(backup.generationId, legacy.generationId);
-      assert.equal(backup.manifest.sourceSchemaVersion, 6);
+      assert.equal(backup.manifest.sourceSchemaVersion, 7);
       assert.equal(backup.manifest.sourceApplicationStateSha256, legacy.authorizedStateSha256);
 
       const verified = verifyBackupGeneration(fixture.layout, legacy.generationId);
-      assert.equal(verified.manifest.sourceSchemaVersion, 6);
+      assert.equal(verified.manifest.sourceSchemaVersion, 7);
       assert.equal(verified.manifest.sourceApplicationStateSha256, legacy.authorizedStateSha256);
 
       const restoreAuthorization = authorizeTestLifecycle(store, "runtime.restore", legacy.generationId);
@@ -532,13 +555,14 @@ test("semantic schema-v3 application corruption is rejected before backup or wri
 test("schema-v4 identity, epoch, and lifecycle relations have exact mandatory columns and reject every explicit NULL atomically", async () => {
   const fixture = createPersistenceFixture("migration-v4-null-matrix");
   let store;
+  let database;
   try {
     createVersionThreeDatabase(fixture.layout);
     store = await openPersistence(fixture.layout, { applicationVersion: "upgrade-v4-null-matrix" });
     await store.close();
     store = undefined;
 
-    const database = new DatabaseSync(fixture.layout.databasePath);
+    database = new DatabaseSync(fixture.layout.databasePath);
     database.exec("PRAGMA foreign_keys=ON");
     const relationColumns = Object.freeze({
       authorization_local_identity: Object.freeze([
@@ -594,7 +618,14 @@ test("schema-v4 identity, epoch, and lifecycle relations have exact mandatory co
       const triggerNames = database.prepare(
         "SELECT name FROM sqlite_schema WHERE type='trigger' AND tbl_name=? ORDER BY name",
       ).all(table).map((row) => row.name);
-      assert.deepEqual(triggerNames, [`${table}_no_delete`, `${table}_no_update`]);
+      const expectedTriggerNames = table === "authorization_capability_epochs"
+        ? [
+            "authorization_capability_epochs_global_id_v7_guard",
+            "authorization_capability_epochs_no_delete",
+            "authorization_capability_epochs_no_update",
+          ]
+        : [`${table}_no_delete`, `${table}_no_update`];
+      assert.deepEqual(triggerNames, expectedTriggerNames);
     }
 
     const bootstrap = database.prepare(
@@ -653,7 +684,9 @@ test("schema-v4 identity, epoch, and lifecycle relations have exact mandatory co
       grants: database.prepare("SELECT count(*) AS count FROM authorization_grants").get().count,
     }, beforeCounts);
     database.close();
+    database = undefined;
   } finally {
+    if (database) database.close();
     if (store) await store.close();
     cleanupPersistenceFixture(fixture);
   }
@@ -714,7 +747,7 @@ test("a failed appended migration rolls back atomically and the shipped registry
       const extended = Object.freeze([
         ...registry,
         Object.freeze({
-          version: 7,
+          version: 8,
           id: "deliberate-test-failure",
           fileName: "test-only-invalid.sql",
           checksumSha256: sha256(sql),
@@ -733,7 +766,7 @@ test("a failed appended migration rolls back atomically and the shipped registry
         database.prepare("SELECT count(*) AS count FROM sqlite_schema WHERE name='should_rollback'").get().count,
         0,
       );
-      assert.equal(inspectSchemaEvidence(database).schemaVersion, 6);
+      assert.equal(inspectSchemaEvidence(database).schemaVersion, 7);
     } finally {
       database.close();
     }
@@ -786,8 +819,8 @@ const mismatchCases = [
     name: "newer schema",
     code: "SCHEMA_NEWER",
     mutate(database) {
-      database.prepare("UPDATE schema_metadata SET schema_version=7 WHERE singleton=1").run();
-      database.exec("PRAGMA user_version=6");
+      database.prepare("UPDATE schema_metadata SET schema_version=8 WHERE singleton=1").run();
+      database.exec("PRAGMA user_version=7");
     },
   },
 ];

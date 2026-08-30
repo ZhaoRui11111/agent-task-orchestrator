@@ -10,8 +10,9 @@ The repository contains a governance and architecture-contract baseline, an
 executable TypeScript/Node toolchain and feasibility harness, a pure in-memory
 Domain Core for Project/Task rules, a safe local ProjectRegistry, a finite
 runtime authorization model, one typed Project/Task/dependency application
-service, schema-v6 SQLite persistence, a composable local Phase 1 `ato` product
-CLI, and a typed library-only reliable Manual execution loop. The
+service, schema-v7 SQLite persistence, a composable local Phase 1 `ato` product
+CLI, a typed library-only reliable Manual execution loop, and a library-only
+reconcile-first Manual dispatcher. The
 application owner remains the sole business command/query owner and atomically
 coordinates Domain snapshots, registry/grant changes, authorization decisions,
 execution attempts, leases/fences, durable operation evidence, and sanitized audit. The CLI provides initialization,
@@ -21,10 +22,14 @@ The package exposes explicit capability upgrades, atomic claims, lease/fence
 handling, the strict `ato.execution/v1` contract kit, one durable local Manual
 backend, ordered intent/observation/verified-receipt/finalization recovery,
 resume/retry/cancel paths, verified interruption, and separately confirmed
-Manual completion acceptance. It still has no executable orchestrator, MCP
-server, plugin, dispatcher, scheduler, Codex/Git/workspace adapter,
-ProjectPolicy or CompletionBackend gate, public Phase 2 CLI, supported release,
-or validated product platform integration.
+Manual completion acceptance. One explicit authorized Manual trigger can now
+create an owned dispatcher run that reconciles old durable work, seals a finite
+candidate set, claims and prepares permitted Tasks through the existing owners,
+resolves every member, and publishes a completeness-checked summary. It still
+has no product orchestration runtime, MCP server, plugin, SchedulerBackend or
+scheduled trigger, Codex/Git/workspace adapter, ProjectPolicy or
+CompletionBackend gate, public Phase 2 CLI, supported release, or validated
+product platform integration.
 
 Unimplemented planned capabilities are not current capabilities. Design
 proposals and roadmaps must remain clearly labeled until their implementations
@@ -102,12 +107,38 @@ current completion grant and fresh confirmation atomically accept the exact
 verified evidence. The production Manual adapter records only no-workspace
 turn state; it does not execute Task content or touch a Project repository.
 
-This service is not reachable through `ato.api/v1` or the `ato` CLI. It neither
-dispatches candidates nor invokes Codex, Git, workspace, scheduler, policy, or
-completion-gate effects, and it must not be used as evidence for an executable
-product runtime or platform-support claim. The exact rules are owned by the
+This service is not reachable through `ato.api/v1` or the `ato` CLI. By itself
+it does not select candidates or invoke Codex, Git, workspace, scheduler,
+policy, or completion-gate effects, and it must not be used as evidence for an
+executable product runtime or platform-support claim. The exact rules are owned by the
 [authorization contract](docs/reference/authorization-contract.md),
 [persistence contract](docs/reference/persistence-contract.md), and
+[reliability protocol](docs/reference/reliability-protocol.md).
+
+## Reconcile-first Manual dispatcher library
+
+Schema-v7 migration, bootstrap, and vocabulary-6 renewal do not create
+`dispatch.run`. A runtime must complete its own fresh identity- and
+confirmation-bound vocabulary-6-to-7 upgrade before an explicit Manual trigger
+can create or continue a dispatcher run. Each run has a trusted worker owner,
+bounded non-banking heartbeat lease, owner/run revisions, and exact-expiry
+takeover fencing.
+
+Before any new claim, the dispatcher durably reconciles unfinished intents,
+receipts, expired execution leases, and stale runs, then commits a complete
+reconciliation summary. It atomically seals one deterministic finite candidate
+membership and resolves every member to one closed terminal outcome. A claimed
+member includes the execution claim, `ready`-to-`running` transition, current
+`execution.claim` and `execution.start` decisions, and prepared start intent
+before the real local Manual effect is invoked through the reliable loop.
+Restart and takeover continue from those durable rows; a terminal run summary
+is withheld until every sealed member and every claimed intent is complete.
+
+This is an additive package-library surface only. It has one explicit Manual
+trigger, no scheduler cadence or SchedulerBackend, and no Phase 2 CLI/API,
+daemon, MCP, Codex/Git/workspace behavior, completion gates, release, or
+platform-support claim. Its ordering and fan-out rules are owned by the
+[scheduler contract](docs/reference/scheduler-contract.md) and
 [reliability protocol](docs/reference/reliability-protocol.md).
 
 ## Local Phase 1 CLI

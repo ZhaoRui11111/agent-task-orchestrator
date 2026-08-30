@@ -86,13 +86,13 @@ test("explicit capability upgrade gates claim, renewal, restart takeover, replay
   let store;
   try {
     store = await openPersistence(fixture.layout, { applicationVersion: "execution-claim-test" });
-    assert.equal(store.migration.schemaVersion, 6);
+    assert.equal(store.migration.schemaVersion, 7);
     const application = prepareReadyTask(store, trusted, fixture);
     let state = readApplicationStateForOwner(store);
     assert.equal(PHASE1_AUTHORIZATION_ACTIONS.length, 19);
     assert.equal(EXECUTION_AUTHORIZATION_ACTIONS.length, 4);
     assert.equal(PHASE2A_AUTHORIZATION_ACTIONS.length, 23);
-    assert.equal(AUTHORIZATION_ACTIONS.length, 29);
+    assert.equal(AUTHORIZATION_ACTIONS.length, 30);
     assert.equal(state.bootstrap?.vocabularyVersion, 4);
     assert.equal(state.epochs.length, 0);
     assert.equal(state.grants.some((grant) => grant.action.startsWith("execution.")), false);

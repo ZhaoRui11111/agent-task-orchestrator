@@ -7,9 +7,11 @@ identifiers and versions, operation shapes, receipt envelopes, and adapter
 error taxonomy. The package implements the pure `ato.execution/v1` contract
 kit, one production `manual-local` adapter backed by the schema-v6 local Manual
 journal, and its narrow `ato.manual-outcome-control/v1` control. The Fake
-backend is test-only and unexported. Workspace, Scheduler, ProjectPolicy, and
-Completion ports remain planned. No vendor, operating system, external API, or
-released product platform is currently supported.
+backend is test-only and unexported. The library-only Manual dispatcher composes
+that unchanged execution port and adds no adapter contract. Workspace,
+Scheduler, ProjectPolicy, and Completion ports remain planned. No vendor,
+operating system, external API, or released product platform is currently
+supported.
 
 Business rules remain with their linked owners. An adapter translates a
 versioned port and cannot change Task state semantics, authorize an operation,
@@ -17,7 +19,7 @@ declare an unverified external effect successful, or write SQLite directly.
 
 | Port | Direction relative to core | Current contract ID | Responsibility boundary |
 | --- | --- | --- | --- |
-| Execution | Outbound: reliable application loop calls adapter; a later dispatcher may call the loop | `ato.execution/v1` | Start, resume, inspect, or request cancellation of one no-workspace execution turn |
+| Execution | Outbound: reliable application loop calls adapter; the implemented Manual dispatcher calls that loop | `ato.execution/v1` | Start, resume, inspect, or request cancellation of one no-workspace execution turn |
 | Workspace | Outbound: dispatcher calls adapter | `ato.workspace/v1` | Reserve, create, inspect, recover, or request cleanup of an isolated workspace |
 | Scheduler | Outbound lifecycle plus inbound trigger delivery | `ato.scheduler/v1` | Register/inspect/remove a schedule and deliver a bounded dispatch trigger |
 | ProjectPolicy | Outbound: application calls adapter | `ato.project-policy/v1` | Evaluate mutation, completion requirements, integration, and cleanup policy |
@@ -79,6 +81,10 @@ grant, reserve a resource, or invoke a mutating port. Its preliminary
 and [application decision sequence](authorization-contract.md#application-decision-sequence).
 
 ### Inbound scheduler trigger
+
+This shape remains planned; the implemented dispatcher accepts only its own
+typed explicit-Manual trigger and does not implement `ato.scheduler/v1` or a
+scheduled delivery channel.
 
 An inbound trigger contains scheduler adapter/contract and registration
 identity, trigger ID, schedule ID, scheduled instant, observed delivery instant,

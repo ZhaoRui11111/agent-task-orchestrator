@@ -5,7 +5,10 @@
 This file is the sole normative owner of planned correlation, structured
 operational events, diagnostic access, and the application of redaction to
 operational events. No logger, diagnostic command, event exporter, or telemetry
-pipeline exists today.
+pipeline exists today. Schema-v7 dispatcher request/decision/audit,
+reconciliation, member, no-execution member-denial, and summary rows implement
+only a closed bounded durable evidence subset; they are not log files or a
+general event sink.
 
 Data classification, allowed disclosure, content transformations, retention,
 and default no telemetry are owned by the
@@ -15,7 +18,8 @@ rows are source-of-truth records owned by the
 
 ## Correlation model
 
-- Each user or scheduler ingress creates one `correlation_id`; nested work
+- Each current user/explicit-Manual ingress creates one `correlation_id`; a
+  future scheduler ingress must do the same. Nested work
   propagates it unchanged across application, persistence, dispatcher, and
   adapter boundaries.
 - `causation_id` identifies the immediately preceding event or command.

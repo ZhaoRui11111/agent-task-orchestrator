@@ -39,7 +39,7 @@ test("persistence foundation round-trips, backs up, and restores Domain Core sta
   let store;
   try {
     store = await openPersistence(layout, { applicationVersion: "test" });
-    assert.deepEqual(store.migration.appliedVersions, [1, 2, 3, 4, 5, 6]);
+    assert.deepEqual(store.migration.appliedVersions, [1, 2, 3, 4, 5, 6, 7]);
     const initial = createDomainSnapshot({ projects: [{ id: "project", enabled: true }], tasks: [] });
     assert.equal(initial.ok, true);
     const initialized = initializeDomainForOwner(store, initial.value);

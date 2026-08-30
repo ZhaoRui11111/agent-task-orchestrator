@@ -1,6 +1,6 @@
 export interface ScaffoldStatus {
   readonly packageName: "agent-task-orchestrator";
-  readonly phase: "phase2-reliable-manual-execution-loop";
+  readonly phase: "phase2-reconcile-first-manual-dispatcher";
   readonly domainCoreImplemented: true;
   readonly persistenceFoundationImplemented: true;
   readonly projectRegistryImplemented: true;
@@ -10,6 +10,7 @@ export interface ScaffoldStatus {
   readonly backupRestoreDoctorImplemented: true;
   readonly durableExecutionClaimFoundationImplemented: true;
   readonly reliableManualExecutionLoopImplemented: true;
+  readonly reconcileFirstManualDispatcherImplemented: true;
   readonly productRuntimeImplemented: false;
   readonly executionRuntimeImplemented: false;
   readonly supportedAdapters: readonly ["manual-local"];
@@ -17,7 +18,7 @@ export interface ScaffoldStatus {
 
 const STATUS: ScaffoldStatus = Object.freeze({
   packageName: "agent-task-orchestrator",
-  phase: "phase2-reliable-manual-execution-loop",
+  phase: "phase2-reconcile-first-manual-dispatcher",
   domainCoreImplemented: true,
   persistenceFoundationImplemented: true,
   projectRegistryImplemented: true,
@@ -27,6 +28,7 @@ const STATUS: ScaffoldStatus = Object.freeze({
   backupRestoreDoctorImplemented: true,
   durableExecutionClaimFoundationImplemented: true,
   reliableManualExecutionLoopImplemented: true,
+  reconcileFirstManualDispatcherImplemented: true,
   productRuntimeImplemented: false,
   executionRuntimeImplemented: false,
   supportedAdapters: Object.freeze(["manual-local"] as const),
@@ -80,6 +82,8 @@ export type {
 export * from "./execution-port.ts";
 export * from "./manual-execution-backend.ts";
 export * from "./execution-loop.ts";
+export * from "./dispatcher-application.ts";
+export * from "./dispatcher.ts";
 export * from "./persistence/index.ts";
 export {
   CLI_API_VERSION,

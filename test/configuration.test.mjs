@@ -52,6 +52,7 @@ test("every shipped migration has one explicit canonical checkout line ending", 
       "migrations/0004-phase1-cli.sql text eol=lf",
       "migrations/0005-phase2-execution-claim.sql text eol=lf",
       "migrations/0006-phase2-manual-execution.sql text eol=lf",
+      "migrations/0007-phase2-dispatcher.sql text eol=lf",
     ],
   );
 });

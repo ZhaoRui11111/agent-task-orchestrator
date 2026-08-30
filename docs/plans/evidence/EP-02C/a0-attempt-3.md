@@ -1,0 +1,28 @@
+# EP-02C A0 attempt 3
+
+```json
+{
+  "report_status": "complete",
+  "reviewer": "/root/ep02a_a0",
+  "independence": "Fresh independent read-only A0 attempt 3. The reviewer did not draft or implement EP-02C and rebuilt evidence from the current proposal, authoritative contracts, implementation, validation inventory, Git facts, and a fresh trace. Prior attempts were used only to verify lifecycle history. No file, Git, ExecPlan, coordinator, permission, network, test-artifact, or external-state mutation was performed.",
+  "scope": "Reviewed the complete schema-v3 EP-02C proposal; AGENTS.md, ARCHITECTURE.md, documentation and plan lifecycle guidance; PLAN-SCHEMA, A0-AUDIT, and Tier-2 persistence rules; authorization, Domain, persistence, reliability, scheduler, adapter, versioning, observability, CLI, toolchain, validation, privacy, threat-model, contract-ownership, and local Git-flow owners; predecessor/base transition; all approval/execution contract fields; current implementation and complete validation inventory; F-EP02C-A0-001 through F-EP02C-A0-005 closure areas; and task-scope sufficiency.",
+  "readiness": "revision_required",
+  "reviewed_at": "2026-08-31 03:34:13+08:00",
+  "approval_sha256": "CFBC9D1F17FCC855AF5E531F9A000BF3BDE61FA0E0D87981FE30D402F140682A",
+  "reviewed_material_base": "544bf159f5dfe3517ec7d2535894422888c8a7e9",
+  "evidence": "Fresh trace returned schema v3 proposal, ok=true, errors=[], warnings=[], base_transition_blocked=false, approval_contract_bytes=35121, approval digest CFBC9D1F17FCC855AF5E531F9A000BF3BDE61FA0E0D87981FE30D402F140682A, approval base 544bf159f5dfe3517ec7d2535894422888c8a7e9, current base/HEAD fcbd537bfcc0ba41f037031790a3f487c05e7378, and outside_scope/overlap/pre_existing_dirty=[]; the proposal and archived attempts are task-owned. Independent compact sorted-key UTF-8 canonicalization reproduced 35121 bytes and the exact digest. terminal-resolve uniquely returned EP-02B commit 544bf159f5dfe3517ec7d2535894422888c8a7e9. Git proved that base is an ancestor of fcbd537bfcc0ba41f037031790a3f487c05e7378; HEAD, master, and local origin/master equal fcbd537, and the intervening diff is exactly one persistence-contract checksum correction. Migration 0006 raw LF bytes independently hash to the corrected 3D27258B3C9FB4B11B56B989CA2F341CB4DC68C96168D864D3763D93A4799153. The 57 current task paths are unique. AGENTS.md, CHANGELOG.md, and docs/reference/contract-ownership.md are present once; C3/V2/D1 freeze lifecycle digest version 4 over exact version 3 plus vocabulary-7 and all dispatcher records while retaining byte-semantic v1/v2/v3 readers; C4/V3/D1 freeze complete 30-grant vocabulary-7 upgrade and renewal epochs with exact 23+6+1 ownership/linkage and no migration/bootstrap/adoption/v6-renewal expansion; C6/V5/D4 freeze immutable 30..3600-second trusted-now run leases, strictly-forward no-input/no-banking renewal, and takeover at now>=expiry. F-EP02C-A0-005 is materially closed for its named paths: scripts/repo-utils.mjs and test/cli-e2e.test.mjs are now in scope, C16 restricts them to the approved inventory/schema expectations, and direct source inspection confirms those are current required edits. Current implementation remains schema 6 with exactly 19+4+6=29 grantable actions, no dispatch.run, no dispatcher source, and no migration 0007. Reconcile-summary-seal ordering, complete member CAS, claim plus both current execution decisions plus prepared start intent atomicity, stale-owner/fence recovery, summary completeness, redaction, writer/reader/recovery coverage, and library-only/no-scheduler/no-public-CLI boundaries are otherwise coherent. Non-fail-fast validation-inventory scanning found one additional mechanically required path omitted from scope. No product tests were run because this audit was required to remain read-only and artifact-free.",
+  "parent_disposition": "pending",
+  "findings": [
+    {
+      "id": "F-EP02C-A0-006",
+      "severity": "MEDIUM",
+      "classification": "contract_gap",
+      "path": "approval_contract.scope.task_paths; missing test/domain-architecture.test.mjs",
+      "summary": "The approved additive package-root Manual Dispatcher export necessarily changes an existing exact package-surface assertion whose file is not task-owned.",
+      "impact": "test/domain-architecture.test.mjs defines EXPECTED_RUNTIME_EXPORTS, compares it exactly with Object.keys(packageSurface), and exact-matches getScaffoldStatus(). EP-02C D11/C16/V12/V14 require an additive dispatcher library export and truthful schema-v7 Manual Dispatcher status. Implementing that approved result therefore either modifies an out-of-scope file or makes the complete discovered test route in V15 fail, so activation and binary validation closure are not currently possible.",
+      "source": "approval_contract.scope.task_paths; approval constraints C16 and C18; execution decisions D2 and D11; validations V12, V14, and V15; src/index.ts lines 1-35; test/domain-architecture.test.mjs lines 8-125; docs/reference/toolchain-contract.md package-root and validation boundaries; docs/reference/validation-policy.md staged-inventory and full-route requirements.",
+      "resolution": "Add exactly test/domain-architecture.test.mjs as a file entry in approval_contract.scope.task_paths. Limit its changes to the exact expected dispatcher package exports and truthful scaffold/status assertions required by the approved library-only schema-v7 Manual Dispatcher, while retaining productRuntimeImplemented=false, no scheduler/public Phase-2 CLI claim, and existing adapter boundaries. Archive attempt 3, record this digest as the previous approval digest, and obtain a fresh independent A0 before activation."
+    }
+  ]
+}
+```

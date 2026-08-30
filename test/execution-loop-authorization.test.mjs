@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
-  AUTHORIZATION_ACTIONS,
   PHASE1_AUTHORIZATION_ACTIONS,
   PHASE2A_AUTHORIZATION_ACTIONS,
+  PHASE2B_AUTHORIZATION_ACTIONS,
   createApplicationService,
   openPersistence,
 } from "../src/index.ts";
@@ -17,7 +17,7 @@ import {
 } from "./persistence-test-helpers.mjs";
 
 const PRINCIPAL = "A".repeat(64);
-const EP02B_ACTIONS = Object.freeze(AUTHORIZATION_ACTIONS.filter(
+const EP02B_ACTIONS = Object.freeze(PHASE2B_AUTHORIZATION_ACTIONS.filter(
   (action) => !PHASE2A_AUTHORIZATION_ACTIONS.includes(action),
 ));
 
@@ -71,7 +71,7 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
   let store;
   try {
     assert.equal(EP02B_ACTIONS.length, 6);
-    assert.equal(AUTHORIZATION_ACTIONS.length, 29);
+    assert.equal(PHASE2B_AUTHORIZATION_ACTIONS.length, 29);
     store = await openPersistence(fixture.layout, { applicationVersion: "ep02b-authorization" });
     const application = createApplicationService(store, ingress);
     assert.equal(application.bootstrap({
@@ -116,7 +116,7 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
     const stages = Object.freeze([
       "request",
       "epoch",
-      ...AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`),
+      ...PHASE2B_AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`),
       "decision",
       "audit",
     ]);
@@ -143,13 +143,13 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
       expiresAt: "2026-09-26T12:00:00.000Z",
     });
     assert.equal(upgraded.ok, true, JSON.stringify(upgraded));
-    assert.equal(upgraded.value.capabilityCount, 29);
+    assert.equal(upgraded.value.capabilityCount, PHASE2B_AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
     assert.equal(state.epochs.at(-1)?.vocabularyVersion, 6);
     const vocabulary5GrantIds = new Set(exactVocabulary5Origin.grants.map((grant) => grant.grantId));
     const newestGrants = state.grants.filter((grant) => !vocabulary5GrantIds.has(grant.grantId));
-    assert.equal(newestGrants.length, 29);
-    assert.deepEqual(newestGrants.map((grant) => grant.action).sort(), [...AUTHORIZATION_ACTIONS].sort());
+    assert.equal(newestGrants.length, PHASE2B_AUTHORIZATION_ACTIONS.length);
+    assert.deepEqual(newestGrants.map((grant) => grant.action).sort(), [...PHASE2B_AUTHORIZATION_ACTIONS].sort());
     assert.equal(EP02B_ACTIONS.every((action) => newestGrants.some(
       (grant) => grant.action === action && grant.actorId === "local_manual_operator" && grant.revokedAt === null,
     )), true);
@@ -195,7 +195,10 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
     store = await openPersistence(fixture.layout, { applicationVersion: "ep02b-authorization-reopen" });
     state = readApplicationStateForOwner(store);
     assert.equal(state.epochs.at(-1)?.vocabularyVersion, 6);
-    assert.equal(state.grants.filter((grant) => !vocabulary5GrantIds.has(grant.grantId)).length, 29);
+    assert.equal(
+      state.grants.filter((grant) => !vocabulary5GrantIds.has(grant.grantId)).length,
+      PHASE2B_AUTHORIZATION_ACTIONS.length,
+    );
   } finally {
     if (store !== undefined) await store.close();
     cleanupPersistenceFixture(fixture);

@@ -9,6 +9,8 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "APPLICATION_ERROR_CODES",
   "AUTHORIZATION_ACTIONS",
   "CLI_API_VERSION",
+  "DISPATCHER_ERROR_CODES",
+  "DISPATCH_AUTHORIZATION_ACTIONS",
   "DOMAIN_ERROR_CODES",
   "EXECUTION_ADAPTER_ERROR_CATEGORIES",
   "EXECUTION_APPLICATION_ERROR_CODES",
@@ -21,6 +23,7 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "PERSISTENCE_ERROR_CODES",
   "PHASE1_AUTHORIZATION_ACTIONS",
   "PHASE2A_AUTHORIZATION_ACTIONS",
+  "PHASE2B_AUTHORIZATION_ACTIONS",
   "PROJECT_REGISTRY_ERROR_CODES",
   "PUBLIC_ERROR_TABLE",
   "PersistenceError",
@@ -34,9 +37,12 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "addTaskDependency",
   "canIssueGrant",
   "createApplicationService",
+  "createDispatcherApplicationService",
+  "createDispatcherApplicationServiceWithHooks",
   "createDomainSnapshot",
   "createExecutionApplicationService",
   "createLocalApplicationIngress",
+  "createManualDispatcher",
   "createManualExecutionBackend",
   "createReliableExecutionService",
   "createReliableExecutionServiceWithHooks",
@@ -106,11 +112,11 @@ function baseInput() {
   };
 }
 
-test("the package exposes the Phase 1 product plus the reliable Manual execution library surface", () => {
+test("the package exposes the Phase 1 product plus the reconcile-first Manual dispatcher library surface", () => {
   assert.deepEqual(Object.keys(packageSurface).sort(), [...EXPECTED_RUNTIME_EXPORTS].sort());
   assert.deepEqual(packageSurface.getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "phase2-reliable-manual-execution-loop",
+    phase: "phase2-reconcile-first-manual-dispatcher",
     domainCoreImplemented: true,
     persistenceFoundationImplemented: true,
     projectRegistryImplemented: true,
@@ -120,6 +126,7 @@ test("the package exposes the Phase 1 product plus the reliable Manual execution
     backupRestoreDoctorImplemented: true,
     durableExecutionClaimFoundationImplemented: true,
     reliableManualExecutionLoopImplemented: true,
+    reconcileFirstManualDispatcherImplemented: true,
     productRuntimeImplemented: false,
     executionRuntimeImplemented: false,
     supportedAdapters: ["manual-local"],

@@ -1,8 +1,10 @@
 import {
   AUTHORIZATION_ACTIONS,
+  DISPATCH_AUTHORIZATION_ACTIONS,
   MANUAL_EXECUTION_AUTHORIZATION_ACTIONS,
   PHASE1_AUTHORIZATION_ACTIONS,
   PHASE2A_AUTHORIZATION_ACTIONS,
+  PHASE2B_AUTHORIZATION_ACTIONS,
   isHighRiskAction,
   parseAuthorizationGrant,
   type AuthorizationAction,
@@ -69,7 +71,7 @@ export interface AuthorizationCapabilityEpoch {
   readonly epochRevision: number;
   readonly actorId: string;
   readonly runtimeRootKey: string;
-  readonly vocabularyVersion: 4 | 5 | 6;
+  readonly vocabularyVersion: 4 | 5 | 6 | 7;
   readonly actionSetSha256: string;
   readonly requestId: string;
   readonly createdAt: string;
@@ -95,7 +97,7 @@ export interface ApplicationLifecycleAuthorization {
   readonly expiresAt: string;
 }
 
-type ApplicationStateDigestVersion = 1 | 2 | 3;
+type ApplicationStateDigestVersion = 1 | 2 | 3 | 4;
 const lifecycleStateDigestVersions = new WeakMap<ApplicationLifecycleAuthorization, ApplicationStateDigestVersion>();
 
 export interface ApplicationRequestRecord {
@@ -453,6 +455,215 @@ export interface ManualCompletionDecisionRecord {
   readonly createdAt: string;
 }
 
+export interface AuthorizationGrantEpochLinkRecord {
+  readonly grantId: string;
+  readonly action: AuthorizationAction;
+  readonly capabilityEpochId: string;
+  readonly physicalOwner: "legacy" | "v6" | "v7";
+}
+
+export interface DispatcherTriggerRequestRecord {
+  readonly requestId: string;
+  readonly observationId: string;
+  readonly idempotencyKey: string;
+  readonly correlationId: string;
+  readonly actorId: string;
+  readonly action: "dispatch.run";
+  readonly workerOwnerId: string;
+  readonly requestedLeaseSeconds: number;
+  readonly result: "allow" | "deny";
+  readonly createdAt: string;
+}
+
+export interface DispatcherAuthorizationDecisionRecord {
+  readonly decisionId: string;
+  readonly requestId: string;
+  readonly actorId: string;
+  readonly action: "dispatch.run";
+  readonly result: "allow" | "deny";
+  readonly reason: AuthorizationReason;
+  readonly policy: AuthorizationPolicyResult;
+  readonly grantId: string | null;
+  readonly grantRevision: number | null;
+  readonly createdAt: string;
+}
+
+export type DispatcherRunStatus = "starting" | "reconciling" | "sweeping" | "completed" | "partial" | "failed" | "interrupted";
+
+export interface DispatcherRunRecord {
+  readonly runId: string;
+  readonly observationId: string;
+  readonly requestId: string;
+  readonly decisionId: string;
+  readonly actorId: string;
+  readonly ownerId: string;
+  readonly ownerRevision: number;
+  readonly runRevision: number;
+  readonly requestedLeaseSeconds: number;
+  readonly heartbeatAt: string;
+  readonly leaseExpiresAt: string;
+  readonly status: DispatcherRunStatus;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export const DISPATCHER_AUDIT_CODES = Object.freeze([
+  "started", "reconciling", "reconciled", "sealed", "member_resolved", "heartbeat", "taken_over", "terminal",
+  "allowed", "actor_mismatch", "action_mismatch", "scope_mismatch", "scope_revision_stale", "grant_expired",
+  "grant_not_yet_valid", "grant_revoked", "grant_missing", "policy_denied", "confirmation_required",
+] as const);
+export type DispatcherAuditCode = (typeof DISPATCHER_AUDIT_CODES)[number];
+
+export const DISPATCHER_RECONCILIATION_CODES = Object.freeze([
+  "reliable_reconciled", "reliable_authorization_denied", "reliable_state_ambiguous", "reliable_recovery_failed",
+  "stale_run_already_terminal", "stale_run_recovered", "stale_run_authorization_denied",
+  "stale_run_recovery_failed", "stale_run_recovery_pending", "resource_already_settled",
+  "execution_already_terminal", "execution_intent_absent", "execution_intent_ambiguous",
+  "execution_no_longer_active", "execution_intent_unfinished", "execution_binding_changed",
+  "execution_takeover_denied", "execution_takeover_stale", "execution_takeover_failed",
+  "execution_backend_journal_present", "execution_turn_queued", "execution_turn_active", "execution_turn_waiting",
+  "execution_turn_turn_succeeded", "execution_turn_failed", "execution_turn_cancelled",
+] as const);
+export type DispatcherReconciliationCode = (typeof DISPATCHER_RECONCILIATION_CODES)[number];
+
+export const DISPATCHER_MEMBER_CODES = Object.freeze([
+  "dispatch_denied", "binding_absent", "project_identity_changed", "project_revision_changed", "project_disabled",
+  "execution_sequence_exists", "task_revision_changed", "domain_ineligible", "resource_reconciliation_incomplete",
+  "execution_claim_denied", "execution_start_denied", "domain_claim_rejected", "claimed_and_prepared",
+] as const);
+export type DispatcherMemberCode = (typeof DISPATCHER_MEMBER_CODES)[number];
+
+export interface DispatcherAuditRecord {
+  readonly auditId: string;
+  readonly requestId: string;
+  readonly decisionId: string;
+  readonly runId: string | null;
+  readonly eventKind: "dispatch.denied" | "dispatch.started" | "dispatch.reconciling" | "dispatch.sealed" |
+    "dispatch.member.resolved" | "dispatch.heartbeat" | "dispatch.taken_over" | "dispatch.terminal" |
+    "dispatch.operation.denied";
+  readonly result: "accepted" | "denied";
+  readonly actorId: string;
+  readonly correlationId: string;
+  readonly code: DispatcherAuditCode;
+  readonly createdAt: string;
+}
+
+export interface DispatcherReconciliationItemRecord {
+  readonly reconciliationItemId: string;
+  readonly runId: string;
+  readonly ordinal: number;
+  readonly resourceKind: "execution_intent" | "execution_lease" | "dispatcher_run";
+  readonly resourceId: string;
+  readonly disposition: "reconciled" | "no_effect" | "authorization_denied" | "ambiguous" | "failed";
+  readonly code: DispatcherReconciliationCode;
+  readonly createdAt: string;
+}
+
+export interface DispatcherReconciliationSummaryRecord {
+  readonly runId: string;
+  readonly summaryRevision: 1;
+  readonly expectedCount: number;
+  readonly reconciledCount: number;
+  readonly noEffectCount: number;
+  readonly authorizationDeniedCount: number;
+  readonly ambiguousCount: number;
+  readonly failedCount: number;
+  readonly createdAt: string;
+}
+
+export interface DispatcherMembershipRecord {
+  readonly runId: string;
+  readonly membershipRevision: number;
+  readonly expectedMemberCount: number;
+  readonly sealedAt: string;
+}
+
+export type DispatcherMemberOutcome = "claimed" | "already_claimed" | "ineligible_at_cas" |
+  "authorization_denied" | "policy_deferred" | "resource_deferred" | "reconciliation_required" | "failed";
+
+export interface DispatcherMemberRecord {
+  readonly memberId: string;
+  readonly runId: string;
+  readonly membershipRevision: number;
+  readonly ordinal: number;
+  readonly projectId: string;
+  readonly projectResourceRevision: number;
+  readonly projectConfigRevision: number;
+  readonly taskId: string;
+  readonly taskRevision: number;
+  readonly lifecycle: "pending" | "terminal";
+  readonly outcome: DispatcherMemberOutcome | null;
+  readonly executionId: string | null;
+  readonly intentId: string | null;
+  readonly code: DispatcherMemberCode | null;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface DispatcherMemberDenialRequestRecord {
+  readonly requestId: string;
+  readonly correlationId: string;
+  readonly runId: string;
+  readonly memberId: string;
+  readonly actorId: string;
+  readonly action: "execution.start";
+  readonly targetExecutionId: string;
+  readonly targetRevision: 1;
+  readonly result: "deny";
+  readonly createdAt: string;
+}
+
+export interface DispatcherMemberDenialDecisionRecord {
+  readonly decisionId: string;
+  readonly requestId: string;
+  readonly actorId: string;
+  readonly action: "execution.start";
+  readonly result: "deny";
+  readonly reason: Exclude<AuthorizationReason, "allowed">;
+  readonly policy: AuthorizationPolicyResult;
+  readonly grantId: string | null;
+  readonly grantRevision: number | null;
+  readonly projectId: string;
+  readonly resourceRevision: number;
+  readonly configRevision: number;
+  readonly createdAt: string;
+}
+
+export interface DispatcherMemberDenialAuditRecord {
+  readonly auditId: string;
+  readonly requestId: string;
+  readonly decisionId: string;
+  readonly runId: string;
+  readonly memberId: string;
+  readonly eventKind: "authorization.denied";
+  readonly result: "denied";
+  readonly actorId: string;
+  readonly correlationId: string;
+  readonly targetExecutionId: string;
+  readonly targetRevision: 1;
+  readonly code: Exclude<AuthorizationReason, "allowed">;
+  readonly createdAt: string;
+}
+
+export interface DispatcherRunSummaryRecord {
+  readonly runId: string;
+  readonly membershipRevision: number;
+  readonly expectedMemberCount: number;
+  readonly claimedCount: number;
+  readonly alreadyClaimedCount: number;
+  readonly ineligibleCount: number;
+  readonly authorizationDeniedCount: number;
+  readonly policyDeferredCount: number;
+  readonly resourceDeferredCount: number;
+  readonly reconciliationRequiredCount: number;
+  readonly failedCount: number;
+  readonly terminalStatus: Extract<DispatcherRunStatus, "completed" | "partial" | "failed" | "interrupted">;
+  readonly ownerRevision: number;
+  readonly runRevision: number;
+  readonly createdAt: string;
+}
+
 export interface ApplicationState {
   readonly domain: DomainSnapshot;
   readonly projects: readonly RegisteredProject[];
@@ -460,6 +671,7 @@ export interface ApplicationState {
   readonly identity: AuthorizationLocalIdentity | null;
   readonly grants: readonly AuthorizationGrant[];
   readonly epochs: readonly AuthorizationCapabilityEpoch[];
+  readonly authorizationGrantEpochLinks: readonly AuthorizationGrantEpochLinkRecord[];
   readonly requests: readonly ApplicationRequestRecord[];
   readonly decisions: readonly AuthorizationDecisionRecord[];
   readonly audit: readonly ApplicationAuditRecord[];
@@ -477,6 +689,18 @@ export interface ApplicationState {
   readonly manualTurns: readonly ManualBackendTurnRecord[];
   readonly manualBackendOperations: readonly ManualBackendOperationRecord[];
   readonly manualCompletionDecisions: readonly ManualCompletionDecisionRecord[];
+  readonly dispatcherTriggerRequests: readonly DispatcherTriggerRequestRecord[];
+  readonly dispatcherAuthorizationDecisions: readonly DispatcherAuthorizationDecisionRecord[];
+  readonly dispatcherRuns: readonly DispatcherRunRecord[];
+  readonly dispatcherAudit: readonly DispatcherAuditRecord[];
+  readonly dispatcherReconciliationItems: readonly DispatcherReconciliationItemRecord[];
+  readonly dispatcherReconciliationSummaries: readonly DispatcherReconciliationSummaryRecord[];
+  readonly dispatcherMemberships: readonly DispatcherMembershipRecord[];
+  readonly dispatcherMembers: readonly DispatcherMemberRecord[];
+  readonly dispatcherMemberDenialRequests: readonly DispatcherMemberDenialRequestRecord[];
+  readonly dispatcherMemberDenialDecisions: readonly DispatcherMemberDenialDecisionRecord[];
+  readonly dispatcherMemberDenialAudit: readonly DispatcherMemberDenialAuditRecord[];
+  readonly dispatcherRunSummaries: readonly DispatcherRunSummaryRecord[];
   readonly lifecycle: readonly ApplicationLifecycleAuthorization[];
 }
 
@@ -721,6 +945,18 @@ function grantWasUsableAt(grant: AuthorizationGrant, actorId: string, actionValu
     (grant.revokedAt === null || grant.revokedAt >= at);
 }
 
+function grantRevisionWasUsableAt(
+  grant: AuthorizationGrant,
+  actorId: string,
+  actionValue: AuthorizationAction,
+  at: string,
+  grantRevision: number | null,
+): boolean {
+  if (grantRevision === null || !grantWasUsableAt(grant, actorId, actionValue, at)) return false;
+  return (grant.revision === grantRevision && grant.revokedAt === null) ||
+    (grant.revision === grantRevision + 1 && grant.revokedAt !== null && grant.revokedAt >= at);
+}
+
 function integer(value: unknown, label: string): number {
   if (typeof value !== "number" || !Number.isSafeInteger(value)) {
     throw persistenceFailure("CORRUPT_ROW", `${label} is not a safe SQLite INTEGER`);
@@ -873,17 +1109,21 @@ function readIdentity(database: SqliteDatabase): AuthorizationLocalIdentity | nu
 }
 
 function readEpochs(database: SqliteDatabase): readonly AuthorizationCapabilityEpoch[] {
-  const union = tableExists(database, "authorization_capability_epochs_v6")
+  const unionV6 = tableExists(database, "authorization_capability_epochs_v6")
     ? ` UNION ALL SELECT epoch_id, epoch_revision, actor_id, runtime_root_key, vocabulary_version,
         action_set_sha256, request_id, created_at, expires_at FROM authorization_capability_epochs_v6`
+    : "";
+  const unionV7 = tableExists(database, "authorization_capability_epochs_v7")
+    ? ` UNION ALL SELECT epoch_id, epoch_revision, actor_id, runtime_root_key, vocabulary_version,
+        action_set_sha256, request_id, created_at, expires_at FROM authorization_capability_epochs_v7`
     : "";
   return Object.freeze(database.prepare(
     `SELECT epoch_id, epoch_revision, actor_id, runtime_root_key, vocabulary_version,
       action_set_sha256, request_id, created_at, expires_at
-    FROM authorization_capability_epochs${union} ORDER BY epoch_revision`,
+    FROM authorization_capability_epochs${unionV6}${unionV7} ORDER BY epoch_revision`,
   ).all().map((row) => {
     const vocabularyVersion = integer(row.vocabulary_version, "authorization_capability_epochs.vocabulary_version");
-    if (vocabularyVersion !== 4 && vocabularyVersion !== 5 && vocabularyVersion !== 6) {
+    if (vocabularyVersion !== 4 && vocabularyVersion !== 5 && vocabularyVersion !== 6 && vocabularyVersion !== 7) {
       throw persistenceFailure("CORRUPT_ROW", "Capability epoch vocabulary is unsupported");
     }
     return Object.freeze({
@@ -906,9 +1146,15 @@ function readLifecycle(
 ): readonly ApplicationLifecycleAuthorization[] {
   const operations = new Set(["runtime.backup", "runtime.restore"] as const);
   const digestVersionColumn = schemaShape === "current"
-    ? tableExists(database, "application_lifecycle_digest_v6")
-      ? "COALESCE((SELECT state_digest_version FROM application_lifecycle_digest_v6 d WHERE d.authorization_id=application_lifecycle_authorizations.authorization_id), state_digest_version) AS state_digest_version"
-      : "state_digest_version"
+    ? tableExists(database, "application_lifecycle_digest_v7")
+      ? `COALESCE(
+          (SELECT state_digest_version FROM application_lifecycle_digest_v7 d7 WHERE d7.authorization_id=application_lifecycle_authorizations.authorization_id),
+          (SELECT state_digest_version FROM application_lifecycle_digest_v6 d6 WHERE d6.authorization_id=application_lifecycle_authorizations.authorization_id),
+          state_digest_version
+        ) AS state_digest_version`
+      : tableExists(database, "application_lifecycle_digest_v6")
+        ? "COALESCE((SELECT state_digest_version FROM application_lifecycle_digest_v6 d WHERE d.authorization_id=application_lifecycle_authorizations.authorization_id), state_digest_version) AS state_digest_version"
+        : "state_digest_version"
     : "1 AS state_digest_version";
   return Object.freeze(database.prepare(
     `SELECT authorization_id, operation, backup_generation_id, actor_id, runtime_root_key,
@@ -921,7 +1167,7 @@ function readLifecycle(
       row.state_digest_version,
       "application_lifecycle_authorizations.state_digest_version",
     );
-    if (digestVersion !== 1 && digestVersion !== 2 && digestVersion !== 3) {
+    if (digestVersion !== 1 && digestVersion !== 2 && digestVersion !== 3 && digestVersion !== 4) {
       throw persistenceFailure("CORRUPT_ROW", "Lifecycle state digest version is unsupported");
     }
     const record: ApplicationLifecycleAuthorization = {
@@ -1411,6 +1657,314 @@ function readManualCompletionDecisions(database: SqliteDatabase): readonly Manua
   })));
 }
 
+function readDispatcherTriggerRequests(database: SqliteDatabase): readonly DispatcherTriggerRequestRecord[] {
+  if (!tableExists(database, "dispatcher_trigger_requests")) return Object.freeze([]);
+  const results = new Set<DispatcherTriggerRequestRecord["result"]>(["allow", "deny"]);
+  return Object.freeze(database.prepare(
+    `SELECT request_id, observation_id, idempotency_key, correlation_id, actor_id, action,
+      worker_owner_id, requested_lease_seconds, result, created_at
+    FROM dispatcher_trigger_requests ORDER BY request_id`,
+  ).all().map((row) => {
+    if (row.action !== "dispatch.run") throw persistenceFailure("CORRUPT_ROW", "Dispatcher request action is unsupported");
+    return Object.freeze({
+      requestId: sqliteText(row.request_id, "dispatcher_trigger_requests.request_id"),
+      observationId: sqliteText(row.observation_id, "dispatcher_trigger_requests.observation_id"),
+      idempotencyKey: sqliteText(row.idempotency_key, "dispatcher_trigger_requests.idempotency_key"),
+      correlationId: sqliteText(row.correlation_id, "dispatcher_trigger_requests.correlation_id"),
+      actorId: sqliteText(row.actor_id, "dispatcher_trigger_requests.actor_id"),
+      action: "dispatch.run" as const,
+      workerOwnerId: sqliteText(row.worker_owner_id, "dispatcher_trigger_requests.worker_owner_id"),
+      requestedLeaseSeconds: positive(row.requested_lease_seconds, "dispatcher_trigger_requests.requested_lease_seconds"),
+      result: enumText(row.result, "dispatcher_trigger_requests.result", results),
+      createdAt: timestamp(row.created_at, "dispatcher_trigger_requests.created_at"),
+    });
+  }));
+}
+
+function readDispatcherAuthorizationDecisions(database: SqliteDatabase): readonly DispatcherAuthorizationDecisionRecord[] {
+  if (!tableExists(database, "dispatcher_authorization_decisions")) return Object.freeze([]);
+  const results = new Set<DispatcherAuthorizationDecisionRecord["result"]>(["allow", "deny"]);
+  return Object.freeze(database.prepare(
+    `SELECT decision_id, request_id, actor_id, action, result, reason, policy_result,
+      grant_id, grant_revision, created_at FROM dispatcher_authorization_decisions ORDER BY decision_id`,
+  ).all().map((row) => {
+    if (row.action !== "dispatch.run") throw persistenceFailure("CORRUPT_ROW", "Dispatcher decision action is unsupported");
+    const reason = enumText(row.reason, "dispatcher_authorization_decisions.reason", AUTHORIZATION_REASONS);
+    const policy = enumText(row.policy_result, "dispatcher_authorization_decisions.policy_result", POLICY_RESULTS);
+    return Object.freeze({
+      decisionId: sqliteText(row.decision_id, "dispatcher_authorization_decisions.decision_id"),
+      requestId: sqliteText(row.request_id, "dispatcher_authorization_decisions.request_id"),
+      actorId: sqliteText(row.actor_id, "dispatcher_authorization_decisions.actor_id"),
+      action: "dispatch.run" as const,
+      result: enumText(row.result, "dispatcher_authorization_decisions.result", results),
+      reason,
+      policy,
+      grantId: sqliteNullableText(row.grant_id, "dispatcher_authorization_decisions.grant_id"),
+      grantRevision: nullablePositive(row.grant_revision, "dispatcher_authorization_decisions.grant_revision"),
+      createdAt: timestamp(row.created_at, "dispatcher_authorization_decisions.created_at"),
+    });
+  }));
+}
+
+function readDispatcherRuns(database: SqliteDatabase): readonly DispatcherRunRecord[] {
+  if (!tableExists(database, "dispatcher_runs")) return Object.freeze([]);
+  const statuses = new Set<DispatcherRunStatus>(["starting", "reconciling", "sweeping", "completed", "partial", "failed", "interrupted"]);
+  return Object.freeze(database.prepare(
+    `SELECT run_id, observation_id, request_id, decision_id, actor_id, owner_id, owner_revision,
+      run_revision, requested_lease_seconds, heartbeat_at, lease_expires_at, status, created_at, updated_at
+    FROM dispatcher_runs ORDER BY run_id`,
+  ).all().map((row) => Object.freeze({
+    runId: sqliteText(row.run_id, "dispatcher_runs.run_id"),
+    observationId: sqliteText(row.observation_id, "dispatcher_runs.observation_id"),
+    requestId: sqliteText(row.request_id, "dispatcher_runs.request_id"),
+    decisionId: sqliteText(row.decision_id, "dispatcher_runs.decision_id"),
+    actorId: sqliteText(row.actor_id, "dispatcher_runs.actor_id"),
+    ownerId: sqliteText(row.owner_id, "dispatcher_runs.owner_id"),
+    ownerRevision: positive(row.owner_revision, "dispatcher_runs.owner_revision"),
+    runRevision: positive(row.run_revision, "dispatcher_runs.run_revision"),
+    requestedLeaseSeconds: positive(row.requested_lease_seconds, "dispatcher_runs.requested_lease_seconds"),
+    heartbeatAt: timestamp(row.heartbeat_at, "dispatcher_runs.heartbeat_at"),
+    leaseExpiresAt: timestamp(row.lease_expires_at, "dispatcher_runs.lease_expires_at"),
+    status: enumText(row.status, "dispatcher_runs.status", statuses),
+    createdAt: timestamp(row.created_at, "dispatcher_runs.created_at"),
+    updatedAt: timestamp(row.updated_at, "dispatcher_runs.updated_at"),
+  })));
+}
+
+function readDispatcherAudit(database: SqliteDatabase): readonly DispatcherAuditRecord[] {
+  if (!tableExists(database, "dispatcher_audit")) return Object.freeze([]);
+  const events = new Set<DispatcherAuditRecord["eventKind"]>([
+    "dispatch.denied", "dispatch.started", "dispatch.reconciling", "dispatch.sealed",
+    "dispatch.member.resolved", "dispatch.heartbeat", "dispatch.taken_over", "dispatch.terminal",
+    "dispatch.operation.denied",
+  ]);
+  const results = new Set<DispatcherAuditRecord["result"]>(["accepted", "denied"]);
+  const codes = new Set<DispatcherAuditCode>(DISPATCHER_AUDIT_CODES);
+  return Object.freeze(database.prepare(
+    `SELECT audit_id, request_id, decision_id, run_id, event_kind, result, actor_id,
+      correlation_id, code, created_at FROM dispatcher_audit ORDER BY audit_id`,
+  ).all().map((row) => Object.freeze({
+    auditId: sqliteText(row.audit_id, "dispatcher_audit.audit_id"),
+    requestId: sqliteText(row.request_id, "dispatcher_audit.request_id"),
+    decisionId: sqliteText(row.decision_id, "dispatcher_audit.decision_id"),
+    runId: sqliteNullableText(row.run_id, "dispatcher_audit.run_id"),
+    eventKind: enumText(row.event_kind, "dispatcher_audit.event_kind", events),
+    result: enumText(row.result, "dispatcher_audit.result", results),
+    actorId: sqliteText(row.actor_id, "dispatcher_audit.actor_id"),
+    correlationId: sqliteText(row.correlation_id, "dispatcher_audit.correlation_id"),
+    code: enumText(row.code, "dispatcher_audit.code", codes),
+    createdAt: timestamp(row.created_at, "dispatcher_audit.created_at"),
+  })));
+}
+
+function readDispatcherReconciliationItems(database: SqliteDatabase): readonly DispatcherReconciliationItemRecord[] {
+  if (!tableExists(database, "dispatcher_reconciliation_items")) return Object.freeze([]);
+  const resourceKinds = new Set<DispatcherReconciliationItemRecord["resourceKind"]>(["execution_intent", "execution_lease", "dispatcher_run"]);
+  const dispositions = new Set<DispatcherReconciliationItemRecord["disposition"]>(["reconciled", "no_effect", "authorization_denied", "ambiguous", "failed"]);
+  const codes = new Set<DispatcherReconciliationCode>(DISPATCHER_RECONCILIATION_CODES);
+  return Object.freeze(database.prepare(
+    `SELECT reconciliation_item_id, run_id, ordinal, resource_kind, resource_id, disposition, code, created_at
+    FROM dispatcher_reconciliation_items ORDER BY run_id, ordinal`,
+  ).all().map((row) => Object.freeze({
+    reconciliationItemId: sqliteText(row.reconciliation_item_id, "dispatcher_reconciliation_items.reconciliation_item_id"),
+    runId: sqliteText(row.run_id, "dispatcher_reconciliation_items.run_id"),
+    ordinal: nonnegative(row.ordinal, "dispatcher_reconciliation_items.ordinal"),
+    resourceKind: enumText(row.resource_kind, "dispatcher_reconciliation_items.resource_kind", resourceKinds),
+    resourceId: sqliteText(row.resource_id, "dispatcher_reconciliation_items.resource_id"),
+    disposition: enumText(row.disposition, "dispatcher_reconciliation_items.disposition", dispositions),
+    code: enumText(row.code, "dispatcher_reconciliation_items.code", codes),
+    createdAt: timestamp(row.created_at, "dispatcher_reconciliation_items.created_at"),
+  })));
+}
+
+function readDispatcherReconciliationSummaries(database: SqliteDatabase): readonly DispatcherReconciliationSummaryRecord[] {
+  if (!tableExists(database, "dispatcher_reconciliation_summaries")) return Object.freeze([]);
+  return Object.freeze(database.prepare(
+    `SELECT run_id, summary_revision, expected_count, reconciled_count, no_effect_count,
+      authorization_denied_count, ambiguous_count, failed_count, created_at
+    FROM dispatcher_reconciliation_summaries ORDER BY run_id`,
+  ).all().map((row) => {
+    const summaryRevision = positive(row.summary_revision, "dispatcher_reconciliation_summaries.summary_revision");
+    if (summaryRevision !== 1) throw persistenceFailure("CORRUPT_ROW", "Dispatcher reconciliation summary revision is unsupported");
+    return Object.freeze({
+      runId: sqliteText(row.run_id, "dispatcher_reconciliation_summaries.run_id"),
+      summaryRevision: 1 as const,
+      expectedCount: nonnegative(row.expected_count, "dispatcher_reconciliation_summaries.expected_count"),
+      reconciledCount: nonnegative(row.reconciled_count, "dispatcher_reconciliation_summaries.reconciled_count"),
+      noEffectCount: nonnegative(row.no_effect_count, "dispatcher_reconciliation_summaries.no_effect_count"),
+      authorizationDeniedCount: nonnegative(row.authorization_denied_count, "dispatcher_reconciliation_summaries.authorization_denied_count"),
+      ambiguousCount: nonnegative(row.ambiguous_count, "dispatcher_reconciliation_summaries.ambiguous_count"),
+      failedCount: nonnegative(row.failed_count, "dispatcher_reconciliation_summaries.failed_count"),
+      createdAt: timestamp(row.created_at, "dispatcher_reconciliation_summaries.created_at"),
+    });
+  }));
+}
+
+function readDispatcherMemberships(database: SqliteDatabase): readonly DispatcherMembershipRecord[] {
+  if (!tableExists(database, "dispatcher_memberships")) return Object.freeze([]);
+  return Object.freeze(database.prepare(
+    `SELECT run_id, membership_revision, expected_member_count, sealed_at
+    FROM dispatcher_memberships ORDER BY run_id`,
+  ).all().map((row) => Object.freeze({
+    runId: sqliteText(row.run_id, "dispatcher_memberships.run_id"),
+    membershipRevision: positive(row.membership_revision, "dispatcher_memberships.membership_revision"),
+    expectedMemberCount: nonnegative(row.expected_member_count, "dispatcher_memberships.expected_member_count"),
+    sealedAt: timestamp(row.sealed_at, "dispatcher_memberships.sealed_at"),
+  })));
+}
+
+function readDispatcherMembers(database: SqliteDatabase): readonly DispatcherMemberRecord[] {
+  if (!tableExists(database, "dispatcher_members")) return Object.freeze([]);
+  const lifecycles = new Set<DispatcherMemberRecord["lifecycle"]>(["pending", "terminal"]);
+  const outcomes = new Set<DispatcherMemberOutcome>([
+    "claimed", "already_claimed", "ineligible_at_cas", "authorization_denied",
+    "policy_deferred", "resource_deferred", "reconciliation_required", "failed",
+  ]);
+  const codes = new Set<DispatcherMemberCode>(DISPATCHER_MEMBER_CODES);
+  return Object.freeze(database.prepare(
+    `SELECT member_id, run_id, membership_revision, ordinal, project_id, project_resource_revision,
+      project_config_revision, task_id, task_revision, lifecycle, outcome, execution_id, intent_id,
+      code, revision, created_at, updated_at FROM dispatcher_members ORDER BY run_id, ordinal`,
+  ).all().map((row) => Object.freeze({
+    memberId: sqliteText(row.member_id, "dispatcher_members.member_id"),
+    runId: sqliteText(row.run_id, "dispatcher_members.run_id"),
+    membershipRevision: positive(row.membership_revision, "dispatcher_members.membership_revision"),
+    ordinal: nonnegative(row.ordinal, "dispatcher_members.ordinal"),
+    projectId: sqliteText(row.project_id, "dispatcher_members.project_id"),
+    projectResourceRevision: positive(row.project_resource_revision, "dispatcher_members.project_resource_revision"),
+    projectConfigRevision: positive(row.project_config_revision, "dispatcher_members.project_config_revision"),
+    taskId: sqliteText(row.task_id, "dispatcher_members.task_id"),
+    taskRevision: positive(row.task_revision, "dispatcher_members.task_revision"),
+    lifecycle: enumText(row.lifecycle, "dispatcher_members.lifecycle", lifecycles),
+    outcome: row.outcome === null ? null : enumText(row.outcome, "dispatcher_members.outcome", outcomes),
+    executionId: sqliteNullableText(row.execution_id, "dispatcher_members.execution_id"),
+    intentId: sqliteNullableText(row.intent_id, "dispatcher_members.intent_id"),
+    code: row.code === null ? null : enumText(row.code, "dispatcher_members.code", codes),
+    revision: positive(row.revision, "dispatcher_members.revision"),
+    createdAt: timestamp(row.created_at, "dispatcher_members.created_at"),
+    updatedAt: timestamp(row.updated_at, "dispatcher_members.updated_at"),
+  })));
+}
+
+function readDispatcherMemberDenialRequests(
+  database: SqliteDatabase,
+): readonly DispatcherMemberDenialRequestRecord[] {
+  if (!tableExists(database, "dispatcher_member_denial_requests")) return Object.freeze([]);
+  return Object.freeze(database.prepare(
+    `SELECT request_id, correlation_id, run_id, member_id, actor_id, action,
+      target_execution_id, target_revision, result, created_at
+    FROM dispatcher_member_denial_requests ORDER BY request_id`,
+  ).all().map((row) => Object.freeze({
+    requestId: sqliteText(row.request_id, "dispatcher_member_denial_requests.request_id"),
+    correlationId: sqliteText(row.correlation_id, "dispatcher_member_denial_requests.correlation_id"),
+    runId: sqliteText(row.run_id, "dispatcher_member_denial_requests.run_id"),
+    memberId: sqliteText(row.member_id, "dispatcher_member_denial_requests.member_id"),
+    actorId: sqliteText(row.actor_id, "dispatcher_member_denial_requests.actor_id"),
+    action: enumText(row.action, "dispatcher_member_denial_requests.action", new Set(["execution.start"] as const)),
+    targetExecutionId: sqliteText(row.target_execution_id, "dispatcher_member_denial_requests.target_execution_id"),
+    targetRevision: (() => {
+      const revision = positive(row.target_revision, "dispatcher_member_denial_requests.target_revision");
+      if (revision !== 1) throw persistenceFailure("CORRUPT_ROW", "Dispatcher member denial target revision is unsupported");
+      return 1 as const;
+    })(),
+    result: enumText(row.result, "dispatcher_member_denial_requests.result", new Set(["deny"] as const)),
+    createdAt: timestamp(row.created_at, "dispatcher_member_denial_requests.created_at"),
+  })));
+}
+
+function readDispatcherMemberDenialDecisions(
+  database: SqliteDatabase,
+): readonly DispatcherMemberDenialDecisionRecord[] {
+  if (!tableExists(database, "dispatcher_member_denial_decisions")) return Object.freeze([]);
+  return Object.freeze(database.prepare(
+    `SELECT decision_id, request_id, actor_id, action, result, reason, policy_result,
+      grant_id, grant_revision, project_id, resource_revision, config_revision, created_at
+    FROM dispatcher_member_denial_decisions ORDER BY decision_id`,
+  ).all().map((row) => {
+    const reason = enumText(row.reason, "dispatcher_member_denial_decisions.reason", AUTHORIZATION_REASONS);
+    if (reason === "allowed") {
+      throw persistenceFailure("CORRUPT_ROW", "Dispatcher member denial decision cannot be allowed");
+    }
+    return Object.freeze({
+      decisionId: sqliteText(row.decision_id, "dispatcher_member_denial_decisions.decision_id"),
+      requestId: sqliteText(row.request_id, "dispatcher_member_denial_decisions.request_id"),
+      actorId: sqliteText(row.actor_id, "dispatcher_member_denial_decisions.actor_id"),
+      action: enumText(row.action, "dispatcher_member_denial_decisions.action", new Set(["execution.start"] as const)),
+      result: enumText(row.result, "dispatcher_member_denial_decisions.result", new Set(["deny"] as const)),
+      reason,
+      policy: enumText(row.policy_result, "dispatcher_member_denial_decisions.policy_result", POLICY_RESULTS),
+      grantId: sqliteNullableText(row.grant_id, "dispatcher_member_denial_decisions.grant_id"),
+      grantRevision: nullablePositive(row.grant_revision, "dispatcher_member_denial_decisions.grant_revision"),
+      projectId: sqliteText(row.project_id, "dispatcher_member_denial_decisions.project_id"),
+      resourceRevision: positive(row.resource_revision, "dispatcher_member_denial_decisions.resource_revision"),
+      configRevision: positive(row.config_revision, "dispatcher_member_denial_decisions.config_revision"),
+      createdAt: timestamp(row.created_at, "dispatcher_member_denial_decisions.created_at"),
+    });
+  }));
+}
+
+function readDispatcherMemberDenialAudit(
+  database: SqliteDatabase,
+): readonly DispatcherMemberDenialAuditRecord[] {
+  if (!tableExists(database, "dispatcher_member_denial_audit")) return Object.freeze([]);
+  return Object.freeze(database.prepare(
+    `SELECT audit_id, request_id, decision_id, run_id, member_id, event_kind, result,
+      actor_id, correlation_id, target_execution_id, target_revision, code, created_at
+    FROM dispatcher_member_denial_audit ORDER BY audit_id`,
+  ).all().map((row) => {
+    const code = enumText(row.code, "dispatcher_member_denial_audit.code", AUTHORIZATION_REASONS);
+    if (code === "allowed") {
+      throw persistenceFailure("CORRUPT_ROW", "Dispatcher member denial audit cannot be allowed");
+    }
+    const targetRevision = positive(row.target_revision, "dispatcher_member_denial_audit.target_revision");
+    if (targetRevision !== 1) {
+      throw persistenceFailure("CORRUPT_ROW", "Dispatcher member denial audit target revision is unsupported");
+    }
+    return Object.freeze({
+      auditId: sqliteText(row.audit_id, "dispatcher_member_denial_audit.audit_id"),
+      requestId: sqliteText(row.request_id, "dispatcher_member_denial_audit.request_id"),
+      decisionId: sqliteText(row.decision_id, "dispatcher_member_denial_audit.decision_id"),
+      runId: sqliteText(row.run_id, "dispatcher_member_denial_audit.run_id"),
+      memberId: sqliteText(row.member_id, "dispatcher_member_denial_audit.member_id"),
+      eventKind: enumText(row.event_kind, "dispatcher_member_denial_audit.event_kind", new Set(["authorization.denied"] as const)),
+      result: enumText(row.result, "dispatcher_member_denial_audit.result", new Set(["denied"] as const)),
+      actorId: sqliteText(row.actor_id, "dispatcher_member_denial_audit.actor_id"),
+      correlationId: sqliteText(row.correlation_id, "dispatcher_member_denial_audit.correlation_id"),
+      targetExecutionId: sqliteText(row.target_execution_id, "dispatcher_member_denial_audit.target_execution_id"),
+      targetRevision: 1 as const,
+      code,
+      createdAt: timestamp(row.created_at, "dispatcher_member_denial_audit.created_at"),
+    });
+  }));
+}
+
+function readDispatcherRunSummaries(database: SqliteDatabase): readonly DispatcherRunSummaryRecord[] {
+  if (!tableExists(database, "dispatcher_run_summaries")) return Object.freeze([]);
+  const statuses = new Set<DispatcherRunSummaryRecord["terminalStatus"]>(["completed", "partial", "failed", "interrupted"]);
+  return Object.freeze(database.prepare(
+    `SELECT run_id, membership_revision, expected_member_count, claimed_count, already_claimed_count,
+      ineligible_count, authorization_denied_count, policy_deferred_count, resource_deferred_count,
+      reconciliation_required_count, failed_count, terminal_status, owner_revision, run_revision, created_at
+    FROM dispatcher_run_summaries ORDER BY run_id`,
+  ).all().map((row) => Object.freeze({
+    runId: sqliteText(row.run_id, "dispatcher_run_summaries.run_id"),
+    membershipRevision: positive(row.membership_revision, "dispatcher_run_summaries.membership_revision"),
+    expectedMemberCount: nonnegative(row.expected_member_count, "dispatcher_run_summaries.expected_member_count"),
+    claimedCount: nonnegative(row.claimed_count, "dispatcher_run_summaries.claimed_count"),
+    alreadyClaimedCount: nonnegative(row.already_claimed_count, "dispatcher_run_summaries.already_claimed_count"),
+    ineligibleCount: nonnegative(row.ineligible_count, "dispatcher_run_summaries.ineligible_count"),
+    authorizationDeniedCount: nonnegative(row.authorization_denied_count, "dispatcher_run_summaries.authorization_denied_count"),
+    policyDeferredCount: nonnegative(row.policy_deferred_count, "dispatcher_run_summaries.policy_deferred_count"),
+    resourceDeferredCount: nonnegative(row.resource_deferred_count, "dispatcher_run_summaries.resource_deferred_count"),
+    reconciliationRequiredCount: nonnegative(row.reconciliation_required_count, "dispatcher_run_summaries.reconciliation_required_count"),
+    failedCount: nonnegative(row.failed_count, "dispatcher_run_summaries.failed_count"),
+    terminalStatus: enumText(row.terminal_status, "dispatcher_run_summaries.terminal_status", statuses),
+    ownerRevision: positive(row.owner_revision, "dispatcher_run_summaries.owner_revision"),
+    runRevision: positive(row.run_revision, "dispatcher_run_summaries.run_revision"),
+    createdAt: timestamp(row.created_at, "dispatcher_run_summaries.created_at"),
+  })));
+}
+
 function readRequests(database: SqliteDatabase): readonly ApplicationRequestRecord[] {
   const rows = database.prepare(
     `SELECT request_id, correlation_id, actor_id, action, target_kind, target_id,
@@ -1429,7 +1983,7 @@ function readRequests(database: SqliteDatabase): readonly ApplicationRequestReco
   })));
 }
 
-type AuthorizationGrantPhysicalOwner = "legacy" | "v6";
+type AuthorizationGrantPhysicalOwner = "legacy" | "v6" | "v7";
 
 interface DecodedAuthorizationGrant {
   readonly grant: AuthorizationGrant;
@@ -1437,23 +1991,29 @@ interface DecodedAuthorizationGrant {
 }
 
 function readGrants(database: SqliteDatabase): readonly DecodedAuthorizationGrant[] {
-  const union = tableExists(database, "authorization_grants_v6")
+  const unionV6 = tableExists(database, "authorization_grants_v6")
     ? ` UNION ALL SELECT grant_id, revision, actor_id, action, scope_kind, scope_project_id,
         scope_resource_revision, scope_config_revision, not_before, expires_at,
         revoked_at, issuer_grant_id, source_grant_id, 'v6' AS physical_owner
       FROM authorization_grants_v6`
     : "";
+  const unionV7 = tableExists(database, "authorization_grants_v7")
+    ? ` UNION ALL SELECT grant_id, revision, actor_id, action, scope_kind, scope_project_id,
+        scope_resource_revision, scope_config_revision, not_before, expires_at,
+        revoked_at, issuer_grant_id, source_grant_id, 'v7' AS physical_owner
+      FROM authorization_grants_v7`
+    : "";
   const rows = database.prepare(
     `SELECT grant_id, revision, actor_id, action, scope_kind, scope_project_id,
       scope_resource_revision, scope_config_revision, not_before, expires_at,
       revoked_at, issuer_grant_id, source_grant_id, 'legacy' AS physical_owner
-    FROM authorization_grants${union} ORDER BY grant_id`,
+    FROM authorization_grants${unionV6}${unionV7} ORDER BY grant_id`,
   ).all();
   const decoded = rows.map((row) => {
     const physicalOwner = enumText(
       row.physical_owner,
       "authorization grant physical owner",
-      new Set<AuthorizationGrantPhysicalOwner>(["legacy", "v6"]),
+      new Set<AuthorizationGrantPhysicalOwner>(["legacy", "v6", "v7"]),
     );
     const parsed = parseAuthorizationGrant({
       grantId: sqliteText(row.grant_id, `${physicalOwner} authorization grant.grant_id`),
@@ -1475,6 +2035,12 @@ function readGrants(database: SqliteDatabase): readonly DecodedAuthorizationGran
     if (parsed === null) throw persistenceFailure("CORRUPT_ROW", "Authorization grant has an impossible shape");
     if (physicalOwner === "v6" && !(MANUAL_EXECUTION_AUTHORIZATION_ACTIONS as readonly string[]).includes(parsed.action)) {
       throw persistenceFailure("CORRUPT_ROW", "Vocabulary-v6 grant is stored in the wrong physical relation");
+    }
+    if (physicalOwner === "v7" && !(DISPATCH_AUTHORIZATION_ACTIONS as readonly string[]).includes(parsed.action)) {
+      throw persistenceFailure("CORRUPT_ROW", "Vocabulary-v7 grant is stored in the wrong physical relation");
+    }
+    if (physicalOwner === "legacy" && !(PHASE2A_AUTHORIZATION_ACTIONS as readonly string[]).includes(parsed.action)) {
+      throw persistenceFailure("CORRUPT_ROW", "Legacy authorization grant is stored in the wrong physical relation");
     }
     return Object.freeze({ grant: parsed, physicalOwner });
   });
@@ -1594,8 +2160,33 @@ function readApplicationStateUntransactional(
   const manualTurns = schemaShape === "current" ? readManualTurns(database) : Object.freeze([]);
   const manualBackendOperations = schemaShape === "current" ? readManualBackendOperations(database) : Object.freeze([]);
   const manualCompletionDecisions = schemaShape === "current" ? readManualCompletionDecisions(database) : Object.freeze([]);
+  const dispatcherTriggerRequests = schemaShape === "current" ? readDispatcherTriggerRequests(database) : Object.freeze([]);
+  const dispatcherAuthorizationDecisions = schemaShape === "current" ? readDispatcherAuthorizationDecisions(database) : Object.freeze([]);
+  const dispatcherRuns = schemaShape === "current" ? readDispatcherRuns(database) : Object.freeze([]);
+  const dispatcherAudit = schemaShape === "current" ? readDispatcherAudit(database) : Object.freeze([]);
+  const dispatcherReconciliationItems = schemaShape === "current" ? readDispatcherReconciliationItems(database) : Object.freeze([]);
+  const dispatcherReconciliationSummaries = schemaShape === "current" ? readDispatcherReconciliationSummaries(database) : Object.freeze([]);
+  const dispatcherMemberships = schemaShape === "current" ? readDispatcherMemberships(database) : Object.freeze([]);
+  const dispatcherMembers = schemaShape === "current" ? readDispatcherMembers(database) : Object.freeze([]);
+  const dispatcherMemberDenialRequests = schemaShape === "current"
+    ? readDispatcherMemberDenialRequests(database) : Object.freeze([]);
+  const dispatcherMemberDenialDecisions = schemaShape === "current"
+    ? readDispatcherMemberDenialDecisions(database) : Object.freeze([]);
+  const dispatcherMemberDenialAudit = schemaShape === "current"
+    ? readDispatcherMemberDenialAudit(database) : Object.freeze([]);
+  const dispatcherRunSummaries = schemaShape === "current" ? readDispatcherRunSummaries(database) : Object.freeze([]);
   const v6LegacyGrantLinks = schemaShape === "current" && tableExists(database, "authorization_grant_epoch_v6_links");
-  const baseGrantRelationSelect = v6LegacyGrantLinks
+  const v7GrantLinks = schemaShape === "current" && tableExists(database, "authorization_grant_epoch_v7_legacy_links");
+  const baseGrantRelationSelect = v7GrantLinks
+    ? `SELECT grant_record.grant_id, grant_record.action,
+        COALESCE(v7_link.capability_epoch_id, v6_link.capability_epoch_id, grant_record.capability_epoch_id) AS capability_epoch_id,
+        grant_record.created_request_id, grant_record.revoked_request_id, 'legacy' AS physical_owner
+      FROM authorization_grants AS grant_record
+      LEFT JOIN authorization_grant_epoch_v6_links AS v6_link
+        ON v6_link.grant_id=grant_record.grant_id AND v6_link.action=grant_record.action
+      LEFT JOIN authorization_grant_epoch_v7_legacy_links AS v7_link
+        ON v7_link.grant_id=grant_record.grant_id AND v7_link.action=grant_record.action`
+    : v6LegacyGrantLinks
     ? `SELECT grant_record.grant_id, grant_record.action,
         COALESCE(epoch_link.capability_epoch_id, grant_record.capability_epoch_id) AS capability_epoch_id,
         grant_record.created_request_id, grant_record.revoked_request_id, 'legacy' AS physical_owner
@@ -1603,11 +2194,21 @@ function readApplicationStateUntransactional(
       LEFT JOIN authorization_grant_epoch_v6_links AS epoch_link
         ON epoch_link.grant_id=grant_record.grant_id AND epoch_link.action=grant_record.action`
     : "SELECT grant_id, action, capability_epoch_id, created_request_id, revoked_request_id, 'legacy' AS physical_owner FROM authorization_grants";
-  const grantRelationUnion = schemaShape === "current" && tableExists(database, "authorization_grants_v6")
-    ? " UNION ALL SELECT grant_id, action, capability_epoch_id, created_request_id, revoked_request_id, 'v6' AS physical_owner FROM authorization_grants_v6"
+  const grantRelationUnionV6 = schemaShape === "current" && tableExists(database, "authorization_grants_v6")
+    ? v7GrantLinks
+      ? ` UNION ALL SELECT grant_record.grant_id, grant_record.action,
+          COALESCE(v7_link.capability_epoch_id, grant_record.capability_epoch_id) AS capability_epoch_id,
+          grant_record.created_request_id, grant_record.revoked_request_id, 'v6' AS physical_owner
+        FROM authorization_grants_v6 AS grant_record
+        LEFT JOIN authorization_grant_epoch_v7_v6_links AS v7_link
+          ON v7_link.grant_id=grant_record.grant_id AND v7_link.action=grant_record.action`
+      : " UNION ALL SELECT grant_id, action, capability_epoch_id, created_request_id, revoked_request_id, 'v6' AS physical_owner FROM authorization_grants_v6"
+    : "";
+  const grantRelationUnionV7 = schemaShape === "current" && tableExists(database, "authorization_grants_v7")
+    ? " UNION ALL SELECT grant_id, action, capability_epoch_id, created_request_id, revoked_request_id, 'v7' AS physical_owner FROM authorization_grants_v7"
     : "";
   const grantRelationRows = database.prepare(schemaShape !== "version-three"
-    ? `${baseGrantRelationSelect}${grantRelationUnion} ORDER BY grant_id`
+    ? `${baseGrantRelationSelect}${grantRelationUnionV6}${grantRelationUnionV7} ORDER BY grant_id`
     : "SELECT grant_id, action, created_request_id, revoked_request_id, 'legacy' AS physical_owner FROM authorization_grants ORDER BY grant_id"
   ).all();
   const domainProjectIds = new Set(domain.projects.map((project) => project.id));
@@ -1630,13 +2231,22 @@ function readApplicationStateUntransactional(
     physicalOwner: enumText(
       row.physical_owner,
       "authorization grant relation physical owner",
-      new Set<AuthorizationGrantPhysicalOwner>(["legacy", "v6"]),
+      new Set<AuthorizationGrantPhysicalOwner>(["legacy", "v6", "v7"]),
     ),
   }));
   if (new Set(grantRelations.map((relation) => relation.grantId)).size !== grantRelations.length) {
     throw persistenceFailure("CORRUPT_ROW", "Authorization grant relation identifiers are not globally unique");
   }
   const grantRelationById = new Map(grantRelations.map((relation) => [relation.grantId, relation]));
+  const vocabularySevenEpochIds = new Set(epochs.filter((epoch) => epoch.vocabularyVersion === 7).map((epoch) => epoch.epochId));
+  const authorizationGrantEpochLinks = Object.freeze(grantRelations
+    .filter((relation) => relation.capabilityEpochId !== null && vocabularySevenEpochIds.has(relation.capabilityEpochId))
+    .map((relation): AuthorizationGrantEpochLinkRecord => Object.freeze({
+      grantId: relation.grantId,
+      action: relation.action,
+      capabilityEpochId: relation.capabilityEpochId as string,
+      physicalOwner: relation.physicalOwner,
+    })));
   if ((bootstrap === null) !== (grants.length === 0)) {
     throw persistenceFailure("CORRUPT_ROW", "Bootstrap and grant existence do not form one initialized authorization state");
   }
@@ -1714,6 +2324,7 @@ function readApplicationStateUntransactional(
   }
   const phase1ActionSetSha256 = sha256(canonicalJson(PHASE1_AUTHORIZATION_ACTIONS));
   const phase2aActionSetSha256 = sha256(canonicalJson(PHASE2A_AUTHORIZATION_ACTIONS));
+  const phase2bActionSetSha256 = sha256(canonicalJson(PHASE2B_AUTHORIZATION_ACTIONS));
   const currentActionSetSha256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
   for (let index = 0; index < epochs.length; index += 1) {
     const epoch = epochs[index];
@@ -1721,8 +2332,10 @@ function readApplicationStateUntransactional(
     const previousVocabulary = index === 0 ? 4 : epochs[index - 1]?.vocabularyVersion;
     const isUpgrade = epoch !== undefined && previousVocabulary !== undefined && epoch.vocabularyVersion === previousVocabulary + 1;
     const isRenewal = epoch?.vocabularyVersion === previousVocabulary;
-    const expectedActionSetSha256 = epoch?.vocabularyVersion === 6
+    const expectedActionSetSha256 = epoch?.vocabularyVersion === 7
       ? currentActionSetSha256
+      : epoch?.vocabularyVersion === 6
+        ? phase2bActionSetSha256
       : epoch?.vocabularyVersion === 5
         ? phase2aActionSetSha256
         : phase1ActionSetSha256;
@@ -1745,8 +2358,10 @@ function readApplicationStateUntransactional(
       throw persistenceFailure("CORRUPT_ROW", "Capability epoch lineage is incomplete or non-contiguous");
     }
     const epochRelations = grantRelations.filter((relation) => relation.capabilityEpochId === epoch.epochId);
-    const expectedActions = epoch.vocabularyVersion === 6
+    const expectedActions = epoch.vocabularyVersion === 7
       ? AUTHORIZATION_ACTIONS
+      : epoch.vocabularyVersion === 6
+        ? PHASE2B_AUTHORIZATION_ACTIONS
       : epoch.vocabularyVersion === 5
         ? PHASE2A_AUTHORIZATION_ACTIONS
         : PHASE1_AUTHORIZATION_ACTIONS;
@@ -1758,15 +2373,19 @@ function readApplicationStateUntransactional(
     ) {
       throw persistenceFailure("CORRUPT_ROW", "Capability epoch grant action inventory is not exact");
     }
-    const expectedLegacyActions = epoch.vocabularyVersion === 6 ? PHASE2A_AUTHORIZATION_ACTIONS : expectedActions;
-    const expectedV6Actions = epoch.vocabularyVersion === 6 ? MANUAL_EXECUTION_AUTHORIZATION_ACTIONS : Object.freeze([]);
+    const expectedLegacyActions = epoch.vocabularyVersion >= 6 ? PHASE2A_AUTHORIZATION_ACTIONS : expectedActions;
+    const expectedV6Actions = epoch.vocabularyVersion >= 6 ? MANUAL_EXECUTION_AUTHORIZATION_ACTIONS : Object.freeze([]);
+    const expectedV7Actions = epoch.vocabularyVersion === 7 ? DISPATCH_AUTHORIZATION_ACTIONS : Object.freeze([]);
     const legacyActions = epochRelations.filter((relation) => relation.physicalOwner === "legacy").map((relation) => relation.action);
     const v6Actions = epochRelations.filter((relation) => relation.physicalOwner === "v6").map((relation) => relation.action);
+    const v7Actions = epochRelations.filter((relation) => relation.physicalOwner === "v7").map((relation) => relation.action);
     if (
       legacyActions.length !== expectedLegacyActions.length ||
       expectedLegacyActions.some((expected) => !legacyActions.includes(expected)) ||
       v6Actions.length !== expectedV6Actions.length ||
-      expectedV6Actions.some((expected) => !v6Actions.includes(expected))
+      expectedV6Actions.some((expected) => !v6Actions.includes(expected)) ||
+      v7Actions.length !== expectedV7Actions.length ||
+      expectedV7Actions.some((expected) => !v7Actions.includes(expected))
     ) {
       throw persistenceFailure("CORRUPT_ROW", "Capability epoch grants use an invalid physical partition");
     }
@@ -1929,11 +2548,13 @@ function readApplicationStateUntransactional(
       : request.result === "renewal" || request.result === "upgrade"
         ? (() => {
             const epoch = epochs.find((candidate) => candidate.requestId === request.requestId);
-            return epoch?.vocabularyVersion === 6
+            return epoch?.vocabularyVersion === 7
               ? AUTHORIZATION_ACTIONS.length
-              : epoch?.vocabularyVersion === 5
-                ? PHASE2A_AUTHORIZATION_ACTIONS.length
-                : PHASE1_AUTHORIZATION_ACTIONS.length;
+              : epoch?.vocabularyVersion === 6
+                ? PHASE2B_AUTHORIZATION_ACTIONS.length
+                : epoch?.vocabularyVersion === 5
+                  ? PHASE2A_AUTHORIZATION_ACTIONS.length
+                  : PHASE1_AUTHORIZATION_ACTIONS.length;
           })()
       : request.result === "allow" && request.action === "authorization.grant.issue"
         ? 1
@@ -2457,13 +3078,240 @@ function readApplicationStateUntransactional(
       executionIntents.some((candidate) => candidate.executionId === terminal.executionId && candidate.state !== "finalized")
     ) throw persistenceFailure("CORRUPT_ROW", "Execution terminal state is inconsistent with Task, fence, and verified evidence");
   }
+  const dispatcherRequestById = new Map(dispatcherTriggerRequests.map((request) => [request.requestId, request]));
+  const dispatcherDecisionById = new Map(dispatcherAuthorizationDecisions.map((decision) => [decision.decisionId, decision]));
+  const dispatcherRunById = new Map(dispatcherRuns.map((run) => [run.runId, run]));
+  if (
+    dispatcherRequestById.size !== dispatcherTriggerRequests.length ||
+    dispatcherDecisionById.size !== dispatcherAuthorizationDecisions.length ||
+    dispatcherRunById.size !== dispatcherRuns.length
+  ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher identity inventory is not unique");
+  for (const request of dispatcherTriggerRequests) {
+    const run = dispatcherRuns.find((candidate) => candidate.requestId === request.requestId);
+    const decision = run === undefined
+      ? dispatcherAuthorizationDecisions.find((candidate) =>
+        candidate.requestId === request.requestId && candidate.createdAt === request.createdAt &&
+        candidate.result === request.result)
+      : dispatcherDecisionById.get(run.decisionId);
+    const events = dispatcherAudit.filter((event) => event.requestId === request.requestId);
+    const takeoverEvents = events.filter((event) =>
+      event.eventKind === "dispatch.taken_over" && event.result === "accepted");
+    const grant = decision?.grantId === null || decision?.grantId === undefined ? undefined : grantById.get(decision.grantId);
+    if (
+      decision === undefined || decision.actorId !== request.actorId || decision.action !== request.action ||
+      decision.result !== request.result || decision.createdAt !== request.createdAt ||
+      (decision.result === "allow" && (
+        grant === undefined ||
+        !grantRevisionWasUsableAt(grant, request.actorId, "dispatch.run", decision.createdAt, decision.grantRevision) ||
+        run === undefined || run.observationId !== request.observationId || run.decisionId !== decision.decisionId ||
+        run.actorId !== request.actorId ||
+        run.ownerRevision !== takeoverEvents.length + 1 ||
+        (run.ownerRevision === 1 && run.ownerId !== request.workerOwnerId) ||
+        run.requestedLeaseSeconds !== request.requestedLeaseSeconds || run.createdAt !== request.createdAt ||
+        !events.some((event) => event.runId === run.runId && event.eventKind === "dispatch.started" && event.result === "accepted")
+      )) ||
+      (decision.result === "deny" && (
+        decision.grantId !== null || decision.grantRevision !== null || run !== undefined ||
+        !events.some((event) => event.runId === null && event.eventKind === "dispatch.denied" && event.result === "denied")
+      ))
+    ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher trigger authorization lineage is inconsistent");
+  }
+  for (const decision of dispatcherAuthorizationDecisions) {
+    const request = dispatcherRequestById.get(decision.requestId);
+    const grant = decision.grantId === null ? undefined : grantById.get(decision.grantId);
+    if (
+      request === undefined || decision.actorId !== request.actorId || decision.action !== "dispatch.run" ||
+      decision.createdAt < request.createdAt ||
+      (decision.result === "allow" && (
+        decision.reason !== "allowed" || grant === undefined ||
+        !grantRevisionWasUsableAt(grant, decision.actorId, "dispatch.run", decision.createdAt, decision.grantRevision)
+      )) ||
+      (decision.result === "deny" && (decision.reason === "allowed" || decision.grantId !== null || decision.grantRevision !== null))
+    ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher continuation authorization lineage is inconsistent");
+  }
+  for (const event of dispatcherAudit) {
+    const request = dispatcherRequestById.get(event.requestId);
+    const decision = dispatcherDecisionById.get(event.decisionId);
+    const run = event.runId === null ? undefined : dispatcherRunById.get(event.runId);
+    if (
+      request === undefined || decision?.requestId !== event.requestId || event.actorId !== request.actorId ||
+      event.correlationId !== request.correlationId || event.createdAt < request.createdAt ||
+      (event.runId === null) !== (event.eventKind === "dispatch.denied") ||
+      (event.runId !== null && (run === undefined || run.requestId !== request.requestId))
+    ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher audit binding is inconsistent");
+  }
+  for (const run of dispatcherRuns) {
+    const heartbeatMillis = new Date(run.heartbeatAt).valueOf();
+    const expectedExpiry = new Date(heartbeatMillis + run.requestedLeaseSeconds * 1000).toISOString();
+    const reconciliation = dispatcherReconciliationSummaries.find((summary) => summary.runId === run.runId);
+    const membership = dispatcherMemberships.find((candidate) => candidate.runId === run.runId);
+    const terminalSummary = dispatcherRunSummaries.find((summary) => summary.runId === run.runId);
+    if (
+      run.requestedLeaseSeconds < 30 || run.requestedLeaseSeconds > 3600 ||
+      run.leaseExpiresAt !== expectedExpiry || run.updatedAt < run.createdAt || run.heartbeatAt > run.updatedAt ||
+      (run.status === "starting" && (reconciliation !== undefined || membership !== undefined || terminalSummary !== undefined)) ||
+      (run.status === "reconciling" && (membership !== undefined || terminalSummary !== undefined)) ||
+      (run.status === "sweeping" && (reconciliation === undefined || membership === undefined || terminalSummary !== undefined)) ||
+      (["completed", "partial", "failed", "interrupted"] as readonly string[]).includes(run.status) &&
+        (reconciliation === undefined || membership === undefined || terminalSummary?.terminalStatus !== run.status)
+    ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher run lifecycle or lease projection is inconsistent");
+  }
+  for (const summary of dispatcherReconciliationSummaries) {
+    const items = dispatcherReconciliationItems.filter((item) => item.runId === summary.runId);
+    const ordinals = items.map((item) => item.ordinal).sort((left, right) => left - right);
+    if (
+      !dispatcherRunById.has(summary.runId) || items.length !== summary.expectedCount ||
+      ordinals.some((ordinal, index) => ordinal !== index) ||
+      items.filter((item) => item.disposition === "reconciled").length !== summary.reconciledCount ||
+      items.filter((item) => item.disposition === "no_effect").length !== summary.noEffectCount ||
+      items.filter((item) => item.disposition === "authorization_denied").length !== summary.authorizationDeniedCount ||
+      items.filter((item) => item.disposition === "ambiguous").length !== summary.ambiguousCount ||
+      items.filter((item) => item.disposition === "failed").length !== summary.failedCount
+    ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher reconciliation summary is incomplete");
+  }
+  for (const membership of dispatcherMemberships) {
+    const run = dispatcherRunById.get(membership.runId);
+    const reconciliation = dispatcherReconciliationSummaries.find((summary) => summary.runId === membership.runId);
+    const members = dispatcherMembers.filter((member) => member.runId === membership.runId);
+    const ordinals = members.map((member) => member.ordinal).sort((left, right) => left - right);
+    if (
+      run === undefined || reconciliation === undefined || membership.sealedAt < reconciliation.createdAt ||
+      members.length !== membership.expectedMemberCount || new Set(members.map((member) => member.taskId)).size !== members.length ||
+      ordinals.some((ordinal, index) => ordinal !== index) ||
+      members.some((member) => member.membershipRevision !== membership.membershipRevision)
+    ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher sealed membership is incomplete or mutable");
+    for (const member of members) {
+      const task = taskById.get(member.taskId);
+      const project = projects.find((candidate) => candidate.projectId === member.projectId);
+      const execution = member.executionId === null ? undefined : executionById.get(member.executionId);
+      const intent = member.intentId === null ? undefined : intentById.get(member.intentId);
+      if (
+        task === undefined || project === undefined || task.projectId !== member.projectId ||
+        task.revision < member.taskRevision || project.resourceRevision < member.projectResourceRevision ||
+        project.configRevision < member.projectConfigRevision || member.updatedAt < member.createdAt ||
+        (member.lifecycle === "pending" && (member.outcome !== null || member.revision !== 1)) ||
+        (member.lifecycle === "terminal" && (member.outcome === null || member.revision !== 2)) ||
+        (member.outcome === "claimed" && (
+          execution === undefined || intent === undefined || intent.executionId !== execution.executionId ||
+          execution.taskId !== member.taskId || intent.taskId !== member.taskId || intent.operationKind !== "start"
+        )) ||
+        (member.outcome !== "claimed" && (member.executionId !== null || member.intentId !== null))
+      ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher member binding is inconsistent");
+    }
+  }
+  const denialRequestById = new Map(dispatcherMemberDenialRequests.map((request) => [request.requestId, request]));
+  const denialRequestByMember = new Map(dispatcherMemberDenialRequests.map((request) => [request.memberId, request]));
+  const denialDecisionById = new Map(dispatcherMemberDenialDecisions.map((decision) => [decision.decisionId, decision]));
+  const denialDecisionByRequest = new Map(dispatcherMemberDenialDecisions.map((decision) => [decision.requestId, decision]));
+  const denialAuditByRequest = new Map(dispatcherMemberDenialAudit.map((event) => [event.requestId, event]));
+  const denialAuditByDecision = new Map(dispatcherMemberDenialAudit.map((event) => [event.decisionId, event]));
+  const denialTargetExecutionIds = new Set(dispatcherMemberDenialRequests.map((request) => request.targetExecutionId));
+  if (
+    denialRequestById.size !== dispatcherMemberDenialRequests.length ||
+    denialRequestByMember.size !== dispatcherMemberDenialRequests.length ||
+    denialDecisionById.size !== dispatcherMemberDenialDecisions.length ||
+    denialDecisionByRequest.size !== dispatcherMemberDenialDecisions.length ||
+    denialAuditByRequest.size !== dispatcherMemberDenialAudit.length ||
+    denialAuditByDecision.size !== dispatcherMemberDenialAudit.length ||
+    denialTargetExecutionIds.size !== dispatcherMemberDenialRequests.length ||
+    dispatcherMemberDenialRequests.length !== dispatcherMemberDenialDecisions.length ||
+    dispatcherMemberDenialRequests.length !== dispatcherMemberDenialAudit.length ||
+    dispatcherMemberDenialRequests.some((request) =>
+      requestById.has(request.requestId) || executionRequestById.has(request.requestId) ||
+      dispatcherRequestById.has(request.requestId)) ||
+    dispatcherMemberDenialDecisions.some((decision) =>
+      decisionIds.has(decision.decisionId) || executionDecisionById.has(decision.decisionId) ||
+      dispatcherDecisionById.has(decision.decisionId)) ||
+    dispatcherMemberDenialAudit.some((event) =>
+      audit.some((candidate) => candidate.auditId === event.auditId) ||
+      executionOperationAudit.some((candidate) => candidate.auditId === event.auditId) ||
+      dispatcherAudit.some((candidate) => candidate.auditId === event.auditId))
+  ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher member denial identity inventory is not unique");
+  for (const request of dispatcherMemberDenialRequests) {
+    const decision = denialDecisionByRequest.get(request.requestId);
+    const event = denialAuditByRequest.get(request.requestId);
+    const member = dispatcherMembers.find((candidate) => candidate.memberId === request.memberId);
+    const run = dispatcherRunById.get(request.runId);
+    const project = projects.find((candidate) => candidate.projectId === member?.projectId);
+    const grant = decision?.grantId === null || decision?.grantId === undefined
+      ? undefined : grantById.get(decision.grantId);
+    const grantBackedReason = decision?.reason === "policy_denied" || decision?.reason === "confirmation_required";
+    const grantIsExact = grant !== undefined && decision !== undefined && project !== undefined &&
+      grantRevisionWasUsableAt(grant, decision.actorId, "execution.start", decision.createdAt, decision.grantRevision) &&
+      (grant.scope.kind === "runtime" || (
+        grant.scope.projectId === member?.projectId &&
+        grant.scope.resourceRevision === member.projectResourceRevision &&
+        grant.scope.configRevision === member.projectConfigRevision
+      ));
+    if (
+      member === undefined || run === undefined || project === undefined || request.runId !== member.runId ||
+      member.lifecycle !== "terminal" || member.outcome !== "authorization_denied" ||
+      member.code !== "execution_start_denied" || member.executionId !== null || member.intentId !== null ||
+      request.actorId !== run.actorId || request.createdAt > member.updatedAt ||
+      request.action !== "execution.start" || request.targetRevision !== 1 || request.result !== "deny" ||
+      executionById.has(request.targetExecutionId) ||
+      executionIntents.some((intent) => intent.executionId === request.targetExecutionId) ||
+      decision === undefined || decision.actorId !== request.actorId || decision.action !== request.action ||
+      decision.result !== request.result || decision.createdAt !== request.createdAt ||
+      decision.projectId !== member.projectId || decision.resourceRevision !== member.projectResourceRevision ||
+      decision.configRevision !== member.projectConfigRevision ||
+      project.resourceRevision < decision.resourceRevision || project.configRevision < decision.configRevision ||
+      (decision.grantId === null) !== (decision.grantRevision === null) ||
+      grantBackedReason !== (decision.grantId !== null) ||
+      (decision.reason === "policy_denied" && decision.policy !== "deny") ||
+      decision.policy === "read_not_applicable" ||
+      (decision.grantId !== null && !grantIsExact) ||
+      event === undefined || event.decisionId !== decision.decisionId || event.runId !== request.runId ||
+      event.memberId !== request.memberId || event.eventKind !== "authorization.denied" || event.result !== "denied" ||
+      event.actorId !== request.actorId || event.correlationId !== request.correlationId ||
+      event.targetExecutionId !== request.targetExecutionId || event.targetRevision !== request.targetRevision ||
+      event.code !== decision.reason || event.createdAt !== request.createdAt
+    ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher execution.start denial lineage is incomplete or inconsistent");
+  }
+  if (
+    dispatcherMemberDenialDecisions.some((decision) => !denialRequestById.has(decision.requestId)) ||
+    dispatcherMemberDenialAudit.some((event) =>
+      !denialRequestById.has(event.requestId) || !denialDecisionById.has(event.decisionId)) ||
+    dispatcherMembers.some((member) =>
+      (member.code === "execution_start_denied") !== denialRequestByMember.has(member.memberId))
+  ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher execution.start denial lineage has an orphan or missing record");
+  for (const summary of dispatcherRunSummaries) {
+    const run = dispatcherRunById.get(summary.runId);
+    const membership = dispatcherMemberships.find((candidate) => candidate.runId === summary.runId);
+    const members = dispatcherMembers.filter((member) => member.runId === summary.runId);
+    const counts = new Map<DispatcherMemberOutcome, number>();
+    for (const member of members) {
+      if (member.outcome !== null) counts.set(member.outcome, (counts.get(member.outcome) ?? 0) + 1);
+    }
+    if (
+      run === undefined || membership === undefined || summary.membershipRevision !== membership.membershipRevision ||
+      summary.expectedMemberCount !== members.length || members.some((member) => member.lifecycle !== "terminal") ||
+      members.some((member) => member.outcome === "claimed" && intentById.get(member.intentId ?? "")?.state !== "finalized") ||
+      summary.claimedCount !== (counts.get("claimed") ?? 0) ||
+      summary.alreadyClaimedCount !== (counts.get("already_claimed") ?? 0) ||
+      summary.ineligibleCount !== (counts.get("ineligible_at_cas") ?? 0) ||
+      summary.authorizationDeniedCount !== (counts.get("authorization_denied") ?? 0) ||
+      summary.policyDeferredCount !== (counts.get("policy_deferred") ?? 0) ||
+      summary.resourceDeferredCount !== (counts.get("resource_deferred") ?? 0) ||
+      summary.reconciliationRequiredCount !== (counts.get("reconciliation_required") ?? 0) ||
+      summary.failedCount !== (counts.get("failed") ?? 0) ||
+      summary.ownerRevision !== run.ownerRevision || summary.runRevision !== run.runRevision ||
+      summary.terminalStatus !== run.status
+    ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher terminal summary is inconsistent");
+  }
   const stateWithoutLifecycle = Object.freeze({
-    domain, projects, bootstrap, identity, grants, epochs, requests, decisions, audit,
+    domain, projects, bootstrap, identity, grants, epochs, authorizationGrantEpochLinks,
+    requests, decisions, audit,
     executionSequences, executions,
     executionOperationRequests, executionAuthorizationDecisions, executionOperationAudit,
     executionIntents, executionIntentAuthorizationBindings, executionObservations,
     executionReceipts, executionFinalizations, executionTerminalStates,
     manualTurns, manualBackendOperations, manualCompletionDecisions,
+    dispatcherTriggerRequests, dispatcherAuthorizationDecisions, dispatcherRuns, dispatcherAudit,
+    dispatcherReconciliationItems, dispatcherReconciliationSummaries,
+    dispatcherMemberships, dispatcherMembers,
+    dispatcherMemberDenialRequests, dispatcherMemberDenialDecisions, dispatcherMemberDenialAudit,
+    dispatcherRunSummaries,
     lifecycle: Object.freeze([]) as readonly ApplicationLifecycleAuthorization[],
   });
   for (const authorization of lifecycle) {
@@ -2554,13 +3402,20 @@ function applicationStateSha256ForVersion(
   state: ApplicationState,
   version: ApplicationStateDigestVersion,
 ): string {
+  const vocabularySevenEpochs = Object.freeze(state.epochs.filter((epoch) => epoch.vocabularyVersion === 7));
+  const vocabularySevenEpochIds = new Set(vocabularySevenEpochs.map((epoch) => epoch.epochId));
+  const vocabularySevenGrantIds = new Set(state.authorizationGrantEpochLinks
+    .filter((link) => vocabularySevenEpochIds.has(link.capabilityEpochId))
+    .map((link) => link.grantId));
+  const preDispatcherEpochs = Object.freeze(state.epochs.filter((epoch) => epoch.vocabularyVersion <= 6));
+  const preDispatcherGrants = Object.freeze(state.grants.filter((grant) => !vocabularySevenGrantIds.has(grant.grantId)));
   const phaseOneProjection = {
     audit: state.audit,
     bootstrap: state.bootstrap,
     decisions: state.decisions,
     domain: state.domain,
-    epochs: state.epochs,
-    grants: state.grants,
+    epochs: preDispatcherEpochs,
+    grants: preDispatcherGrants,
     identity: state.identity,
     registry: state.projects,
     requests: state.requests,
@@ -2570,7 +3425,7 @@ function applicationStateSha256ForVersion(
     executionSequences: state.executionSequences,
     executions: state.executions,
   };
-  return sha256(canonicalJson(version === 1 ? phaseOneProjection : version === 2 ? phaseTwoAProjection : {
+  const phaseTwoBProjection = {
     ...phaseTwoAProjection,
     executionAuthorizationDecisions: state.executionAuthorizationDecisions,
     executionFinalizations: state.executionFinalizations,
@@ -2584,11 +3439,32 @@ function applicationStateSha256ForVersion(
     manualBackendOperations: state.manualBackendOperations,
     manualCompletionDecisions: state.manualCompletionDecisions,
     manualTurns: state.manualTurns,
-  }));
+  };
+  const dispatcherProjection = {
+    ...phaseTwoBProjection,
+    authorizationGrantEpochLinks: state.authorizationGrantEpochLinks,
+    dispatcherAuthorizationDecisions: state.dispatcherAuthorizationDecisions,
+    dispatcherAudit: state.dispatcherAudit,
+    dispatcherMemberDenialAudit: state.dispatcherMemberDenialAudit,
+    dispatcherMemberDenialDecisions: state.dispatcherMemberDenialDecisions,
+    dispatcherMemberDenialRequests: state.dispatcherMemberDenialRequests,
+    dispatcherMembers: state.dispatcherMembers,
+    dispatcherMemberships: state.dispatcherMemberships,
+    dispatcherReconciliationItems: state.dispatcherReconciliationItems,
+    dispatcherReconciliationSummaries: state.dispatcherReconciliationSummaries,
+    dispatcherRuns: state.dispatcherRuns,
+    dispatcherRunSummaries: state.dispatcherRunSummaries,
+    dispatcherTriggerRequests: state.dispatcherTriggerRequests,
+    vocabularySevenEpochs,
+    vocabularySevenGrants: Object.freeze(state.grants.filter((grant) => vocabularySevenGrantIds.has(grant.grantId))),
+  };
+  return sha256(canonicalJson(
+    version === 1 ? phaseOneProjection : version === 2 ? phaseTwoAProjection : version === 3 ? phaseTwoBProjection : dispatcherProjection,
+  ));
 }
 
 export function applicationStateSha256(state: ApplicationState): string {
-  return applicationStateSha256ForVersion(state, 3);
+  return applicationStateSha256ForVersion(state, 4);
 }
 
 export function versionFourApplicationStateSha256(state: ApplicationState): string {
@@ -2597,6 +3473,10 @@ export function versionFourApplicationStateSha256(state: ApplicationState): stri
 
 export function versionFiveApplicationStateSha256(state: ApplicationState): string {
   return applicationStateSha256ForVersion(state, 2);
+}
+
+export function versionSixApplicationStateSha256(state: ApplicationState): string {
+  return applicationStateSha256ForVersion(state, 3);
 }
 
 function lifecycleAuthorizationDigestVersion(
@@ -2712,7 +3592,7 @@ function validateLifecycleAuthorizationState(
 ): Readonly<{
   authorization: ApplicationLifecycleAuthorization;
   stateSha256: string;
-  stateDigestVersion: 1 | 2 | 3;
+  stateDigestVersion: 1 | 2 | 3 | 4;
 }> {
   if (!isCanonicalUtcTimestamp(now)) throw persistenceFailure("INVALID_INPUT", "Lifecycle validation time is invalid");
   const authorization = state.lifecycle.find((candidate) => candidate.authorizationId === handoff.authorizationId);
@@ -2757,7 +3637,7 @@ export function validateLifecycleAuthorizationForUse(
 ): Readonly<{
   authorization: ApplicationLifecycleAuthorization;
   stateSha256: string;
-  stateDigestVersion: 1 | 2 | 3;
+  stateDigestVersion: 1 | 2 | 3 | 4;
 }> {
   return validateLifecycleAuthorizationState(readApplicationState(database), handoff, operation, generationId, now);
 }
@@ -2771,7 +3651,7 @@ export function validateLifecycleAuthorizationForUseUntransactional(
 ): Readonly<{
   authorization: ApplicationLifecycleAuthorization;
   stateSha256: string;
-  stateDigestVersion: 1 | 2 | 3;
+  stateDigestVersion: 1 | 2 | 3 | 4;
 }> {
   return validateLifecycleAuthorizationState(readApplicationStateUntransactional(database), handoff, operation, generationId, now);
 }
@@ -2883,9 +3763,11 @@ export class ApplicationTransaction {
   }
 
   insertCapabilityEpoch(record: NewCapabilityEpochRecord): void {
-    const table = record.vocabularyVersion === 6
-      ? "authorization_capability_epochs_v6"
-      : "authorization_capability_epochs";
+    const table = record.vocabularyVersion === 7
+      ? "authorization_capability_epochs_v7"
+      : record.vocabularyVersion === 6
+        ? "authorization_capability_epochs_v6"
+        : "authorization_capability_epochs";
     this.#database.prepare(
       `INSERT INTO ${table}(
         epoch_id, epoch_revision, actor_id, runtime_root_key, vocabulary_version,
@@ -2899,14 +3781,23 @@ export class ApplicationTransaction {
   }
 
   insertGrant(record: NewGrantRecord): void {
+    const v7EpochId = record.capabilityEpochId === undefined || record.capabilityEpochId === null ||
+      !tableExists(this.#database, "authorization_capability_epochs_v7") ||
+      this.#database.prepare("SELECT 1 FROM authorization_capability_epochs_v7 WHERE epoch_id=?").get(record.capabilityEpochId) === undefined
+      ? null
+      : record.capabilityEpochId;
     const v6EpochId = record.capabilityEpochId === undefined || record.capabilityEpochId === null ||
       this.#database.prepare("SELECT 1 FROM authorization_capability_epochs_v6 WHERE epoch_id=?").get(record.capabilityEpochId) === undefined
       ? null
       : record.capabilityEpochId;
     const v6Epoch = v6EpochId !== null;
-    const v6Action = !((PHASE2A_AUTHORIZATION_ACTIONS as readonly string[]).includes(record.action));
-    const table = v6Action ? "authorization_grants_v6" : "authorization_grants";
-    const storedCapabilityEpochId = v6Epoch && !v6Action ? null : record.capabilityEpochId ?? null;
+    const v7Epoch = v7EpochId !== null;
+    const legacyAction = (PHASE2A_AUTHORIZATION_ACTIONS as readonly string[]).includes(record.action);
+    const v6Action = (MANUAL_EXECUTION_AUTHORIZATION_ACTIONS as readonly string[]).includes(record.action);
+    const table = legacyAction ? "authorization_grants" : v6Action ? "authorization_grants_v6" : "authorization_grants_v7";
+    const storedCapabilityEpochId = (v6Epoch && legacyAction) || (v7Epoch && (legacyAction || v6Action))
+      ? null
+      : record.capabilityEpochId ?? null;
     this.#database.prepare(
       `INSERT INTO ${table}(
         grant_id, revision, actor_id, action, scope_kind, scope_project_id,
@@ -2920,11 +3811,23 @@ export class ApplicationTransaction {
       record.notBefore, record.expiresAt, record.revokedAt, record.issuerGrantId, record.sourceGrantId,
       storedCapabilityEpochId, record.createdRequestId,
     );
-    if (v6Epoch && !v6Action) {
+    if (v6Epoch && legacyAction) {
       this.#database.prepare(
         `INSERT INTO authorization_grant_epoch_v6_links(grant_id, action, capability_epoch_id)
          VALUES (?, ?, ?)`,
       ).run(record.grantId, record.action, v6EpochId);
+    }
+    if (v7Epoch && legacyAction) {
+      this.#database.prepare(
+        `INSERT INTO authorization_grant_epoch_v7_legacy_links(grant_id, action, capability_epoch_id)
+         VALUES (?, ?, ?)`,
+      ).run(record.grantId, record.action, v7EpochId);
+    }
+    if (v7Epoch && v6Action) {
+      this.#database.prepare(
+        `INSERT INTO authorization_grant_epoch_v7_v6_links(grant_id, action, capability_epoch_id)
+         VALUES (?, ?, ?)`,
+      ).run(record.grantId, record.action, v7EpochId);
     }
   }
 
@@ -2943,7 +3846,11 @@ export class ApplicationTransaction {
       record.expectedRequestCount, record.expectedDecisionCount, record.expectedAuditCount,
       record.issuedAt, record.expiresAt,
     );
-    if (tableExists(this.#database, "application_lifecycle_digest_v6")) {
+    if (tableExists(this.#database, "application_lifecycle_digest_v7")) {
+      this.#database.prepare(
+        "INSERT INTO application_lifecycle_digest_v7(authorization_id, state_digest_version) VALUES (?, 4)",
+      ).run(record.authorizationId);
+    } else if (tableExists(this.#database, "application_lifecycle_digest_v6")) {
       this.#database.prepare(
         "INSERT INTO application_lifecycle_digest_v6(authorization_id, state_digest_version) VALUES (?, 3)",
       ).run(record.authorizationId);
@@ -3313,6 +4220,231 @@ export class ApplicationTransaction {
     );
   }
 
+  insertDispatcherTriggerRequest(record: DispatcherTriggerRequestRecord): void {
+    this.#database.prepare(
+      `INSERT INTO dispatcher_trigger_requests(
+        request_id, observation_id, idempotency_key, correlation_id, actor_id, action,
+        worker_owner_id, requested_lease_seconds, result, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.requestId, record.observationId, record.idempotencyKey, record.correlationId,
+      record.actorId, record.action, record.workerOwnerId, record.requestedLeaseSeconds,
+      record.result, record.createdAt,
+    );
+  }
+
+  insertDispatcherAuthorizationDecision(record: DispatcherAuthorizationDecisionRecord): void {
+    this.#database.prepare(
+      `INSERT INTO dispatcher_authorization_decisions(
+        decision_id, request_id, actor_id, action, result, reason, policy_result,
+        grant_id, grant_revision, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.decisionId, record.requestId, record.actorId, record.action, record.result,
+      record.reason, record.policy, record.grantId, record.grantRevision, record.createdAt,
+    );
+  }
+
+  insertDispatcherRun(record: DispatcherRunRecord): void {
+    this.#database.prepare(
+      `INSERT INTO dispatcher_runs(
+        run_id, observation_id, request_id, decision_id, actor_id, owner_id, owner_revision,
+        run_revision, requested_lease_seconds, heartbeat_at, lease_expires_at, status, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.runId, record.observationId, record.requestId, record.decisionId, record.actorId,
+      record.ownerId, record.ownerRevision, record.runRevision, record.requestedLeaseSeconds,
+      record.heartbeatAt, record.leaseExpiresAt, record.status, record.createdAt, record.updatedAt,
+    );
+  }
+
+  insertDispatcherAudit(record: DispatcherAuditRecord): void {
+    this.#database.prepare(
+      `INSERT INTO dispatcher_audit(
+        audit_id, request_id, decision_id, run_id, event_kind, result,
+        actor_id, correlation_id, code, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.auditId, record.requestId, record.decisionId, record.runId, record.eventKind,
+      record.result, record.actorId, record.correlationId, record.code, record.createdAt,
+    );
+  }
+
+  advanceDispatcherRun(
+    runId: string,
+    ownerId: string,
+    expectedOwnerRevision: number,
+    expectedRunRevision: number,
+    expectedStatus: DispatcherRunStatus,
+    nextStatus: DispatcherRunStatus,
+    now: string,
+    leaseExpiresAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE dispatcher_runs
+       SET status=?, run_revision=run_revision+1, heartbeat_at=?, lease_expires_at=?, updated_at=?
+       WHERE run_id=? AND owner_id=? AND owner_revision=? AND run_revision=? AND status=?
+         AND heartbeat_at<? AND lease_expires_at<?`,
+    ).run(
+      nextStatus, now, leaseExpiresAt, now, runId, ownerId, expectedOwnerRevision,
+      expectedRunRevision, expectedStatus, now, leaseExpiresAt,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Dispatcher run owner/revision/status CAS failed", { runId });
+    }
+  }
+
+  takeOverDispatcherRun(
+    runId: string,
+    expectedOwnerId: string,
+    newOwnerId: string,
+    expectedOwnerRevision: number,
+    expectedRunRevision: number,
+    expectedStatus: DispatcherRunStatus,
+    now: string,
+    leaseExpiresAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE dispatcher_runs
+       SET owner_id=?, owner_revision=owner_revision+1, run_revision=run_revision+1,
+           heartbeat_at=?, lease_expires_at=?, updated_at=?
+       WHERE run_id=? AND owner_id=? AND owner_revision=? AND run_revision=? AND status=?
+         AND status NOT IN ('completed', 'partial', 'failed', 'interrupted') AND lease_expires_at<=?`,
+    ).run(
+      newOwnerId, now, leaseExpiresAt, now, runId, expectedOwnerId, expectedOwnerRevision,
+      expectedRunRevision, expectedStatus, now,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Dispatcher run takeover CAS or expiry check failed", { runId });
+    }
+  }
+
+  insertDispatcherReconciliationItem(record: DispatcherReconciliationItemRecord): void {
+    this.#database.prepare(
+      `INSERT INTO dispatcher_reconciliation_items(
+        reconciliation_item_id, run_id, ordinal, resource_kind, resource_id, disposition, code, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.reconciliationItemId, record.runId, record.ordinal, record.resourceKind,
+      record.resourceId, record.disposition, record.code, record.createdAt,
+    );
+  }
+
+  insertDispatcherReconciliationSummary(record: DispatcherReconciliationSummaryRecord): void {
+    this.#database.prepare(
+      `INSERT INTO dispatcher_reconciliation_summaries(
+        run_id, summary_revision, expected_count, reconciled_count, no_effect_count,
+        authorization_denied_count, ambiguous_count, failed_count, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.runId, record.summaryRevision, record.expectedCount, record.reconciledCount,
+      record.noEffectCount, record.authorizationDeniedCount, record.ambiguousCount,
+      record.failedCount, record.createdAt,
+    );
+  }
+
+  insertDispatcherMembership(record: DispatcherMembershipRecord): void {
+    this.#database.prepare(
+      `INSERT INTO dispatcher_memberships(run_id, membership_revision, expected_member_count, sealed_at)
+       VALUES (?, ?, ?, ?)`,
+    ).run(record.runId, record.membershipRevision, record.expectedMemberCount, record.sealedAt);
+  }
+
+  insertDispatcherMember(record: DispatcherMemberRecord): void {
+    this.#database.prepare(
+      `INSERT INTO dispatcher_members(
+        member_id, run_id, membership_revision, ordinal, project_id, project_resource_revision,
+        project_config_revision, task_id, task_revision, lifecycle, outcome, execution_id,
+        intent_id, code, revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.memberId, record.runId, record.membershipRevision, record.ordinal, record.projectId,
+      record.projectResourceRevision, record.projectConfigRevision, record.taskId, record.taskRevision,
+      record.lifecycle, record.outcome, record.executionId, record.intentId, record.code,
+      record.revision, record.createdAt, record.updatedAt,
+    );
+  }
+
+  insertDispatcherMemberDenialRequest(record: DispatcherMemberDenialRequestRecord): void {
+    this.#database.prepare(
+      `INSERT INTO dispatcher_member_denial_requests(
+        request_id, correlation_id, run_id, member_id, actor_id, action,
+        target_execution_id, target_revision, result, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.requestId, record.correlationId, record.runId, record.memberId,
+      record.actorId, record.action, record.targetExecutionId, record.targetRevision,
+      record.result, record.createdAt,
+    );
+  }
+
+  insertDispatcherMemberDenialDecision(record: DispatcherMemberDenialDecisionRecord): void {
+    this.#database.prepare(
+      `INSERT INTO dispatcher_member_denial_decisions(
+        decision_id, request_id, actor_id, action, result, reason, policy_result,
+        grant_id, grant_revision, project_id, resource_revision, config_revision, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.decisionId, record.requestId, record.actorId, record.action,
+      record.result, record.reason, record.policy, record.grantId, record.grantRevision,
+      record.projectId, record.resourceRevision, record.configRevision, record.createdAt,
+    );
+  }
+
+  insertDispatcherMemberDenialAudit(record: DispatcherMemberDenialAuditRecord): void {
+    this.#database.prepare(
+      `INSERT INTO dispatcher_member_denial_audit(
+        audit_id, request_id, decision_id, run_id, member_id, event_kind, result,
+        actor_id, correlation_id, target_execution_id, target_revision, code, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.auditId, record.requestId, record.decisionId, record.runId,
+      record.memberId, record.eventKind, record.result, record.actorId,
+      record.correlationId, record.targetExecutionId, record.targetRevision,
+      record.code, record.createdAt,
+    );
+  }
+
+  resolveDispatcherMember(
+    memberId: string,
+    runId: string,
+    expectedMembershipRevision: number,
+    expectedRevision: number,
+    outcome: DispatcherMemberOutcome,
+    executionId: string | null,
+    intentId: string | null,
+    code: string,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE dispatcher_members
+       SET lifecycle='terminal', outcome=?, execution_id=?, intent_id=?, code=?,
+           revision=revision+1, updated_at=?
+       WHERE member_id=? AND run_id=? AND membership_revision=? AND revision=? AND lifecycle='pending'`,
+    ).run(
+      outcome, executionId, intentId, code, updatedAt, memberId, runId,
+      expectedMembershipRevision, expectedRevision,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Dispatcher member terminal CAS failed", { memberId, runId });
+    }
+  }
+
+  insertDispatcherRunSummary(record: DispatcherRunSummaryRecord): void {
+    this.#database.prepare(
+      `INSERT INTO dispatcher_run_summaries(
+        run_id, membership_revision, expected_member_count, claimed_count, already_claimed_count,
+        ineligible_count, authorization_denied_count, policy_deferred_count, resource_deferred_count,
+        reconciliation_required_count, failed_count, terminal_status, owner_revision, run_revision, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.runId, record.membershipRevision, record.expectedMemberCount, record.claimedCount,
+      record.alreadyClaimedCount, record.ineligibleCount, record.authorizationDeniedCount,
+      record.policyDeferredCount, record.resourceDeferredCount, record.reconciliationRequiredCount,
+      record.failedCount, record.terminalStatus, record.ownerRevision, record.runRevision, record.createdAt,
+    );
+  }
+
   renewExecutionLease(
     executionId: string,
     ownerId: string,
@@ -3373,6 +4505,13 @@ export class ApplicationTransaction {
     if (changes(result.changes) === 0 && tableExists(this.#database, "authorization_grants_v6")) {
       result = this.#database.prepare(
         `UPDATE authorization_grants_v6
+         SET revision=revision+1, revoked_at=?, revoked_request_id=?
+         WHERE grant_id=? AND revision=? AND revoked_at IS NULL`,
+      ).run(revokedAt, requestId, grantId, expectedRevision);
+    }
+    if (changes(result.changes) === 0 && tableExists(this.#database, "authorization_grants_v7")) {
+      result = this.#database.prepare(
+        `UPDATE authorization_grants_v7
          SET revision=revision+1, revoked_at=?, revoked_request_id=?
          WHERE grant_id=? AND revision=? AND revoked_at IS NULL`,
       ).run(revokedAt, requestId, grantId, expectedRevision);

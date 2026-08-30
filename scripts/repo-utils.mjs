@@ -23,6 +23,8 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/authorization.ts",
   "src/cli-api.ts",
   "src/cli.ts",
+  "src/dispatcher-application.ts",
+  "src/dispatcher.ts",
   "src/domain.ts",
   "src/execution-application.ts",
   "src/execution-loop.ts",
@@ -53,6 +55,7 @@ export const EXPECTED_MIGRATION_FILES = Object.freeze([
   "migrations/0004-phase1-cli.sql",
   "migrations/0005-phase2-execution-claim.sql",
   "migrations/0006-phase2-manual-execution.sql",
+  "migrations/0007-phase2-dispatcher.sql",
 ]);
 
 const ALLOWED_PERSISTENCE_BUILTINS = new Set([

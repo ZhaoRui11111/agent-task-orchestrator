@@ -12,10 +12,10 @@ import {
   repoRoot,
 } from "../scripts/repo-utils.mjs";
 
-test("package status exposes the reliable Manual loop without overstating a product runtime", () => {
+test("package status exposes the reconcile-first Manual dispatcher without overstating a product runtime", () => {
   assert.deepEqual(getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "phase2-reliable-manual-execution-loop",
+    phase: "phase2-reconcile-first-manual-dispatcher",
     domainCoreImplemented: true,
     persistenceFoundationImplemented: true,
     projectRegistryImplemented: true,
@@ -25,6 +25,7 @@ test("package status exposes the reliable Manual loop without overstating a prod
     backupRestoreDoctorImplemented: true,
     durableExecutionClaimFoundationImplemented: true,
     reliableManualExecutionLoopImplemented: true,
+    reconcileFirstManualDispatcherImplemented: true,
     productRuntimeImplemented: false,
     executionRuntimeImplemented: false,
     supportedAdapters: ["manual-local"],

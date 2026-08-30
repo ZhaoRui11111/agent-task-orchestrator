@@ -2,6 +2,7 @@ import {
   AUTHORIZATION_ACTIONS,
   PHASE1_AUTHORIZATION_ACTIONS,
   PHASE2A_AUTHORIZATION_ACTIONS,
+  PHASE2B_AUTHORIZATION_ACTIONS,
   canIssueGrant,
   evaluateAuthorization,
   isAuthorizationAction,
@@ -586,20 +587,23 @@ function sameLocalIdentity(state: ApplicationState, identity: OperationIdentity,
 
 const PHASE1_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(PHASE1_AUTHORIZATION_ACTIONS));
 const PHASE2A_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(PHASE2A_AUTHORIZATION_ACTIONS));
+const PHASE2B_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(PHASE2B_AUTHORIZATION_ACTIONS));
 const CURRENT_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
 
-function actionsForVocabulary(version: 4 | 5 | 6): readonly AuthorizationAction[] {
+function actionsForVocabulary(version: 4 | 5 | 6 | 7): readonly AuthorizationAction[] {
   return version === 4
     ? PHASE1_AUTHORIZATION_ACTIONS
     : version === 5
       ? PHASE2A_AUTHORIZATION_ACTIONS
-      : AUTHORIZATION_ACTIONS;
+      : version === 6
+        ? PHASE2B_AUTHORIZATION_ACTIONS
+        : AUTHORIZATION_ACTIONS;
 }
 
 interface RenewalAssessment {
   readonly mode: "adopted" | "renewed";
   readonly nextEpochRevision: number;
-  readonly vocabularyVersion: 4 | 5 | 6;
+  readonly vocabularyVersion: 4 | 5 | 6 | 7;
 }
 
 function assessRenewal(
@@ -650,8 +654,8 @@ function assessRenewal(
 
 interface UpgradeAssessment {
   readonly nextEpochRevision: number;
-  readonly currentVocabularyVersion: 4 | 5;
-  readonly targetVocabularyVersion: 5 | 6;
+  readonly currentVocabularyVersion: 4 | 5 | 6;
+  readonly targetVocabularyVersion: 5 | 6 | 7;
 }
 
 function assessCapabilityUpgrade(
@@ -666,7 +670,7 @@ function assessCapabilityUpgrade(
   }
   const latestEpoch = state.epochs.at(-1);
   const currentVocabulary = latestEpoch?.vocabularyVersion ?? bootstrap.vocabularyVersion;
-  if ((currentVocabulary !== 4 && currentVocabulary !== 5) ||
+  if ((currentVocabulary !== 4 && currentVocabulary !== 5 && currentVocabulary !== 6) ||
       (bootstrap.vocabularyVersion === 3 && latestEpoch === undefined)) {
     return "not_eligible";
   }
@@ -688,7 +692,7 @@ function assessCapabilityUpgrade(
   return Object.freeze({
     nextEpochRevision: (latestEpoch?.epochRevision ?? 0) + 1,
     currentVocabularyVersion: currentVocabulary,
-    targetVocabularyVersion: currentVocabulary === 4 ? 5 as const : 6 as const,
+    targetVocabularyVersion: currentVocabulary === 4 ? 5 as const : currentVocabulary === 5 ? 6 as const : 7 as const,
   });
 }
 
@@ -1254,7 +1258,9 @@ function createApplicationServiceInternal(
         vocabularyVersion: assessment.targetVocabularyVersion,
         actionSetSha256: assessment.targetVocabularyVersion === 5
           ? PHASE2A_CAPABILITY_ACTION_SET_SHA256
-          : CURRENT_CAPABILITY_ACTION_SET_SHA256,
+          : assessment.targetVocabularyVersion === 6
+            ? PHASE2B_CAPABILITY_ACTION_SET_SHA256
+            : CURRENT_CAPABILITY_ACTION_SET_SHA256,
         requestId: identity.requestId,
         createdAt: identity.now,
         expiresAt: command.expiresAt,
@@ -1413,7 +1419,9 @@ function createApplicationServiceInternal(
           ? PHASE1_CAPABILITY_ACTION_SET_SHA256
           : assessment.vocabularyVersion === 5
             ? PHASE2A_CAPABILITY_ACTION_SET_SHA256
-            : CURRENT_CAPABILITY_ACTION_SET_SHA256,
+            : assessment.vocabularyVersion === 6
+              ? PHASE2B_CAPABILITY_ACTION_SET_SHA256
+              : CURRENT_CAPABILITY_ACTION_SET_SHA256,
         requestId: identity.requestId,
         createdAt: identity.now,
         expiresAt: command.expiresAt,

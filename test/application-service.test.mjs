@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   AUTHORIZATION_ACTIONS,
   PHASE2A_AUTHORIZATION_ACTIONS,
+  PHASE2B_AUTHORIZATION_ACTIONS,
   createApplicationService,
   currentSchemaVersion,
   inspectPrimaryIdentity,
@@ -464,24 +465,36 @@ test("a migrated v3 bootstrap is adopted once without rewriting historical actor
     assert.equal(manualUpgraded.ok, true);
     assert.equal(manualUpgraded.value.mode, "upgraded");
     assert.equal(manualUpgraded.value.epochRevision, 3);
-    assert.equal(manualUpgraded.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
+    assert.equal(manualUpgraded.value.capabilityCount, PHASE2B_AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
     assert.equal(state.epochs.length, 3);
     assert.equal(state.epochs.at(-1)?.vocabularyVersion, 6);
-    assert.equal(state.grants.length, 15 + 19 + PHASE2A_AUTHORIZATION_ACTIONS.length + AUTHORIZATION_ACTIONS.length);
+    assert.equal(state.grants.length, 15 + 19 + PHASE2A_AUTHORIZATION_ACTIONS.length + PHASE2B_AUTHORIZATION_ACTIONS.length);
     assert.equal(state.grants.some(
       (grant) => grant.actorId === "owner" && grant.action === "execution.completion.accept" && grant.revokedAt === null,
     ), true);
-    assert.equal(service.upgrade({
+    const dispatcherUpgraded = service.upgrade({
       kind: "authorization.capability.upgrade",
       expiresAt: "2026-09-24T12:00:00.000Z",
+    });
+    assert.equal(dispatcherUpgraded.ok, true);
+    assert.equal(dispatcherUpgraded.value.epochRevision, 4);
+    assert.equal(dispatcherUpgraded.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
+    state = readApplicationStateForOwner(store);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 7);
+    assert.equal(state.grants.some(
+      (grant) => grant.actorId === "owner" && grant.action === "dispatch.run" && grant.revokedAt === null,
+    ), true);
+    assert.equal(service.upgrade({
+      kind: "authorization.capability.upgrade",
+      expiresAt: "2026-09-25T12:00:00.000Z",
     }).error.code, "CAPABILITY_UPGRADE_NOT_ELIGIBLE");
 
     await store.close();
     store = await openPersistence(fixture.layout, { applicationVersion: "v3-adoption-restart" });
     state = readApplicationStateForOwner(store);
     assert.equal(state.identity.actorId, "owner");
-    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 6);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 7);
     assert.equal(state.grants.some(
       (grant) => grant.actorId === "owner" && grant.action === "execution.claim" && grant.revokedAt === null,
     ), true);

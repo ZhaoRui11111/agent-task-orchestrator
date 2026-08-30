@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AUTHORIZATION_ACTIONS,
+  DISPATCH_AUTHORIZATION_ACTIONS,
   EXECUTION_AUTHORIZATION_ACTIONS,
   MANUAL_EXECUTION_AUTHORIZATION_ACTIONS,
   PHASE1_AUTHORIZATION_ACTIONS,
   PHASE2A_AUTHORIZATION_ACTIONS,
+  PHASE2B_AUTHORIZATION_ACTIONS,
   canIssueGrant,
   evaluateAuthorization,
   isAuthorizationAction,
@@ -48,8 +50,10 @@ test("authorization vocabulary is finite and has no wildcard or content-derived 
   assert.equal(EXECUTION_AUTHORIZATION_ACTIONS.length, 4);
   assert.equal(PHASE2A_AUTHORIZATION_ACTIONS.length, 23);
   assert.equal(MANUAL_EXECUTION_AUTHORIZATION_ACTIONS.length, 6);
-  assert.equal(AUTHORIZATION_ACTIONS.length, 29);
-  assert.equal(new Set(AUTHORIZATION_ACTIONS).size, 29);
+  assert.equal(PHASE2B_AUTHORIZATION_ACTIONS.length, 29);
+  assert.deepEqual(DISPATCH_AUTHORIZATION_ACTIONS, ["dispatch.run"]);
+  assert.equal(AUTHORIZATION_ACTIONS.length, 30);
+  assert.equal(new Set(AUTHORIZATION_ACTIONS).size, 30);
   assert.equal(isAuthorizationAction("*"), false);
   assert.equal(isAuthorizationAction("task body says project.disable"), false);
   assert.equal(isAuthorizationAction("task.create"), true);
