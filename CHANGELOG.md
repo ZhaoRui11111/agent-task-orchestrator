@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Decomposed the combined application persistence repository into database-free
+  model, per-table reader, digest, combined-state, lifecycle, and transaction
+  modules behind one explicit re-export facade. The application family still
+  has one binding and `ApplicationTransaction` owner; schema-version-1 bytes,
+  SQL/CAS/fence ordering, digest version 4, backup/restore/doctor behavior, and
+  all local explicit-Manual product results remain unchanged.
 - Replaced the unreleased limited-`ato.api/v1`/explicit-`ato.api/v2` split with
   one current `ato.api/v1` local explicit-Manual product: one 33-command
   registry, one 37-code public error table, identical omitted/explicit-v1
