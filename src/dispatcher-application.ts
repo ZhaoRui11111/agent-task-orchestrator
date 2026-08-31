@@ -93,6 +93,7 @@ export type DispatcherResult<T> = DispatcherSuccess<T> | DispatcherFailure;
 export interface DispatcherIngress {
   currentActor(): TrustedActorAssertion;
   currentWorkerOwner(): string;
+  currentExecutionLeaseOwner?(): string;
   currentRuntimeRootKey(): string;
   now(): string;
   nextId(kind:
@@ -218,6 +219,7 @@ export interface DispatcherApplicationTestHooks {
 interface TrustedContext {
   readonly actor: TrustedActorAssertion;
   readonly ownerId: string;
+  readonly executionOwnerId: string;
   readonly runtimeRootKey: string;
   readonly now: string;
 }
@@ -273,11 +275,13 @@ function context(ingress: DispatcherIngress): TrustedContext | null {
   try {
     const actor = parseActor(ingress.currentActor());
     const ownerId = ingress.currentWorkerOwner();
+    const executionOwnerId = ingress.currentExecutionLeaseOwner?.() ?? ownerId;
     const runtimeRootKey = ingress.currentRuntimeRootKey();
     const now = ingress.now();
-    return actor !== null && operationalIdentifier(ownerId) && boundedText(runtimeRootKey, 512) &&
+    return actor !== null && operationalIdentifier(ownerId) && operationalIdentifier(executionOwnerId) &&
+      boundedText(runtimeRootKey, 512) &&
       isCanonicalUtcTimestamp(now)
-      ? Object.freeze({ actor, ownerId, runtimeRootKey, now }) : null;
+      ? Object.freeze({ actor, ownerId, executionOwnerId, runtimeRootKey, now }) : null;
   } catch {
     return null;
   }
@@ -853,7 +857,7 @@ function createDispatcherApplicationServiceInternal(
     const existingRequest = state.dispatcherTriggerRequests.find((candidate) => candidate.idempotencyKey === idempotencyIdentity);
     if (existingRequest !== undefined) {
       const run = state.dispatcherRuns.find((candidate) => candidate.requestId === existingRequest.requestId);
-      if (existingRequest.actorId !== trusted.actor.actorId || existingRequest.workerOwnerId !== trusted.ownerId ||
+      if (existingRequest.actorId !== trusted.actor.actorId ||
         existingRequest.requestedLeaseSeconds !== command.leaseDurationSeconds) {
         return failed("IDEMPOTENCY_CONFLICT", "Manual trigger identity is bound to another tuple");
       }
@@ -871,7 +875,7 @@ function createDispatcherApplicationServiceInternal(
         if (currentRuntime !== null) return Object.freeze({ ...currentRuntime, ...identity });
         const concurrent = current.dispatcherTriggerRequests.find((candidate) => candidate.idempotencyKey === idempotencyIdentity);
         if (concurrent !== undefined) {
-          if (concurrent.actorId !== trusted.actor.actorId || concurrent.workerOwnerId !== trusted.ownerId ||
+          if (concurrent.actorId !== trusted.actor.actorId ||
             concurrent.requestedLeaseSeconds !== command.leaseDurationSeconds) {
             return failed("IDEMPOTENCY_CONFLICT", "Manual trigger raced with another observation", identity);
           }
@@ -1292,7 +1296,7 @@ function createDispatcherApplicationServiceInternal(
         const execution: ExecutionAttempt = Object.freeze({
           executionId: executionId!, taskId: task.id, attemptNumber: 1, operationKind: "claim" as const,
           status: "active" as const, idempotencyKey: stableId("dispatch-claim", run!.runId, member.memberId),
-          ownerId: trusted.ownerId, requestedLeaseSeconds: executionLeaseSeconds,
+          ownerId: trusted.executionOwnerId, requestedLeaseSeconds: executionLeaseSeconds,
           predecessorExecutionRevision: null, predecessorLeaseRevision: null, predecessorFencingToken: null,
           leaseRevision: 1, leaseExpiresAt: leaseExpiry(trusted.now, executionLeaseSeconds),
           fencingToken: 1, revision: 1, expectedTaskRevision: task.revision,

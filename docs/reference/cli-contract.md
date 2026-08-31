@@ -2,24 +2,27 @@
 
 ## Status and authority
 
-This file is the sole normative owner of the implemented local Phase 1 `ato`
-command tree, argument grammar, confirmation phrases, `ato.api/v1` output,
-public error codes, and process exit codes. The CLI is an interface owner. It
+This file is the sole normative owner of the implemented local `ato` command
+trees, argument grammar, confirmation phrases, `ato.api/v1` and `ato.api/v2`
+output, public error codes, and process exit codes. The CLI is an interface owner. It
 does not own Project, Task, dependency, authorization, migration, backup,
 restore, or doctor judgments.
 
 Every Project, Task, dependency, grant, status, and policy operation invokes the
 typed application service. Backup and restore consume the application service's
 typed lifecycle authorization and then invoke the persistence lifecycle owner.
-Doctor invokes the persistence-owned read-only classifier. The CLI does not open
+Doctor invokes the persistence-owned read-only classifier. Phase 2 commands
+invoke one typed product facade, which derives non-public durable tuples and
+calls the existing dispatcher or reliable execution owner. The CLI does not open
 SQLite, parse SQL, copy Domain rules, inspect arbitrary files, or accept an actor
 or authority from command content.
 
-This is a local single-user Phase 1 surface, not a released compatibility or
-platform-support promise. It exposes no execution command,
-running/completed transition, claim, completion, dispatcher, scheduler, adapter, MCP, Git, network,
-secret, release, deployment, repair, cleanup, or arbitrary shell/filesystem
-operation.
+This is a local single-user surface, not a released compatibility or
+platform-support promise. `ato.api/v2` exposes only the explicit local Manual
+control/recovery subset documented below. It exposes no scheduler, scheduled
+trigger, daemon, MCP, Codex/Git/workspace adapter, network service, ProjectPolicy,
+CompletionBackend/gates, secret operation, release, deployment, repair, cleanup,
+or arbitrary shell/filesystem operation.
 
 ## Invocation and global grammar
 
@@ -33,7 +36,7 @@ the command:
 | Option | Values | Default |
 | --- | --- | --- |
 | `--format` | exactly `human` or `json` | `human` |
-| `--api-version` | exactly `ato.api/v1` | `ato.api/v1` |
+| `--api-version` | exactly `ato.api/v1` or `ato.api/v2` | `ato.api/v1` |
 | `--runtime-root` | a bounded absolute trusted local runtime root | the trusted per-user application-data root |
 
 Each global may occur at most once. Options use two tokens; `--name=value`,
@@ -54,7 +57,7 @@ different trust root or a lifecycle descendant.
 
 ## Command tree
 
-The following table is exhaustive. Required options are shown without brackets;
+The following table is exhaustive for `ato.api/v1`. Required options are shown without brackets;
 bracketed options are optional.
 
 | Command ID | Invocation after globals |
@@ -259,8 +262,153 @@ package. It does not create a release or support claim. Unknown fields remain
 rejected; changing a field's meaning, requiredness, error meaning, authorization,
 or state effect requires a new API major under the
 [versioning contract](versioning-compatibility-contract.md#public-api-evolution).
-Schema v6 and the package-root claim/Manual execution services do not extend
+Schema v7 and the package-root claim/Manual execution services do not extend
 this command tree. In particular, the CLI cannot upgrade to, issue, evaluate,
 claim, start, inspect, report, resume, retry, cancel, complete, renew, or take
 over an execution capability. `task.cancel` also cannot bypass an active
 execution or act as verified interruption.
+
+## Explicit `ato.api/v2` Manual product surface
+
+`ato.api/v2` is selected only by the exact leading pair `--api-version
+ato.api/v2`. Omitting the pair still selects `ato.api/v1`. Version selection and
+the closed per-major command registry are evaluated before runtime selection,
+trusted ingress, persistence, authorization, or Domain evaluation. Unknown
+majors and commands never fall back, coerce, or guess another major.
+
+Version 2 contains every version-1 command with the same option grammar,
+application semantics, result field order, fixed error meaning, exit code, and
+state effect. Only the JSON envelope's `apiVersion` becomes `ato.api/v2`.
+Version-1 `authorization issue` and `authorization evaluate` continue to accept
+only the historical nineteen actions. Under version 2 those two commands accept
+exactly the current finite thirty actions; there is no extension field or
+caller-defined action.
+
+The following additions are exhaustive:
+
+| Command ID | Invocation after globals |
+| --- | --- |
+| `authorization.upgrade` | `authorization upgrade --expires-at TIME --confirm "UPGRADE LOCAL CAPABILITIES"` |
+| `dispatch.run` | `dispatch run --idempotency-key ID --lease-duration-seconds N` |
+| `dispatch.resume` | `dispatch resume --run-id ID` |
+| `execution.inspect` | `execution inspect COMMON` |
+| `execution.resume` | `execution resume COMMON --continuation-reference ID --required-action-receipt-id ID` |
+| `execution.retry` | `execution retry COMMON --continuation-reference ID --required-action-receipt-id ID` |
+| `execution.request-cancel` | `execution request-cancel COMMON --reason-code ID` |
+| `manual.outcome-report` | `manual outcome-report COMMON --report-id ID --outcome OP --code ID [--evidence-reference ID] --confirm "RECORD MANUAL OUTCOME"` |
+| `execution.accept-manual-completion` | `execution accept-manual-completion COMMON --confirm "ACCEPT MANUAL COMPLETION"` |
+
+`COMMON` is exactly, in any option order after the command:
+
+```text
+--project-id ID
+--expected-project-resource-revision REV
+--expected-project-config-revision REV
+--task-id ID
+--expected-task-revision REV
+--execution-id ID
+--expected-execution-revision REV
+--expected-attempt-number REV
+--expected-fencing-token REV
+--idempotency-key ID
+```
+
+Every version-2 Phase 2 ID and reference is ASCII
+`[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`. The `--reason-code` and Manual outcome
+`--code` values use the closed execution-code bound
+`[A-Za-z0-9][A-Za-z0-9._:-]{0,63}`. `REV` is a canonical positive safe integer.
+`N` is a canonical whole safe integer from `30` through `3600`.
+`OP` is exactly `activate`, `wait`, `succeed`, `fail`, or
+`confirm_cancelled`. Upgrade `TIME` is canonical UTC, strictly more than seven
+and no more than thirty-one days after the trusted current time. There are no
+aliases, implicit fields, alternate confirmation phrases, or extension maps.
+
+### Version-2 ownership and effects
+
+The current OS/runtime ingress alone supplies actor, principal, runtime-root
+identity, Manual dispatcher owner, and execution lease owner. Command text
+cannot supply them. `authorization.upgrade` performs exactly one eligible,
+confirmed contiguous vocabulary transition (`4` to `5`, `5` to `6`, or `6` to
+`7`) and never dispatches work. Migration and renewal never upgrade a
+vocabulary.
+
+The product facade reads the current schema-v7 state, validates the complete
+caller CAS tuple, derives backend/thread/input/policy/deadline/observation,
+receipt, and finalization data, then invokes the existing owner. `dispatch.run`
+and `dispatch.resume` invoke only the reconcile-first Manual dispatcher; the
+CLI never enumerates candidates or computes completeness. Execution operations
+invoke only the reliable execution owner. An exact idempotency replay returns
+the durable result without another effect; a key bound to another tuple is a
+conflict.
+
+Manual `succeed` records `turn_succeeded` and leaves the Task `running`. Only a
+separate current `execution.completion.accept` authorization, exact `ACCEPT
+MANUAL COMPLETION` confirmation, and derived verified receipt/finalization may
+move that Task to `completed`. Cancellation remains request, observation, and
+verified interruption rather than a blind terminal write.
+
+### Version-2 success objects and redaction
+
+Inherited version-1 results retain their exact shapes. New results have these
+exact field orders:
+
+- `authorization.upgrade`: `mode`, `expiresAt`, `capabilityCount`,
+  `epochRevision`.
+- `dispatch.run` and `dispatch.resume`: `runId`, `status`, `ownerRevision`,
+  `runRevision`, `heartbeatAt`, `leaseExpiresAt`, `membershipRevision`,
+  `expectedMemberCount`, `pendingMemberCount`, `terminalMemberCount`,
+  `terminalStatus`, `replayed`.
+- Every execution or Manual command: `executionId`, `taskId`, `taskState`,
+  `taskRevision`, `executionRevision`, `attemptNumber`, `fencingToken`,
+  `lifecycle`, `observationNumber`, `waiting`, `replayed`.
+
+`waiting` is null or exactly `reason`, `phase`, `requiredAction`,
+`lastErrorCode`, `lastErrorSummary`, `retryable`, `retryCount`, `retryAfter`,
+`executionId`, `workspaceRevision`, `waitingTaskRevision` in that order.
+
+These results omit actor/principal/owner, Project/runtime paths,
+input/policy/backend/thread/intent/receipt/finalization identifiers, Task body,
+confirmation and idempotency text, prompt/source/environment/credential values,
+raw adapter payload/error, SQL, stack, and arbitrary text. JSON and human modes
+retain the envelope, one-line stdout, empty-stderr, escaping, and field-order
+rules above.
+
+### Version-2 public errors
+
+Version 2 inherits every version-1 code, fixed message, and exit unchanged, and
+adds exactly:
+
+| Exit | Code | Fixed message |
+| --- | --- | --- |
+| 5 | `EXECUTION_NOT_FOUND` | `The execution was not found.` |
+| 5 | `DISPATCH_RUN_NOT_FOUND` | `The dispatcher run was not found.` |
+| 6 | `STALE_FENCE` | `The execution or dispatcher ownership fence is stale.` |
+| 6 | `LEASE_EXPIRED` | `The execution or dispatcher lease has expired.` |
+| 6 | `RECONCILIATION_REQUIRED` | `Durable reconciliation is required before the operation can continue.` |
+| 7 | `ADAPTER_FAILURE` | `The Manual execution adapter failed.` |
+| 8 | `AMBIGUOUS_EXTERNAL_STATE` | `The external execution state is ambiguous.` |
+
+Application and persistence mappings remain the exhaustive version-1 mappings;
+capability-upgrade ineligibility is `AUTHORIZATION_DENIED`. Reliable-loop
+`INVALID_INPUT` maps to `CLI_INVALID_INPUT`; `AUTHORIZATION_DENIED`,
+`CONFIRMATION_REQUIRED`, `PROJECT_NOT_FOUND`, `TASK_NOT_FOUND`, and
+`STALE_REVISION` map to the same public codes; `PROJECT_DISABLED`,
+`TASK_NOT_ELIGIBLE`, and `EXECUTION_TERMINAL` map to `DOMAIN_REJECTED`;
+`EXECUTION_NOT_FOUND`, `STALE_FENCE`, `LEASE_EXPIRED`,
+`RECONCILIATION_REQUIRED`, `ADAPTER_FAILURE`, and
+`AMBIGUOUS_EXTERNAL_STATE` map to the same version-2 codes;
+`IDEMPOTENCY_CONFLICT` maps to `OPERATION_CONFLICT`;
+`PROJECT_IDENTITY_CHANGED` maps to `PROJECT_REGISTRY_REJECTED`; and
+`PERSISTENCE_FAILURE` maps to `PERSISTENCE_UNAVAILABLE`.
+
+Dispatcher `INVALID_INPUT` maps to `CLI_INVALID_INPUT`;
+`AUTHORIZATION_DENIED` and `STALE_REVISION` map to the same public codes;
+`RUN_NOT_FOUND` maps to `DISPATCH_RUN_NOT_FOUND`; `IDEMPOTENCY_CONFLICT` and
+`LEASE_NOT_EXPIRED` map to `OPERATION_CONFLICT`; `STALE_OWNER` maps to
+`STALE_FENCE`; `LEASE_EXPIRED` maps unchanged; `RUN_NOT_RECONCILED`,
+`RUN_NOT_SEALED`, `MEMBER_NOT_FOUND`, `MEMBER_NOT_PENDING`, and
+`RECONCILIATION_INCOMPLETE` map to `RECONCILIATION_REQUIRED`;
+`PROJECT_IDENTITY_CHANGED` maps to `PROJECT_REGISTRY_REJECTED`;
+`INTEGRITY_FAILURE` maps to `STATE_CORRUPT`; and `PERSISTENCE_FAILURE` maps to
+`PERSISTENCE_UNAVAILABLE`. Any impossible value becomes `INTERNAL_ERROR`; no
+internal message is reflected.

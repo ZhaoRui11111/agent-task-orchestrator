@@ -5,10 +5,11 @@
 This file is the sole normative owner of planned correlation, structured
 operational events, diagnostic access, and the application of redaction to
 operational events. No logger, diagnostic command, event exporter, or telemetry
-pipeline exists today. Schema-v7 dispatcher request/decision/audit,
-reconciliation, member, no-execution member-denial, and summary rows implement
-only a closed bounded durable evidence subset; they are not log files or a
-general event sink.
+pipeline exists today. Schema-v7 application, Manual-loop, dispatcher request/
+decision/audit, reconciliation, member, no-execution member-denial, and summary
+rows plus closed `ato.api/v1` and `ato.api/v2` responses implement only a
+bounded durable/display evidence subset; they are not log files or a general
+event sink.
 
 Data classification, allowed disclosure, content transformations, retention,
 and default no telemetry are owned by the

@@ -250,13 +250,25 @@ test("wrong actor and missing named confirmation cannot invoke the Manual writer
       evidenceReference: "security-evidence-ref",
       lastObservationNumber: 1,
     });
-    const exactBeforeWrongActor = structuredClone(readApplicationStateForOwner(runtime.store));
+    const beforeWrongActor = structuredClone(readApplicationStateForOwner(runtime.store));
     runtime.ingress.setActor("intruder");
     const wrongActor = service.recordManualOutcome(report);
     assert.equal(wrongActor.ok, false);
     assert.equal(wrongActor.error.code, "AUTHORIZATION_DENIED");
     assert.equal(outcomeCalls, 0);
-    assert.deepEqual(readApplicationStateForOwner(runtime.store), exactBeforeWrongActor);
+    const afterWrongActor = readApplicationStateForOwner(runtime.store);
+    assert.deepEqual(afterWrongActor.domain, beforeWrongActor.domain);
+    assert.deepEqual(afterWrongActor.executions, beforeWrongActor.executions);
+    assert.deepEqual(afterWrongActor.manualTurns, beforeWrongActor.manualTurns);
+    assert.deepEqual(afterWrongActor.manualBackendOperations, beforeWrongActor.manualBackendOperations);
+    assert.equal(afterWrongActor.executionIntents.length, beforeWrongActor.executionIntents.length);
+    assert.equal(afterWrongActor.executionOperationRequests.length, beforeWrongActor.executionOperationRequests.length + 1);
+    assert.equal(afterWrongActor.executionAuthorizationDecisions.find(
+      (decision) => decision.requestId === wrongActor.requestId,
+    )?.reason, "actor_mismatch");
+    assert.equal(afterWrongActor.executionOperationAudit.find(
+      (audit) => audit.requestId === wrongActor.requestId,
+    )?.code, "actor_mismatch");
 
     runtime.ingress.setActor(ACTOR);
     runtime.ingress.setOperationConfirmation(false);

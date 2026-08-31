@@ -105,15 +105,21 @@ mutation.
 
 ### Current CLI and doctor display
 
-The local `ato` human and `ato.api/v1` outputs use closed allowlisted result
-shapes and fixed public errors. They never serialize Task body, cancellation
-reason, full Project/runtime path or filesystem identity, actor/principal,
-request/correlation/decision/audit/lifecycle/restore identity, application-state
-digest, secret, environment value, raw SQL/page/error, cause, or stack. Required
-bounded operational Project, Task, grant, and backup IDs may appear only in the
-documented workflow result shapes.
+The local `ato` human, closed `ato.api/v1`, and explicit `ato.api/v2` outputs use
+closed allowlisted result shapes and fixed public errors. They never serialize
+Task body, cancellation reason, full Project/runtime path or filesystem
+identity, actor/principal/worker owner, request/correlation/decision/audit/
+lifecycle/restore identity, backend/thread/intent/receipt/finalization identity,
+confirmation or idempotency text, application-state digest, secret,
+environment value, raw adapter payload/error, SQL/page/error, cause, or stack.
+Required bounded operational Project, Task, execution, dispatcher-run, grant,
+and backup IDs may appear only in the documented workflow result shapes.
 
-Failures return only the stable public code and fixed message. Read-only doctor
+The v2 execution projection exposes only execution/Task revisions, attempt and
+fence numbers, closed lifecycle, observation number, and the exact bounded
+waiting view. Its dispatcher projection exposes only run status, revisions,
+lease times, bounded membership counts, and terminal status. Failures return
+only the stable public code and fixed message. Read-only doctor
 returns only its six closed health fields; it does not export rows, paths,
 manifests, raw migration evidence, or diagnostic files. Both modes emit exactly
 one line to stdout and no raw stderr diagnostics. Exact serialization belongs to

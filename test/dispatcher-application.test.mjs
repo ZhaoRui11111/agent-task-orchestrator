@@ -18,12 +18,14 @@ function ingress(label) {
   let sequence = 0;
   let now = "2026-08-30T12:00:00.000Z";
   let owner = "dispatcher-worker-a";
+  let executionOwner = "dispatcher-worker-a";
   let runtimeRootKey = "pending-runtime-root";
   let principal = PRINCIPAL;
   return {
     currentActor: () => ({ actorId: ACTOR, principal }),
-    currentLeaseOwner: () => owner,
+    currentLeaseOwner: () => executionOwner,
     currentWorkerOwner: () => owner,
+    currentExecutionLeaseOwner: () => executionOwner,
     currentRuntimeRootKey: () => runtimeRootKey,
     now: () => now,
     nextId: (kind) => `${kind}-${label}-${++sequence}`,
@@ -31,6 +33,7 @@ function ingress(label) {
     confirmOperation: ({ action }) => ({ confirmationId: `confirmation-${label}-${action}-${++sequence}` }),
     setNow(value) { now = value; },
     setOwner(value) { owner = value; },
+    setExecutionOwner(value) { executionOwner = value; },
     setPrincipal(value) { principal = value; },
     setRuntimeRootKey(value) { runtimeRootKey = value; },
   };
@@ -66,6 +69,7 @@ async function prepareRuntime(prefix, taskCount = 1) {
 test("dispatcher commits reconciliation, sealed membership, claim and prepared start intent before the Manual effect", async () => {
   const runtime = await prepareRuntime("dispatcher-atomic-claim");
   try {
+    runtime.trusted.setExecutionOwner("execution-owner-stable");
     const application = createDispatcherApplicationService(runtime.store, runtime.trusted, {
       adapterId: "manual-local",
       adapterVersion: "1.0.0",
@@ -130,6 +134,7 @@ test("dispatcher commits reconciliation, sealed membership, claim and prepared s
     state = readApplicationStateForOwner(runtime.store);
     assert.equal(state.domain.tasks[0].state, "running");
     assert.equal(state.executions.length, 1);
+    assert.equal(state.executions[0].ownerId, "execution-owner-stable");
     assert.equal(state.executionIntents.length, 1);
     assert.equal(state.executionIntents[0].state, "pending");
     assert.equal(state.manualTurns.length, 0);
@@ -243,6 +248,38 @@ test("dispatcher takeover begins exactly at expiry and fences the old worker tup
     });
     assert.equal(stale.ok, false);
     assert.equal(stale.error.code, "STALE_OWNER");
+  } finally {
+    await runtime.store.close();
+    cleanupPersistenceFixture(runtime.fixture);
+  }
+});
+
+test("dispatcher trigger replay is canonical across workers while lease tuple drift conflicts", async () => {
+  const runtime = await prepareRuntime("dispatcher-cross-worker-replay", 0);
+  try {
+    const application = createDispatcherApplicationService(runtime.store, runtime.trusted, {
+      adapterId: "manual-local", adapterVersion: "1.0.0",
+    });
+    runtime.trusted.setNow("2026-08-30T12:00:04.000Z");
+    const started = application.start({
+      kind: "dispatch.start", idempotencyKey: "cross-worker-trigger", leaseDurationSeconds: 300,
+    });
+    assert.equal(started.ok, true, JSON.stringify(started));
+    runtime.trusted.setOwner("dispatcher-worker-b");
+    runtime.trusted.setNow("2026-08-30T12:00:05.000Z");
+    const replay = application.start({
+      kind: "dispatch.start", idempotencyKey: "cross-worker-trigger", leaseDurationSeconds: 300,
+    });
+    assert.equal(replay.ok, true, JSON.stringify(replay));
+    assert.equal(replay.replayed, true);
+    assert.equal(replay.value.runId, started.value.runId);
+    assert.equal(replay.value.ownerId, "dispatcher-worker-a");
+    const conflict = application.start({
+      kind: "dispatch.start", idempotencyKey: "cross-worker-trigger", leaseDurationSeconds: 301,
+    });
+    assert.equal(conflict.ok, false);
+    assert.equal(conflict.error.code, "IDEMPOTENCY_CONFLICT");
+    assert.equal(readApplicationStateForOwner(runtime.store).dispatcherRuns.length, 1);
   } finally {
     await runtime.store.close();
     cleanupPersistenceFixture(runtime.fixture);

@@ -45,6 +45,7 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/persistence/runtime.ts",
   "src/persistence/store.ts",
   "src/persistence/values.ts",
+  "src/product-runtime.ts",
   "src/project-registry.ts",
 ]);
 

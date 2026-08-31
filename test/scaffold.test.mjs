@@ -12,22 +12,23 @@ import {
   repoRoot,
 } from "../scripts/repo-utils.mjs";
 
-test("package status exposes the reconcile-first Manual dispatcher without overstating a product runtime", () => {
+test("package status exposes only the local explicit-Manual Phase 2 product runtime", () => {
   assert.deepEqual(getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "phase2-reconcile-first-manual-dispatcher",
+    phase: "phase2-local-manual-product",
     domainCoreImplemented: true,
     persistenceFoundationImplemented: true,
     projectRegistryImplemented: true,
     runtimeAuthorizationImplemented: true,
     applicationServiceImplemented: true,
     localPhase1ProductCliImplemented: true,
+    localPhase2ProductCliImplemented: true,
     backupRestoreDoctorImplemented: true,
     durableExecutionClaimFoundationImplemented: true,
     reliableManualExecutionLoopImplemented: true,
     reconcileFirstManualDispatcherImplemented: true,
-    productRuntimeImplemented: false,
-    executionRuntimeImplemented: false,
+    productRuntimeImplemented: true,
+    executionRuntimeImplemented: true,
     supportedAdapters: ["manual-local"],
   });
   assert.equal(Object.isFrozen(getScaffoldStatus()), true);

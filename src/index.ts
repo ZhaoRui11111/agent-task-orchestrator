@@ -1,36 +1,38 @@
 export interface ScaffoldStatus {
   readonly packageName: "agent-task-orchestrator";
-  readonly phase: "phase2-reconcile-first-manual-dispatcher";
+  readonly phase: "phase2-local-manual-product";
   readonly domainCoreImplemented: true;
   readonly persistenceFoundationImplemented: true;
   readonly projectRegistryImplemented: true;
   readonly runtimeAuthorizationImplemented: true;
   readonly applicationServiceImplemented: true;
   readonly localPhase1ProductCliImplemented: true;
+  readonly localPhase2ProductCliImplemented: true;
   readonly backupRestoreDoctorImplemented: true;
   readonly durableExecutionClaimFoundationImplemented: true;
   readonly reliableManualExecutionLoopImplemented: true;
   readonly reconcileFirstManualDispatcherImplemented: true;
-  readonly productRuntimeImplemented: false;
-  readonly executionRuntimeImplemented: false;
+  readonly productRuntimeImplemented: true;
+  readonly executionRuntimeImplemented: true;
   readonly supportedAdapters: readonly ["manual-local"];
 }
 
 const STATUS: ScaffoldStatus = Object.freeze({
   packageName: "agent-task-orchestrator",
-  phase: "phase2-reconcile-first-manual-dispatcher",
+  phase: "phase2-local-manual-product",
   domainCoreImplemented: true,
   persistenceFoundationImplemented: true,
   projectRegistryImplemented: true,
   runtimeAuthorizationImplemented: true,
   applicationServiceImplemented: true,
   localPhase1ProductCliImplemented: true,
+  localPhase2ProductCliImplemented: true,
   backupRestoreDoctorImplemented: true,
   durableExecutionClaimFoundationImplemented: true,
   reliableManualExecutionLoopImplemented: true,
   reconcileFirstManualDispatcherImplemented: true,
-  productRuntimeImplemented: false,
-  executionRuntimeImplemented: false,
+  productRuntimeImplemented: true,
+  executionRuntimeImplemented: true,
   supportedAdapters: Object.freeze(["manual-local"] as const),
 });
 
@@ -84,10 +86,20 @@ export * from "./manual-execution-backend.ts";
 export * from "./execution-loop.ts";
 export * from "./dispatcher-application.ts";
 export * from "./dispatcher.ts";
+export * from "./product-runtime.ts";
 export * from "./persistence/index.ts";
 export {
+  createLocalProductIngress,
+  type LocalProductConfirmationAction,
+  type LocalProductConfirmationRequest,
+  type LocalProductIngress,
+  type LocalProductIngressOptions,
+} from "./persistence/local-ingress.ts";
+export {
   CLI_API_VERSION,
+  CLI_API_V2_VERSION,
   PUBLIC_ERROR_TABLE,
+  PUBLIC_ERROR_TABLE_V2,
   parseCliArguments,
   runCli,
 } from "./cli-api.ts";
@@ -96,4 +108,5 @@ export type {
   CliRunOptions,
   CliRunResult,
   PublicErrorCode,
+  PublicErrorCodeV2,
 } from "./cli-api.ts";

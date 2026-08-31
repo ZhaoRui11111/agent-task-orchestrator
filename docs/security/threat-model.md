@@ -5,8 +5,8 @@
 This file is the sole owner of security assets, actors, trust boundaries, abuse
 cases, mitigations, residual risks, negative-test obligations, and explicit
 security non-claims for the planned local-first orchestrator. The repository
-implements the Phase 1 persistence/local task-management subset and the
-library-only reliable Manual execution loop: validated
+implements the Phase 1 persistence/local task-management subset and the local
+explicit-Manual Phase 2 product: validated
 runtime and Project roots, identity-bound lifecycle/connection files, strict
 typed schema-v7 SQLite ingress, OS-derived local identity and capability epochs,
 one-time runtime-root-bound bootstrap, finite revision-aware grants, typed
@@ -17,12 +17,13 @@ confirmation-bound one-step execution-capability upgrades, atomic claim/lease/
 fence handling, strict `ato.execution/v1` ingress, durable authorization-bound
 intent/observation/verified-receipt/finalization, a local no-workspace Manual
 journal/control, reconcile-first recovery, verified interruption, separately
-confirmed Manual completion, redaction, stale-fence refusal, and a library-only
+confirmed Manual completion, redaction, stale-fence refusal, and an
 explicit-Manual dispatcher with bounded trusted ingress, run-owner fencing,
 reconcile-before-seal ordering, immutable membership, and complete outcomes. It still has no
 MCP server, SchedulerBackend or scheduled trigger, workspace control, Codex/Git adapter,
-ProjectPolicy, CompletionBackend/gates, team identity/RBAC, public Phase 2
-interface, or supported platform security boundary.
+ProjectPolicy, CompletionBackend/gates, team identity/RBAC, or supported
+platform security boundary. The explicit `ato.api/v2` facade and CLI expose
+only that local Manual subset; the backend does not execute Task content.
 
 The model assumes one local operator and treats repository content, Task text,
 prompts, adapter responses, tool output, filesystem entries, Git metadata, MCP
@@ -97,10 +98,10 @@ portions of N1, the local content/authorization portion of N3, the application
 audit plus CLI/doctor disclosure subset of N4, the schema-v7 SQLite/application/
 lifecycle/Manual-loop/dispatcher portions of N5 and N11, the local Manual intent/effect/
 inspection/receipt/finalization/crash/restart/stale-fence subset of N6 and N10,
-the explicit-Manual dispatcher worker-death/fan-out subset of N7, and the CLI
-portion of N8. Workspace, operational logger, SchedulerBackend/scheduled delivery,
+the explicit-Manual dispatcher worker-death/fan-out subset of N7, and the v1/v2
+CLI portion of N8. Workspace, operational logger, SchedulerBackend/scheduled delivery,
 MCP, Codex/Git/external-service adapter, ProjectPolicy, CompletionBackend/gate,
-publication, and public Phase 2 interface portions remain future obligations;
+and publication portions remain future obligations;
 the local Manual evidence cannot satisfy them.
 
 | ID | Required negative test | Passing outcome |
@@ -139,7 +140,7 @@ logic but cannot satisfy a real platform/API support row.
 ## Explicit non-claims
 
 The implemented controls are limited to the Phase 1 local boundaries and the
-library-only reliable Manual loop and explicit-Manual dispatcher named above.
+local explicit-Manual Phase 2 product, reliable loop, and dispatcher named above.
 This model does not claim release
 readiness, multi-user isolation, RBAC,
 cloud security, remote availability, arbitrary-code sandboxing, malware

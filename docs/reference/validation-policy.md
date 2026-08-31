@@ -92,22 +92,24 @@ atomic claim, shared port-contract, real Manual journal, exact idempotency,
 competing writer, lost-response, every-stage crash/restart, independent inspect,
 verified-not-finalized, ambiguity, completion separation, reconciliation,
 higher-fence continuation, stale-fence, corruption, and redaction evidence. The
-library dispatcher adds trigger/authorization atomicity, bounded
+dispatcher adds trigger/authorization atomicity, bounded
 heartbeat/takeover, reconcile-before-seal ordering, immutable membership,
 claim/start-intent atomicity, competing-worker, every-checkpoint restart,
 summary completeness, corruption, and bounded-redaction evidence. The product CLI has strict
 schema/boundary, security-negative, application-parity, source/build/installed
-parity, end-to-end restart, and human/JSON redaction test surfaces. Local lint,
+parity, end-to-end restart, explicit v2 dispatch/inspect/resume/retry/cancel/
+Manual-report/completion, typed product-facade derivation, and human/JSON
+redaction test surfaces. Local lint,
 typecheck, build, Node tests, documentation,
 dependency-shape, package-consumption, SQLite, and Codex boundary checks can be
 executed against a candidate when the frozen local dependency is installed.
 The committed Windows workflow is a CI skeleton only; hosted enforcement
 remains unverified until an actual run is observed. The Phase 1 application,
 authorization, persistence lifecycle, product CLI, claim foundation, local
-Manual-loop, and explicit-Manual dispatcher routes are implemented test
-surfaces. There is still no SchedulerBackend or scheduled trigger, MCP,
+Manual-loop, explicit-Manual dispatcher, and local `ato.api/v2` product routes
+are implemented test surfaces. There is still no SchedulerBackend or scheduled trigger, MCP,
 Codex/Git/workspace adapter, ProjectPolicy,
-CompletionBackend/gate, public Phase 2 interface, or support-matrix harness, so
+CompletionBackend/gate, or support-matrix harness, so
 those routes remain unimplemented and cannot be claimed as passing. Repository task-artifact checks cover only
 maintainer workflow scratch and do not count as product persistence or
 destructive-action support.

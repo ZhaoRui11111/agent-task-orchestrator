@@ -7,8 +7,11 @@ identifiers and versions, operation shapes, receipt envelopes, and adapter
 error taxonomy. The package implements the pure `ato.execution/v1` contract
 kit, one production `manual-local` adapter backed by the schema-v6 local Manual
 journal, and its narrow `ato.manual-outcome-control/v1` control. The Fake
-backend is test-only and unexported. The library-only Manual dispatcher composes
-that unchanged execution port and adds no adapter contract. Workspace,
+backend is test-only and unexported. The Manual dispatcher composes that
+unchanged execution port and adds no adapter contract. The explicit
+`ato.api/v2` product facade can invoke the dispatcher and reliable loop, but it
+does not change `ato.execution/v1`, turn the local journal into Task-content
+execution, or add an adapter. Workspace,
 Scheduler, ProjectPolicy, and Completion ports remain planned. No vendor,
 operating system, external API, or released product platform is currently
 supported.
@@ -171,7 +174,7 @@ operation journal and exposes independent `inspect`; it never authorizes an
 operation, changes a Task, or executes Task content. Its separate
 `ato.manual-outcome-control/v1` accepts only the closed
 `activate|wait|succeed|fail|confirm_cancelled` report set through the
-application-owned, trusted `local_manual_operator` path. Each report binds the
+application-owned, trusted current OS/runtime-derived actor/principal/root path. Each report binds the
 same semantic identity, current `execution.inspect` allow, a fresh
 `manual.turn.report` confirmation, expected journal revision/lifecycle, and
 bounded code/evidence reference. Terminal Manual lifecycles are immutable, and

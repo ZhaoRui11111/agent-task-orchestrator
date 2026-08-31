@@ -7,8 +7,9 @@ versioning; forward migration and downgrade-by-restore policy; and the evidence
 required for a platform or external API support claim. The project now has an
 internal staged SQLite schema at version `7`, a provisional package-root
 Domain/ProjectRegistry/authorization/application/claim/Manual-loop/dispatcher/
-persistence surface, an implemented closed `ato.execution/v1` local port, and an implemented
-provisional `ato.api/v1` local Phase 1 CLI. It still has no released product,
+persistence surface, an implemented closed `ato.execution/v1` local port, and
+implemented provisional `ato.api/v1` plus explicit local-Manual `ato.api/v2`
+CLI majors. It still has no released product,
 validated platform, or supported external API.
 
 The [v0.1 matrix](../compatibility/v0.1.md) records evidence only. It cannot
@@ -70,6 +71,13 @@ The current `ato.api/v1` request and response shapes are closed, have no
 extension map, and reject unknown input. Its exact grammar, fields, key order,
 redaction, errors, and exits are owned by the [CLI/API contract](cli-contract.md).
 EP-02B and EP-02C add no command or response field to that public major.
+EP-02D preserves that major and its default selection exactly because adding
+Manual dispatch/execution commands, a thirty-action vocabulary, new state
+effects, result shapes, and errors is incompatible. Those additions therefore
+exist only under explicit `ato.api/v2`. Version 2 inherits every version-1
+command with unchanged semantics and result shape, adds only the closed local
+Manual product commands documented by the CLI owner, and has no extension map.
+Neither major is a released stability or platform-support promise.
 
 ## Adapter evolution and negotiation
 

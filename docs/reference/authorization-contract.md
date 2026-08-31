@@ -3,10 +3,11 @@
 ## Status and authority
 
 This document is the normative owner of the implemented local runtime
-authorization model through the library-only reconcile-first Manual dispatcher.
-The implementation is deliberately limited to the local Phase 1 application
-and lifecycle surfaces, four database-local execution claim/lease actions, and
-six schema-v6 Manual-loop actions, and one schema-v7 dispatcher action. It
+authorization model through the explicit `ato.api/v2` Manual product facade
+and reconcile-first Manual dispatcher. The implementation is deliberately
+limited to the local Phase 1 application and lifecycle surfaces, four
+database-local execution claim/lease actions, six schema-v6 Manual-loop
+actions, and one schema-v7 dispatcher action. It
 is not an operating-system
 account system, team identity service, RBAC product, cloud identity provider,
 or authorization for development and external actions.
@@ -354,13 +355,15 @@ lease expiry. Even an exact finalized idempotent replay revalidates the persiste
 actor/principal and current runtime-root identity before returning its bounded
 result.
 
-Manual outcome reporting additionally requires the trusted actor ID
-`local_manual_operator`, current `execution.inspect` authority for the exact
-scope, and one fresh `manual.turn.report` confirmation. It commits that decision
-and report intent before calling the injected outcome control, then observes the
-result through `ato.execution/v1`. A `turn_succeeded` finalization leaves the
-Task running. Only a distinct `execution.completion.accept` evaluation with a
-different fresh confirmation and the exact current verified
+Manual outcome reporting additionally requires the current OS/runtime-derived
+actor, principal, and runtime-root key to equal the persisted local runtime
+identity, current `execution.inspect` authority for the exact scope, and one
+fresh `manual.turn.report` confirmation. No actor name is privileged and CLI
+text cannot assert or replace any identity member. The owner commits that
+decision and report intent before calling the injected outcome control, then
+observes the result through `ato.execution/v1`. A `turn_succeeded` finalization
+leaves the Task running. Only a distinct `execution.completion.accept`
+evaluation with a different fresh confirmation and the exact current verified
 receipt/finalization can atomically record the Manual completion decision,
 invoke Domain `completion_accepted`, terminalize the execution, append audit,
 and read the completed Task back.
@@ -475,8 +478,10 @@ read-only doctor experience. Phase 2A adds the four local claim/lease grants;
 Phase 2B adds one separately confirmed vocabulary-6 step and the six exact
 Manual-loop grants and decisions described above. Phase 2C adds one separately
 confirmed vocabulary-7 step and the exact `dispatch.run` decision path for the
-library-only explicit-Manual dispatcher. It does not implement login,
+explicit-Manual dispatcher. Phase 2D exposes only those existing decisions
+through explicit `ato.api/v2`; it adds no action, grant, epoch, implicit
+upgrade, or alternate authorization owner. It does not implement login,
 credentials, team accounts, RBAC, cloud identity, an external policy adapter,
 workspace or scheduler authorization, SchedulerBackend/scheduled delivery,
-public Phase 2 CLI, MCP, Codex/Git/network effects, ProjectPolicy,
+MCP, Codex/Git/network effects, ProjectPolicy,
 CompletionBackend/gates, release, deployment, or a platform-support claim.

@@ -33,9 +33,30 @@ export interface LocalRuntimeSelection {
 export interface LocalIngressOptions {
   readonly confirmation: string | null;
   readonly expectedConfirmation: string | null;
-  readonly expectedAction: AuthorizationAction | "authorization.capability.renew" | null;
+  readonly expectedAction: AuthorizationAction | "authorization.capability.renew" | "authorization.capability.upgrade" | null;
   readonly now?: () => string;
   readonly nextId?: () => string;
+}
+
+export type LocalProductConfirmationAction = "manual.turn.report" | "execution.completion.accept";
+
+export interface LocalProductIngressOptions extends LocalIngressOptions {
+  readonly expectedProductAction: LocalProductConfirmationAction | null;
+}
+
+export interface LocalProductConfirmationRequest {
+  readonly actorId: string;
+  readonly action: LocalProductConfirmationAction;
+  readonly requestId: string;
+  readonly correlationId: string;
+}
+
+export interface LocalProductIngress extends ApplicationIngress {
+  currentLeaseOwner(): string;
+  currentDispatcherOwner(): string;
+  currentRuntimeRootKey(): string;
+  nextId(kind: string): string;
+  confirmOperation(request: LocalProductConfirmationRequest): Readonly<{ confirmationId: string }> | null;
 }
 
 const FORBIDDEN_IDENTITY = /[\p{Cc}\p{Cf}]/u;
@@ -201,6 +222,73 @@ export function createLocalApplicationIngress(
         options.confirmation === options.expectedConfirmation &&
         options.expectedAction === request.action &&
         request.actorId === identity.actorId;
+    },
+  });
+}
+
+export function createLocalProductIngress(
+  identity: LocalIdentity,
+  options: LocalProductIngressOptions,
+): LocalProductIngress {
+  const actor: TrustedActorAssertion = Object.freeze({
+    actorId: identity.actorId,
+    principal: identity.principalSha256,
+  });
+  const clock = options.now ?? (() => new Date().toISOString());
+  const ids = options.nextId ?? randomUUID;
+  let lastClockMilliseconds: number | null = null;
+  const monotonicClock = (): string => {
+    const value = clock();
+    const milliseconds = Date.parse(value);
+    if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString() !== value) return value;
+    const next = lastClockMilliseconds === null ? milliseconds : Math.max(milliseconds, lastClockMilliseconds + 1);
+    lastClockMilliseconds = next;
+    return new Date(next).toISOString();
+  };
+  const ownerId = `owner-v1:${sha256(canonicalJson({
+    actorId: identity.actorId,
+    domain: "ato.local-manual-owner/v1",
+    runtimeRootKey: identity.runtimeRootKey,
+  }))}`;
+  const dispatcherOwnerId = `dispatcher-v1:${sha256(canonicalJson({
+    actorId: identity.actorId,
+    domain: "ato.local-manual-dispatcher/v1",
+    nonce: randomUUID(),
+    runtimeRootKey: identity.runtimeRootKey,
+  }))}`;
+  return Object.freeze({
+    currentActor(): TrustedActorAssertion {
+      return actor;
+    },
+    currentLeaseOwner(): string {
+      return ownerId;
+    },
+    currentDispatcherOwner(): string {
+      return dispatcherOwnerId;
+    },
+    currentRuntimeRootKey(): string {
+      return identity.runtimeRootKey;
+    },
+    now(): string {
+      return monotonicClock();
+    },
+    nextId(_kind: string): string {
+      return ids();
+    },
+    confirmHighRisk(request: ConfirmationRequest): boolean {
+      return options.expectedConfirmation !== null &&
+        options.confirmation === options.expectedConfirmation &&
+        options.expectedAction === request.action &&
+        request.actorId === identity.actorId;
+    },
+    confirmOperation(request: LocalProductConfirmationRequest): Readonly<{ confirmationId: string }> | null {
+      if (
+        options.expectedConfirmation === null ||
+        options.confirmation !== options.expectedConfirmation ||
+        options.expectedProductAction !== request.action ||
+        request.actorId !== identity.actorId
+      ) return null;
+      return Object.freeze({ confirmationId: ids() });
     },
   });
 }

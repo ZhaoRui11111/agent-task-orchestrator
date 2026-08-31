@@ -6,8 +6,9 @@ The repository has a governance and architecture-contract baseline, an
 executable toolchain and feasibility harness, a pure in-memory TypeScript
 Domain Core, a filesystem-identity ProjectRegistry, a finite local runtime
 authorization owner, a typed Project/Task/dependency application service, a
-local SQLite persistence foundation, and a composable local Phase 1 product
-CLI. Schema versions `1` through `7` own metadata, exact Domain snapshots,
+local SQLite persistence foundation, the closed local Phase 1 product, and an
+explicit-Manual local Phase 2 product through `ato.api/v2`. Schema versions `1`
+through `7` own metadata, exact Domain snapshots,
 ProjectRegistry, local identity and authorization epochs, grants, requests,
 authorization decisions, lifecycle coordination, and append-only application
 audit; schema `5` additionally owns ordered execution attempts, one active
@@ -24,21 +25,25 @@ verified receipts, finalizations, execution terminal facts, a durable Manual
 The application service orchestrates business owners in one
 transaction; persistence never selects a Domain command or grants authority.
 The CLI is only typed ingress, trusted local identity/confirmation setup,
-presentation, and public error mapping. A separate typed execution application
-service retains claim, inspection, and renewal. The library-only
+presentation, and public error mapping. A typed product facade derives the
+current non-public Project/Task/execution/turn/intent/receipt/finalization tuple
+from schema-v7 state and composes the existing application, dispatcher, and
+reliable-loop owners. A separate typed execution application
+service retains claim, inspection, and renewal. The typed
 `ReliableExecutionLoop` owns prepare/execute/observe/verify/finalize and
 reconcile-first continuation against the pure `ato.execution/v1` port. The
 production `manual-local` adapter implements a durable, independently
 inspectable no-workspace turn journal; a distinct trusted Manual outcome
 control supplies bounded lifecycle facts, and a separately authorized and
 confirmed application decision alone may complete a Task from verified
-`turn_succeeded` evidence. The library-only Manual dispatcher coordinates those
+`turn_succeeded` evidence. The Manual dispatcher coordinates those
 owners after one explicit trigger: it durably reconciles old work, seals a
 finite candidate set, resolves every member, and publishes a summary only after
 complete readback. The repository still implements no SchedulerBackend or
 scheduled trigger, MCP component, Codex/Git/workspace adapter, ProjectPolicy,
-CompletionBackend or gates, public Phase 2 CLI, supported platform integration,
-or product orchestration runtime.
+CompletionBackend or gates, daemon/service, supported platform integration,
+release, or deployment. The local Manual product records operator-supplied turn
+facts; it does not execute Task content or perform Project/workspace effects.
 
 ## Authority and ownership
 
@@ -84,7 +89,7 @@ The architecture separates:
   execution attempt/sequence, Manual-loop and dispatcher record storage,
   backup, restore, read-only doctor, and typed-corruption owner; later records
   are added only by their implementing phase.
-- `dispatcher`: the implemented library-only explicit-Manual reconcile-first
+- `dispatcher`: the implemented explicit-Manual reconcile-first
   run, ownership/takeover, finite fan-out, and recovery coordinator. It calls
   application and reliable owners rather than duplicating their decisions.
 - `ports`: the implemented pure `ato.execution/v1` contract kit, plus planned
@@ -92,13 +97,19 @@ The architecture separates:
 - `adapters`: the implemented local Manual execution backend and outcome
   control; the Fake is test-only, while Codex and every other adapter remain
   planned.
-- `interfaces`: the implemented local product CLI, plus a planned MCP surface;
-  every business operation shares the application layer.
+- `product-runtime`: the implemented typed local facade that validates the
+  closed public CAS tuple, derives non-public durable lineage, composes the
+  current application/dispatcher/reliable owners, and returns only bounded
+  redacted product views.
+- `interfaces`: the implemented local `ato.api/v1` and explicit `ato.api/v2`
+  product CLI, plus a planned MCP surface; every business operation shares the
+  application layer or product facade.
 
 Only the boundaries explicitly described above are implemented. In particular,
 the Manual adapter mutates only its persistence-owned local journal through a
 committed, authorization-bound intent; it does not execute Task content, invoke
-a vendor, touch a Project/workspace, or establish a product execution runtime.
+a vendor, or touch a Project/workspace. The product execution runtime is only
+the explicit local Manual control/recovery surface described above.
 Every other later name remains accepted design direction rather than a current
 runtime component.
 
@@ -122,7 +133,11 @@ runtime component.
   loop without embedding authorization, Domain eligibility/state transitions,
   adapter verification, or project-specific policy.
 - `ports` expose contracts without importing vendor SDKs; `adapters` depend inward on ports and application contracts.
-- `interfaces` call the application layer, and `observability` consumes structured events without becoming a state owner.
+- `product-runtime` depends on typed application/dispatcher/reliable owners and
+  persistence readback, never on CLI parsing or presentation; it neither
+  selects Domain transitions nor reimplements authorization/reconciliation.
+- `interfaces` call the application layer or product facade, and `observability`
+  consumes structured events without becoming a state owner.
 
 The exact behavior behind these boundaries belongs to the
 [contract ownership inventory](docs/reference/contract-ownership.md). Domain

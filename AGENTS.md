@@ -18,8 +18,7 @@ If documents conflict, stop the affected mutation and resolve the conflict inste
 
 This repository has a governance baseline, an executable toolchain and
 feasibility scaffold, a pure in-memory Domain Core, the closed local Phase 1
-product, a library-only reliable Manual execution loop, and a library-only
-reconcile-first Manual dispatcher. ProjectRegistry,
+product, and the closed local explicit-Manual Phase 2 product. ProjectRegistry,
 finite single-user runtime authorization, the typed application services, the
 versioned local product CLI, and its persistence-owned backup, confirmed
 restore, and read-only doctor surfaces are implemented for local
@@ -36,15 +35,23 @@ and separately confirmed Manual completion acceptance. The explicit
 Manual dispatcher adds a separately upgraded `dispatch.run` capability,
 durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
 immutable finite candidate membership, one terminal outcome per member, and a
-completeness-gated durable summary. Adapter work remains
+completeness-gated durable summary. The explicit `ato.api/v2` surface preserves
+`ato.api/v1`, performs confirmation-bound finite capability upgrades, and
+exposes Manual dispatch, durable execution inspection/recovery/cancellation,
+trusted Manual outcome reporting, and separately confirmed completion
+acceptance through one typed product facade. That facade derives non-public
+execution tuples from schema-v7 state and composes the existing owners; the CLI
+owns only typed ingress, trusted identity/confirmation plumbing, presentation,
+and fixed public error mapping. Adapter work remains
 outside writer transactions, turn success alone never completes a Task, lease
 expiry never authorizes blind replay, and stale-fence writes are refused.
 
-These Phase 2 capabilities are package-library surfaces only. The Phase 1 CLI
-exposes no Phase 2 execution or dispatch command, and the repository still has
-no scheduler or scheduled trigger, MCP component, Codex/Git/workspace adapter,
-ProjectPolicy or CompletionBackend gate, product orchestration runtime,
-release, or validated platform-support claim. Do not describe those planned
+These Phase 2 capabilities are implemented only for the local explicit-Manual
+product and `manual-local` adapter. They do not execute Task content or perform
+an external Project/workspace effect. The repository still has no scheduler or
+scheduled trigger, MCP component, Codex/Git/workspace adapter, ProjectPolicy or
+CompletionBackend gate, daemon/service, release, deployment, or validated
+platform-support claim. Do not describe those planned
 modules, platform support, safety properties, or integration behavior as
 implemented. Follow the
 [toolchain contract](docs/reference/toolchain-contract.md) for current

@@ -1,15 +1,18 @@
 import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
+  cpSync,
   existsSync,
   lstatSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
 import { userInfo } from "node:os";
+import { pathToFileURL } from "node:url";
 import { gunzipSync } from "node:zlib";
 import {
   artifactRootReclaimTestOptions,
@@ -80,8 +83,8 @@ function tarEntries(tgzPath) {
   return entries.filter((item) => item.startsWith("package/")).sort();
 }
 
-function invokeNodeCli(entryPath, args, cwd, extraEnv = {}) {
-  const result = spawnSync(process.execPath, [entryPath, ...args], {
+function invokeNodeCli(entryPath, args, cwd, extraEnv = {}, nodeArgs = []) {
+  const result = spawnSync(process.execPath, [...nodeArgs, entryPath, ...args], {
     cwd,
     encoding: "utf8",
     env: { ...process.env, ...extraEnv },
@@ -92,6 +95,165 @@ function invokeNodeCli(entryPath, args, cwd, extraEnv = {}) {
     stdout: result.stdout,
     stderr: result.stderr,
   });
+}
+
+function readCliBoundaryState(entryPath, runtimeRoot, environment, nodeArgs) {
+  const extension = path.extname(entryPath) === ".ts" ? ".ts" : ".js";
+  const moduleRoot = path.dirname(realpathSync.native(entryPath));
+  const sourceCheckoutRoot = path.resolve(moduleRoot, "..");
+  const publicModule = pathToFileURL(path.join(moduleRoot, `index${extension}`)).href;
+  const stateModule = pathToFileURL(path.join(moduleRoot, "persistence", `application-repository${extension}`)).href;
+  const script = `const m = await import(process.env.ATO_SMOKE_PUBLIC_MODULE);
+const repository = await import(process.env.ATO_SMOKE_STATE_MODULE);
+const selection = m.loadLocalRuntime(process.env.ATO_SMOKE_RUNTIME, process.env.ATO_SMOKE_SOURCE_ROOT);
+const store = await m.openPersistence(selection.layout, { applicationVersion: "package-cli-parity-read" });
+try {
+  const state = repository.readApplicationStateForOwner(store);
+  const project = state.projects.find((candidate) => candidate.projectId === "parity-project");
+  const task = state.domain.tasks.find((candidate) => candidate.id === "parity-task");
+  const execution = state.executions.find((candidate) => candidate.taskId === "parity-task" && candidate.status === "active");
+  console.log(JSON.stringify({
+    schemaVersion: store.migration.schemaVersion,
+    project,
+    task,
+    execution,
+    completionDecisionCount: state.manualCompletionDecisions.length,
+    dispatcherRunCount: state.dispatcherRuns.length
+  }));
+} finally {
+  await store.close();
+}`;
+  const result = spawnSync(process.execPath, [...nodeArgs, "--input-type=module", "--eval", script], {
+    cwd: sourceCheckoutRoot,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      ...environment,
+      ATO_SMOKE_PUBLIC_MODULE: publicModule,
+      ATO_SMOKE_STATE_MODULE: stateModule,
+      ATO_SMOKE_RUNTIME: runtimeRoot,
+      ATO_SMOKE_SOURCE_ROOT: sourceCheckoutRoot,
+    },
+    windowsHide: true,
+  });
+  invariant(result.status === 0 && result.stderr === "", `package CLI parity state read failed: ${result.stderr || result.stdout}`);
+  return JSON.parse(result.stdout);
+}
+
+function cliExecutionCommon(entryPath, runtimeRoot, idempotencyKey, environment, nodeArgs) {
+  const state = readCliBoundaryState(entryPath, runtimeRoot, environment, nodeArgs);
+  const row = state.project && state.task && state.execution ? state : null;
+  invariant(row, "package CLI parity execution tuple is absent");
+  return Object.freeze([
+    "--project-id", row.project.projectId,
+    "--expected-project-resource-revision", String(row.project.resourceRevision),
+    "--expected-project-config-revision", String(row.project.configRevision),
+    "--task-id", row.task.id,
+    "--expected-task-revision", String(row.task.revision),
+    "--execution-id", row.execution.executionId,
+    "--expected-execution-revision", String(row.execution.revision),
+    "--expected-attempt-number", String(row.execution.attemptNumber),
+    "--expected-fencing-token", String(row.execution.fencingToken),
+    "--idempotency-key", idempotencyKey,
+  ]);
+}
+
+function normalizeCliBody(value, key = "") {
+  if (Array.isArray(value)) return value.map((item) => normalizeCliBody(item));
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([childKey, child]) => [childKey, normalizeCliBody(child, childKey)]));
+  }
+  if (["runId", "executionId", "heartbeatAt", "leaseExpiresAt"].includes(key)) return `<${key}>`;
+  return value;
+}
+
+function runPhase2CliBoundary(entryPath, label, runtimeRoot, projectRoot, cwd, expiry, environment, nodeArgs) {
+  const transcript = [];
+  const invokeJson = (args, expectedStatus = 0) => {
+    const observed = invokeNodeCli(entryPath, [
+      "--format", "json", "--api-version", "ato.api/v2", "--runtime-root", runtimeRoot, ...args,
+    ], cwd, environment, nodeArgs);
+    invariant(observed.status === expectedStatus && observed.stderr === "", `${label} CLI command failed: ${observed.stderr || observed.stdout}`);
+    invariant(observed.stdout.endsWith("\n") && observed.stdout.indexOf("\n") === observed.stdout.length - 1,
+      `${label} CLI command was not one-line JSON`);
+    const body = JSON.parse(observed.stdout);
+    transcript.push(normalizeCliBody(body));
+    return Object.freeze({ observed, body });
+  };
+
+  const initialized = invokeJson(["init", "--expires-at", expiry, "--confirm", "INITIALIZE LOCAL RUNTIME"]);
+  invariant(initialized.body.ok && initialized.body.result.capabilityCount === 19, `${label} CLI init drifted`);
+  const denied = invokeJson([
+    "dispatch", "run", "--idempotency-key", "parity-denied", "--lease-duration-seconds", "300",
+  ], 4);
+  invariant(!denied.body.ok && denied.body.error.code === "AUTHORIZATION_DENIED", `${label} CLI denial drifted`);
+  const deniedReplay = invokeJson([
+    "dispatch", "run", "--idempotency-key", "parity-denied", "--lease-duration-seconds", "300",
+  ], 4);
+  invariant(deniedReplay.observed.stdout === denied.observed.stdout, `${label} denied response-loss replay drifted`);
+  invariant(invokeJson([
+    "project", "register", "--project-id", "parity-project", "--root", projectRoot,
+    "--confirm", "REGISTER LOCAL PROJECT",
+  ]).body.ok, `${label} CLI project registration drifted`);
+  invariant(invokeJson([
+    "task", "create", "--project-id", "parity-project", "--expected-project-resource-revision", "1",
+    "--task-id", "parity-task", "--body", "PACKAGE_PARITY_SECRET_BODY",
+  ]).body.ok, `${label} CLI task creation drifted`);
+  invariant(invokeJson([
+    "task", "mark-ready", "--project-id", "parity-project", "--expected-project-resource-revision", "1",
+    "--task-id", "parity-task", "--expected-task-revision", "1",
+  ]).body.ok, `${label} CLI task readiness drifted`);
+  for (const expected of [23, 29, 30]) {
+    const upgraded = invokeJson([
+      "authorization", "upgrade", "--expires-at", expiry, "--confirm", "UPGRADE LOCAL CAPABILITIES",
+    ]);
+    invariant(upgraded.body.ok && upgraded.body.result.capabilityCount === expected, `${label} CLI upgrade drifted`);
+  }
+  const dispatched = invokeJson([
+    "dispatch", "run", "--idempotency-key", "parity-dispatch", "--lease-duration-seconds", "300",
+  ]);
+  invariant(dispatched.body.ok && dispatched.body.result.terminalStatus === "completed", `${label} CLI dispatch drifted`);
+  const dispatchReplay = invokeJson([
+    "dispatch", "run", "--idempotency-key", "parity-dispatch", "--lease-duration-seconds", "300",
+  ]);
+  invariant(dispatchReplay.body.ok && dispatchReplay.body.result.replayed, `${label} CLI dispatch replay drifted`);
+  let common = cliExecutionCommon(entryPath, runtimeRoot, "parity-inspect", environment, nodeArgs);
+  const inspected = invokeJson(["execution", "inspect", ...common]);
+  invariant(inspected.body.ok && inspected.body.result.lifecycle === "queued", `${label} CLI inspect drifted`);
+  common = cliExecutionCommon(entryPath, runtimeRoot, "parity-report", environment, nodeArgs);
+  const reported = invokeJson([
+    "manual", "outcome-report", ...common,
+    "--report-id", "parity-report", "--outcome", "succeed", "--code", "manual-success",
+    "--confirm", "RECORD MANUAL OUTCOME",
+  ]);
+  invariant(reported.body.ok && reported.body.result.taskState === "running", `${label} CLI Manual report drifted`);
+  common = cliExecutionCommon(entryPath, runtimeRoot, "parity-completion", environment, nodeArgs);
+  const completionArgs = [
+    "execution", "accept-manual-completion", ...common, "--confirm", "ACCEPT MANUAL COMPLETION",
+  ];
+  const completed = invokeJson(completionArgs);
+  invariant(completed.body.ok && completed.body.result.taskState === "completed", `${label} CLI completion drifted`);
+  const completionReplay = invokeJson(completionArgs);
+  invariant(completionReplay.body.ok && completionReplay.body.result.replayed, `${label} CLI completion replay drifted`);
+  const human = invokeNodeCli(entryPath, [
+    "--format", "human", "--api-version", "ato.api/v2", "--runtime-root", runtimeRoot, ...completionArgs,
+  ], cwd, environment, nodeArgs);
+  invariant(human.status === 0 && human.stderr === "" && human.stdout.startsWith("OK execution.accept-manual-completion ") &&
+    human.stdout.endsWith("\n") && human.stdout.indexOf("\n") === human.stdout.length - 1,
+  `${label} CLI human result drifted`);
+  const normalizedHuman = human.stdout.replaceAll(completionReplay.body.result.executionId, "<executionId>");
+
+  const finalState = readCliBoundaryState(entryPath, runtimeRoot, environment, nodeArgs);
+  invariant(finalState.schemaVersion === 7, `${label} CLI schema drifted`);
+  invariant(finalState.task?.state === "completed", `${label} CLI Task did not complete`);
+  invariant(finalState.completionDecisionCount === 1, `${label} CLI completion replay duplicated a decision`);
+  invariant(finalState.dispatcherRunCount === 1, `${label} CLI dispatch replay duplicated a run`);
+  const raw = transcript.map((body) => JSON.stringify(body)).join("\n") + normalizedHuman;
+  for (const secret of [
+    "PACKAGE_PARITY_SECRET_BODY", projectRoot, runtimeRoot, "RECORD MANUAL OUTCOME", "ACCEPT MANUAL COMPLETION",
+    "parity-dispatch", "parity-report", "owner-v1:", "dispatcher-v1:", "backend_execution:", "thread:",
+  ]) invariant(!raw.includes(secret), `${label} CLI parity transcript leaked ${secret}`);
+  return Object.freeze({ transcript: Object.freeze(transcript), human: normalizedHuman });
 }
 
 const expectedEntries = [
@@ -197,6 +359,10 @@ const expectedEntries = [
   "package/dist/persistence/values.d.ts.map",
   "package/dist/persistence/values.js",
   "package/dist/persistence/values.js.map",
+  "package/dist/product-runtime.d.ts",
+  "package/dist/product-runtime.d.ts.map",
+  "package/dist/product-runtime.js",
+  "package/dist/product-runtime.js.map",
   "package/dist/project-registry.d.ts",
   "package/dist/project-registry.d.ts.map",
   "package/dist/project-registry.js",
@@ -216,6 +382,41 @@ invariant(packageManagerVersion === "11.19.0", `pnpm version drifted: ${packageM
 
 const generation = createOwnedGeneration("package");
 try {
+  const isolatedHome = path.join(generation, "isolated-home");
+  mkdirSync(isolatedHome);
+  const isolatedOsModule = path.join(generation, "isolated-os.mjs");
+  const isolatedOsLoader = path.join(generation, "isolated-os-loader.mjs");
+  writeFileSync(
+    isolatedOsModule,
+    `import { createRequire } from "node:module";
+const realOs = createRequire(import.meta.url)("node:os");
+export function userInfo(options) {
+  return Object.freeze({ ...realOs.userInfo(options), homedir: process.env.ATO_SMOKE_HOME });
+}
+`,
+    "utf8",
+  );
+  const isolatedSourceRoot = path.join(generation, "source-boundary");
+  const isolatedBuiltRoot = path.join(generation, "built-boundary");
+  mkdirSync(isolatedSourceRoot);
+  mkdirSync(isolatedBuiltRoot);
+  cpSync(path.join(repoRoot, "src"), path.join(isolatedSourceRoot, "src"), { recursive: true });
+  cpSync(path.join(repoRoot, "migrations"), path.join(isolatedSourceRoot, "migrations"), { recursive: true });
+  copyFileSync(path.join(repoRoot, "package.json"), path.join(isolatedSourceRoot, "package.json"));
+  cpSync(path.join(repoRoot, "dist"), path.join(isolatedBuiltRoot, "dist"), { recursive: true });
+  cpSync(path.join(repoRoot, "migrations"), path.join(isolatedBuiltRoot, "migrations"), { recursive: true });
+  copyFileSync(path.join(repoRoot, "package.json"), path.join(isolatedBuiltRoot, "package.json"));
+  writeFileSync(
+    isolatedOsLoader,
+    `const isolatedOs = new URL("./isolated-os.mjs", import.meta.url).href;
+export async function resolve(specifier, context, nextResolve) {
+  return specifier === "node:os"
+    ? { url: isolatedOs, shortCircuit: true }
+    : nextResolve(specifier, context);
+}
+`,
+    "utf8",
+  );
   const storeDir = path.join(generation, "pnpm-store");
   copyOfflineStoreSeed(path.join(repoRoot, ".pnpm-store"), storeDir);
   const frozenInstall = path.join(generation, "frozen-install");
@@ -255,6 +456,7 @@ try {
   createApplicationService,
   createExecutionApplicationService,
   createManualExecutionBackend,
+  createProductRuntime,
   createReliableExecutionService,
   currentSchemaVersion,
   getScaffoldStatus,
@@ -266,6 +468,7 @@ try {
   type ManualOutcomeControl,
   type ReliableExecutionIngress,
   type OpenPersistenceOptions,
+  type ProductRuntime,
   type RuntimeRootRequest,
 } from "agent-task-orchestrator";
 
@@ -283,6 +486,7 @@ void AUTHORIZATION_ACTIONS;
 void createApplicationService;
 void createExecutionApplicationService;
 void createManualExecutionBackend;
+void createProductRuntime;
 void createReliableExecutionService;
 void inspectProjectRoot;
 const ingress = null as unknown as ApplicationIngress;
@@ -294,9 +498,11 @@ void executionClaim;
 const reliableIngress = null as unknown as ReliableExecutionIngress;
 const backend = null as unknown as ExecutionBackend;
 const outcomeControl = null as unknown as ManualOutcomeControl;
+const productRuntime = null as unknown as ProductRuntime;
 void reliableIngress;
 void backend;
 void outcomeControl;
+void productRuntime;
 `,
     "utf8",
   );
@@ -351,11 +557,17 @@ void outcomeControl;
         let store = await m.openPersistence(layout, { applicationVersion: "package-smoke" });
         const issuedAt = new Date().toISOString();
         const expiresAt = new Date(Date.parse(issuedAt) + 30 * 24 * 60 * 60 * 1000).toISOString();
-        let trustedNow = issuedAt;
+        let trustedMilliseconds = Date.parse(issuedAt);
+        const generated = Object.create(null);
         const trusted = {
-          currentActor: () => ({ actorId: "local_manual_operator", principal: "A".repeat(64) }),
-          now: () => trustedNow,
-          nextId: () => randomUUID(),
+          currentActor: () => ({ actorId: "package-product-actor", principal: "A".repeat(64) }),
+          currentRuntimeRootKey: () => m.inspectTrustedRuntimeRoot(layout.root).rootKey,
+          now: () => new Date(trustedMilliseconds++).toISOString(),
+          nextId: (kind) => {
+            const value = kind + ":" + randomUUID();
+            (generated[kind] ??= []).push(value);
+            return value;
+          },
           confirmHighRisk: () => true,
           currentLeaseOwner: () => "package-worker",
           confirmOperation: ({ action }) => ({ confirmationId: action + ":" + randomUUID() }),
@@ -382,78 +594,70 @@ void outcomeControl;
           expectedTaskRevision: 1,
         });
         if (!ready.ok) throw new Error("package Task readiness was rejected");
-        trustedNow = new Date(Date.parse(issuedAt) + 1000).toISOString();
+        trustedMilliseconds = Date.parse(issuedAt) + 1000;
         const claimUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
         if (!claimUpgrade.ok || claimUpgrade.value.epochRevision !== 1 ||
             claimUpgrade.value.capabilityCount !== m.PHASE2A_AUTHORIZATION_ACTIONS.length) {
           throw new Error("package claim capability upgrade was rejected");
         }
-        trustedNow = new Date(Date.parse(issuedAt) + 2000).toISOString();
+        trustedMilliseconds = Date.parse(issuedAt) + 2000;
         const manualUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
         if (!manualUpgrade.ok || manualUpgrade.value.epochRevision !== 2 ||
             manualUpgrade.value.capabilityCount !== m.PHASE2B_AUTHORIZATION_ACTIONS.length) {
           throw new Error("package Manual capability upgrade was rejected");
         }
-        trustedNow = new Date(Date.parse(issuedAt) + 3000).toISOString();
+        trustedMilliseconds = Date.parse(issuedAt) + 3000;
         const dispatcherUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
         if (!dispatcherUpgrade.ok || dispatcherUpgrade.value.epochRevision !== 3 ||
             dispatcherUpgrade.value.capabilityCount !== m.AUTHORIZATION_ACTIONS.length) {
           throw new Error("package dispatcher capability upgrade was rejected");
         }
-        trustedNow = new Date(Date.parse(issuedAt) + 4000).toISOString();
-        const execution = m.createExecutionApplicationService(store, trusted);
-        const claimed = execution.claim({
-          kind: "execution.claim",
-          projectId: "project",
-          expectedProjectResourceRevision: 1,
-          expectedProjectConfigRevision: 1,
-          taskId: "task",
-          expectedTaskRevision: 2,
-          idempotencyKey: "package-claim",
+        trustedMilliseconds = Date.parse(issuedAt) + 4000;
+        let manualBackend = m.createManualExecutionBackend(store, { ingress: trusted });
+        let product = m.createProductRuntime(store, trusted, manualBackend, manualBackend);
+        const dispatched = product.dispatchRun({
+          kind: "dispatch.run",
+          idempotencyKey: "package-dispatch",
           leaseDurationSeconds: 60,
         });
-        if (!claimed.ok) {
-          throw new Error(
-            "package execution claim was rejected: " + claimed.error.code + ":" + claimed.error.message,
-          );
+        if (!dispatched.ok || dispatched.value.terminalStatus !== "completed") {
+          throw new Error("package product dispatch was rejected");
         }
-        trustedNow = new Date(Date.parse(issuedAt) + 5000).toISOString();
-        let manualBackend = m.createManualExecutionBackend(store, { ingress: trusted });
-        let manual = m.createReliableExecutionService(store, trusted, manualBackend, manualBackend);
-        const startCommand = {
-          kind: "execution.start",
+        const publicCommon = (executionId, idempotencyKey) => ({
           projectId: "project",
           expectedProjectResourceRevision: 1,
           expectedProjectConfigRevision: 1,
           taskId: "task",
           expectedTaskRevision: 3,
-          inputReference: "package-input",
-          executionId: claimed.value.executionId,
+          executionId,
           expectedExecutionRevision: 1,
           expectedAttemptNumber: 1,
           expectedFencingToken: 1,
-          idempotencyKey: "package-start",
-          policyBindingReference: "package-policy",
-          requestedDeadline: new Date(Date.parse(issuedAt) + 60_000).toISOString(),
-        };
-        const started = manual.start(startCommand);
-        if (!started.ok || started.value.lifecycle !== "queued") throw new Error("package Manual start was rejected");
-        trustedNow = new Date(Date.parse(issuedAt) + 6000).toISOString();
+          idempotencyKey,
+        });
+        let inspected = null;
+        for (const candidate of [...(generated.operation ?? [])]) {
+          const result = product.inspect({ kind: "execution.inspect", ...publicCommon(candidate, "package-inspect-" + candidate) });
+          if (result.ok) {
+            inspected = result;
+            break;
+          }
+        }
+        if (inspected === null || inspected.value.lifecycle !== "queued") {
+          throw new Error("package product inspection did not bind the dispatched execution");
+        }
+        const executionId = inspected.value.executionId;
+        trustedMilliseconds = Date.parse(issuedAt) + 5000;
         const reportCommand = {
-          ...startCommand,
-          kind: "manual.turn.report",
+          kind: "manual.outcome-report",
+          ...publicCommon(executionId, "package-report"),
           idempotencyKey: "package-report",
           reportId: "package-report",
-          backendExecutionId: started.value.backendExecutionId,
-          threadId: started.value.threadId,
-          expectedJournalRevision: 1,
-          expectedLifecycle: "queued",
-          outcomeOperation: "succeed",
+          outcome: "succeed",
           code: "manual_turn_succeeded",
           evidenceReference: "package-evidence",
-          lastObservationNumber: 1,
         };
-        const reported = manual.recordManualOutcome(reportCommand);
+        const reported = product.recordManualOutcome(reportCommand);
         if (!reported.ok || reported.value.lifecycle !== "turn_succeeded" || reported.value.taskState !== "running") {
           throw new Error("package Manual outcome was not finalized as a running Task turn fact");
         }
@@ -461,24 +665,13 @@ void outcomeControl;
         store = await m.openPersistence(layout, { applicationVersion: "package-smoke-restart" });
         service = m.createApplicationService(store, trusted);
         manualBackend = m.createManualExecutionBackend(store, { ingress: trusted });
-        manual = m.createReliableExecutionService(store, trusted, manualBackend, manualBackend);
-        const reportReplay = manual.recordManualOutcome(reportCommand);
+        product = m.createProductRuntime(store, trusted, manualBackend, manualBackend);
+        const reportReplay = product.recordManualOutcome(reportCommand);
         if (!reportReplay.ok || !reportReplay.value.replayed) throw new Error("package Manual restart replay was not stable");
-        trustedNow = new Date(Date.parse(issuedAt) + 7000).toISOString();
-        const completed = manual.acceptManualCompletion({
-          kind: "execution.completion.accept",
-          projectId: "project",
-          expectedProjectResourceRevision: 1,
-          expectedProjectConfigRevision: 1,
-          taskId: "task",
-          expectedTaskRevision: 3,
-          inputReference: "package-input",
-          executionId: claimed.value.executionId,
-          expectedExecutionRevision: 1,
-          expectedAttemptNumber: 1,
-          expectedFencingToken: 1,
-          verifiedReceiptId: reported.value.verifiedReceiptId,
-          finalizationId: reported.value.finalizationId,
+        trustedMilliseconds = Date.parse(issuedAt) + 6000;
+        const completed = product.acceptManualCompletion({
+          kind: "execution.accept-manual-completion",
+          ...publicCommon(executionId, "package-completion"),
           idempotencyKey: "package-completion",
         });
         if (!completed.ok || completed.value.taskState !== "completed") throw new Error("package Manual completion was rejected");
@@ -495,8 +688,8 @@ void outcomeControl;
           status: m.getScaffoldStatus(),
           states: m.TASK_STATES,
           snapshot: project.value.projectId === "project" && task.value.id === "task",
-          claim: claimed.value.fencingToken === 1 && claimed.value.taskRevision === 3,
-          manual: started.value.lifecycle === "queued" && reported.value.lifecycle === "turn_succeeded" && completed.value.lifecycle === "completed",
+          claim: inspected.value.fencingToken === 1 && inspected.value.taskRevision === 3,
+          manual: inspected.value.lifecycle === "queued" && reported.value.lifecycle === "turn_succeeded" && completed.value.lifecycle === "completed",
           dispatcherExport: typeof m.createManualDispatcher === "function",
           schema: m.currentSchemaVersion(),
           backup: verified.generationId === backup.generationId,
@@ -518,19 +711,20 @@ void outcomeControl;
   invariant(importResult.status === 0, `package export failed: ${importResult.stderr}`);
   const imported = JSON.parse(importResult.stdout.trim());
   invariant(
-    imported.status.phase === "phase2-reconcile-first-manual-dispatcher" &&
+    imported.status.phase === "phase2-local-manual-product" &&
       imported.status.domainCoreImplemented === true &&
       imported.status.persistenceFoundationImplemented === true &&
       imported.status.projectRegistryImplemented === true &&
       imported.status.runtimeAuthorizationImplemented === true &&
       imported.status.applicationServiceImplemented === true &&
       imported.status.localPhase1ProductCliImplemented === true &&
+      imported.status.localPhase2ProductCliImplemented === true &&
       imported.status.backupRestoreDoctorImplemented === true &&
       imported.status.durableExecutionClaimFoundationImplemented === true &&
       imported.status.reliableManualExecutionLoopImplemented === true &&
       imported.status.reconcileFirstManualDispatcherImplemented === true &&
-      imported.status.productRuntimeImplemented === false &&
-      imported.status.executionRuntimeImplemented === false &&
+      imported.status.productRuntimeImplemented === true &&
+      imported.status.executionRuntimeImplemented === true &&
       JSON.stringify(imported.status.supportedAdapters) === JSON.stringify(["manual-local"]) &&
       JSON.stringify(imported.states) === JSON.stringify(["idea", "ready", "running", "waiting", "completed", "cancelled"]) &&
       imported.snapshot === true &&
@@ -553,6 +747,11 @@ void outcomeControl;
   const positiveArgs = ["--format", "json", "--runtime-root", parityRoot, "doctor"];
   const humanArgs = ["--format", "human", "--runtime-root", parityRoot, "doctor"];
   const negativeArgs = ["--format", "json", "unknown", "private-input-must-not-echo"];
+  const v2PositiveArgs = ["--format", "json", "--api-version", "ato.api/v2", "--runtime-root", parityRoot, "doctor"];
+  const v2NegativeArgs = [
+    "--format", "json", "--api-version", "ato.api/v2", "dispatch", "run",
+    "--idempotency-key", "package-v2-invalid", "--lease-duration-seconds", "29",
+  ];
   const sourceCli = path.join(repoRoot, "src", "cli.ts");
   const builtCli = path.join(repoRoot, "dist", "cli.js");
   const installedCli = path.join(consumer, "node_modules", "agent-task-orchestrator", "dist", "cli.js");
@@ -562,6 +761,10 @@ void outcomeControl;
     invokeNodeCli(entry, humanArgs, consumer, cliEnvironment));
   const negativeResults = [sourceCli, builtCli, installedCli].map((entry) =>
     invokeNodeCli(entry, negativeArgs, consumer, cliEnvironment));
+  const v2PositiveResults = [sourceCli, builtCli, installedCli].map((entry) =>
+    invokeNodeCli(entry, v2PositiveArgs, consumer, cliEnvironment));
+  const v2NegativeResults = [sourceCli, builtCli, installedCli].map((entry) =>
+    invokeNodeCli(entry, v2NegativeArgs, consumer, cliEnvironment));
   const expectedPositive = {
     status: 0,
     stdout: '{"apiVersion":"ato.api/v1","command":"doctor","ok":true,"result":{"health":"not_initialized","initialized":false,"schemaVersion":null,"activeUse":false,"backupInventory":"empty","restoreState":"none"}}\n',
@@ -577,6 +780,16 @@ void outcomeControl;
     stdout: 'OK doctor health="not_initialized" initialized=false schemaVersion=null activeUse=false backupInventory="empty" restoreState="none"\n',
     stderr: "",
   };
+  const expectedV2Positive = {
+    status: 0,
+    stdout: '{"apiVersion":"ato.api/v2","command":"doctor","ok":true,"result":{"health":"not_initialized","initialized":false,"schemaVersion":null,"activeUse":false,"backupInventory":"empty","restoreState":"none"}}\n',
+    stderr: "",
+  };
+  const expectedV2Negative = {
+    status: 2,
+    stdout: '{"apiVersion":"ato.api/v2","command":"dispatch.run","ok":false,"error":{"code":"CLI_INVALID_INPUT","message":"The command input is invalid."}}\n',
+    stderr: "",
+  };
   for (const observed of positiveResults) {
     invariant(JSON.stringify(observed) === JSON.stringify(expectedPositive), `positive CLI parity drifted: ${JSON.stringify(observed)}`);
   }
@@ -590,9 +803,58 @@ void outcomeControl;
       `human CLI parity drifted: ${JSON.stringify(observed)}`,
     );
   }
+  for (const observed of v2PositiveResults) {
+    invariant(
+      JSON.stringify(observed) === JSON.stringify(expectedV2Positive),
+      `v2 positive CLI parity drifted: ${JSON.stringify(observed)}`,
+    );
+  }
+  for (const observed of v2NegativeResults) {
+    invariant(
+      JSON.stringify(observed) === JSON.stringify(expectedV2Negative),
+      `v2 negative CLI parity drifted: ${JSON.stringify(observed)}`,
+    );
+  }
+  const phase2ParityEnvironment = { ATO_SMOKE_HOME: isolatedHome };
+  const phase2ParityNodeArgs = ["--no-warnings", "--experimental-loader", pathToFileURL(isolatedOsLoader).href];
+  const phase2ParityExpiry = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const phase2Boundaries = [
+    ["source", path.join(isolatedSourceRoot, "src", "cli.ts")],
+    ["built", path.join(isolatedBuiltRoot, "dist", "cli.js")],
+    ["installed", installedCli],
+  ];
+  const phase2Transcripts = phase2Boundaries.map(([label, entry]) => {
+    const project = path.join(generation, `cli-${label}-project`);
+    mkdirSync(project);
+    const runtime = path.join(
+      isolatedHome,
+      "AppData",
+      "Local",
+      "agent-task-orchestrator",
+      `cli-${label}-runtime`,
+    );
+    return runPhase2CliBoundary(
+      entry,
+      label,
+      runtime,
+      project,
+      consumer,
+      phase2ParityExpiry,
+      phase2ParityEnvironment,
+      phase2ParityNodeArgs,
+    );
+  });
+  for (const transcript of phase2Transcripts.slice(1)) {
+    invariant(
+      JSON.stringify(transcript) === JSON.stringify(phase2Transcripts[0]),
+      `Phase-2 source/build/installed CLI parity drifted: ${JSON.stringify(transcript)}`,
+    );
+  }
   invariant(!existsSync(parityRoot), "read-only doctor created the absent runtime root");
   const installedBin = pnpm(["exec", "ato", ...positiveArgs], consumer, undefined, cliEnvironment);
   invariant(installedBin.stdout === expectedPositive.stdout && installedBin.stderr === "", "installed package bin drifted from direct CLI entry");
+  const installedV2Bin = pnpm(["exec", "ato", ...v2PositiveArgs], consumer, undefined, cliEnvironment);
+  invariant(installedV2Bin.stdout === expectedV2Positive.stdout && installedV2Bin.stderr === "", "installed package v2 bin drifted from direct CLI entry");
 
   pnpm(["remove", "agent-task-orchestrator"], consumer, storeDir);
   invariant(!existsSync(path.join(consumer, "node_modules", "agent-task-orchestrator")), "package uninstall left the installed package");

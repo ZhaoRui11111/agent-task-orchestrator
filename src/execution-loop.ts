@@ -2526,9 +2526,6 @@ function runOperation(
   if (projectFailure !== null) return projectFailure;
   let namedConfirmation: string | null = null;
   if (command.kind === "manual.turn.report") {
-    if (context.actor.actorId !== "local_manual_operator") {
-      return failed("AUTHORIZATION_DENIED", "Manual outcome writer requires the trusted local_manual_operator actor", identity);
-    }
     const preflight = authorize(state, context.actor.actorId, "execution.inspect", bound.project, context.now, true);
     if (preflight.allowed) namedConfirmation = confirmationId(ingress, identity, "manual.turn.report");
     const refreshed = trustedContext(ingress);

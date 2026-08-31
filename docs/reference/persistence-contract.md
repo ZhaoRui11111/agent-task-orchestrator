@@ -16,8 +16,10 @@ Manual-loop records, and the schema-v7 reconcile-first Manual dispatcher
 records. It
 exposes lifecycle operations, read-only doctor, and the typed application
 transaction owner; it does not authorize a mutation or select or invoke a
-Domain command. The separate Phase 1 product CLI calls these owners and never
-opens SQLite directly. Persistence implements the local claim/lease/fence,
+Domain command. The local product facade and versioned CLI call these owners;
+the CLI never opens SQLite directly, while the facade performs only typed
+current-state reads needed to derive an existing owner command. Persistence
+implements the local claim/lease/fence,
 authorization vocabulary lineage, operation request/decision/audit,
 intent/observation/verified-receipt/finalization, execution terminal, Manual
 journal, Manual completion, dispatcher trigger/decision/audit, run ownership,
@@ -708,11 +710,12 @@ newer than the binary is refused. In-place downgrade does not exist; only the
 separately acknowledged verified-backup mechanism can publish older data.
 
 The current repository proves a local schema-v7 persistence/application
-foundation, library-only durable claims/leases/fences, reliable Manual-loop
-records, and explicit-Manual dispatcher records, plus Phase 1 CLI backup,
+foundation, durable claims/leases/fences, reliable Manual-loop records, and
+explicit-Manual dispatcher records, plus versioned local product CLI backup,
 separately confirmed restore, and read-only doctor surfaces on the observed
-development host. It does not establish a release, Windows support, public or
-product execution runtime, Codex/Git/workspace/Scheduler adapter, scheduled
+development host. The typed local product facade composes those records without
+adding schema or a second writer. This does not establish a release, Windows
+support, Codex/Git/workspace/Scheduler adapter, scheduled
 delivery, ProjectPolicy, CompletionBackend/gates, MCP server, plugin,
 deployment, or external Project operation. The
 Manual journal contains local no-workspace lifecycle facts only;

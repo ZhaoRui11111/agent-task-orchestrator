@@ -98,28 +98,32 @@ first reproduce the frozen dependency install in an empty disposable project
 and generation-local store, then pack the declared distribution, install it
 into a disposable consumer without registry access, typecheck the public
   declarations without undeclared Node type dependencies, import the library
-  entry, exercise trusted bootstrap plus Project/Task commands, both explicit
-  capability upgrades through vocabulary 7, an atomic execution claim, the local Manual
-  start/inspect/outcome/finalization/completion library loop after restart, and
-  a fresh persistence backup, verify the exported reconcile-first dispatcher
-  surface/status, and invoke the console entry. The console portion
-compares source, built, and packed-installed CLI behavior for an exact
-successful JSON response, successful human response, invalid-input JSON
-response, public exit codes, and absence of read-only doctor side effects.
+  entry, exercise trusted bootstrap plus Project/Task commands, three sequential
+  explicit capability upgrades through vocabulary 7, an atomic
+  execution claim, the local Manual start/inspect/outcome/finalization/
+  completion library loop after restart, the typed product facade's Manual
+  dispatch-to-completion restart path, and a fresh persistence backup; verify
+  the exported reconcile-first dispatcher/product surfaces and status; and
+  invoke the console entry. The console portion compares source, built, and
+  packed-installed CLI behavior for exact version-1 and version-2 successful
+  JSON/human responses, invalid input, public exits, and absence of read-only
+  doctor side effects.
 
 The package-root library export exposes a truthful capability status, the pure
 TypeScript Domain Core, ProjectRegistry identity owner, finite authorization
 owner, typed Phase 1 and claim application services, the pure execution port
-kit, production local Manual backend/control, reliable execution loop,
-library-only reconcile-first Manual dispatcher, schema-v7 persistence
-foundation, local lifecycle surfaces, and product CLI API. The packed inventory includes the
+  kit, production local Manual backend/control, reliable execution loop,
+reconcile-first Manual dispatcher, typed local product facade, schema-v7
+persistence foundation, local lifecycle surfaces, and versioned product CLI
+API. The packed inventory includes the
 immutable SQL files under `migrations/`. The source and compiled migration
 registry consume either a uniform LF or CRLF transport of those files and
 reconstruct the same frozen per-migration canonical bytes before checksum
 verification and execution. `.gitattributes` declares an explicit historical
 checkout EOL for every shipped migration; a future migration requires its own
 reviewed registry identity and per-file attribute rather than inheriting a
-wildcard. The `ato` console is the local Phase 1 product CLI defined by the
+wildcard. The `ato` console is the local Phase 1 and explicit-Manual Phase 2
+product CLI defined by the
 [CLI/API contract](cli-contract.md).
 
 Production source is limited to `src/index.ts`, `src/domain.ts`, `src/cli.ts`,
@@ -127,12 +131,13 @@ Production source is limited to `src/index.ts`, `src/domain.ts`, `src/cli.ts`,
 `src/application.ts`, `src/execution-application.ts`, `src/execution-port.ts`,
 `src/execution-loop.ts`, `src/manual-execution-backend.ts`,
 `src/dispatcher-application.ts`, `src/dispatcher.ts`, the narrow built-in
-declarations in `src/node-builtins.d.ts`, and `src/persistence/`. `node:sqlite`
+declarations in `src/node-builtins.d.ts`, `src/product-runtime.ts`, and
+`src/persistence/`. `node:sqlite`
 is confined to the persistence owner; `node:crypto` is used only for bounded
 Manual receipt integrity and existing identity/digest owners. The package has
 no production dependency and must not acquire a scheduler, MCP,
-Codex/Git/workspace adapter, ProjectPolicy, CompletionBackend/gates, or
-executable orchestrator as part of this boundary. The Fake backend remains
+Codex/Git/workspace adapter, ProjectPolicy, CompletionBackend/gates, daemon, or
+external-effect orchestrator as part of this boundary. The Fake backend remains
 test-only and absent from the packed inventory.
 
 ## Validation entry points
@@ -144,7 +149,7 @@ The following package scripts are the public local entry points:
 | `pnpm lint` | Repository hygiene, frozen configuration, source-boundary, and diff checks |
 | `pnpm typecheck` | Strict TypeScript checking without output |
 | `pnpm build` | Produce the ESM package and declarations |
-| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop/dispatcher atomicity and security, port/adapter contracts, crash/restart recovery, persistence, CLI, doctor, and real local feasibility contracts |
+| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop/dispatcher/product-facade atomicity and security, port/adapter contracts, crash/restart recovery, persistence, versioned CLI, doctor, and real local feasibility contracts |
 | `pnpm test:persistence` | Run the targeted schema-v7 migration, repository/decoder, Manual journal/evidence, dispatcher, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
 | `pnpm docs:check` | Resolve exact-case repository-relative Markdown links, validate same-file and cross-file heading fragments, and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |

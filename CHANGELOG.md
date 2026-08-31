@@ -74,13 +74,21 @@ All notable changes to this project will be documented in this file.
   adds no SchedulerBackend or scheduled trigger, MCP, Codex/Git/workspace
   adapter, ProjectPolicy, CompletionBackend/gate, product execution runtime,
   release, deployment, or platform-support claim.
+- Closed the local explicit-Manual Phase 2 product surface without changing
+  schema v7, `ato.execution/v1`, or the default closed `ato.api/v1`: added an
+  explicit `ato.api/v2`, trusted OS/runtime-root product ingress, one typed
+  product facade over the existing application/dispatcher/reliable-loop owners,
+  sequential capability upgrade, Manual dispatch/resume, execution inspect/
+  resume/retry/cancel, trusted Manual outcome reporting, separately confirmed
+  Manual completion acceptance, fixed redacted projections/errors, and source/
+  build/packed-install/restart/migration evidence. The local Manual backend
+  records no-workspace lifecycle facts and still does not execute Task content.
 
-These entries do not announce a release or supported runtime. The executable
+These entries do not announce a release or supported platform. The executable
 material is limited to the development package, feasibility harness, pure
 in-memory Domain Core, ProjectRegistry, runtime authorization, typed
-application services, local schema-v7 persistence, the Phase 1 product CLI, the
-library-only reliable Manual execution loop, and the library-only explicit
-Manual reconcile-first dispatcher. Scheduler/SchedulerBackend, MCP,
-Codex/Git/workspace adapters, ProjectPolicy, CompletionBackend/gates, public
-Phase 2 execution or dispatch ingress, and product orchestration runtime
-behavior remain unimplemented.
+application services, local schema-v7 persistence, the versioned local product
+CLI and facade, reliable Manual execution loop, and explicit-Manual
+reconcile-first dispatcher. Scheduler/SchedulerBackend, MCP,
+Codex/Git/workspace adapters, ProjectPolicy, CompletionBackend/gates, external
+Task-content execution, release, and deployment remain unimplemented.

@@ -3,10 +3,16 @@ import path from "node:path";
 import test from "node:test";
 import {
   CLI_API_VERSION,
+  CLI_API_V2_VERSION,
   PUBLIC_ERROR_TABLE,
+  PUBLIC_ERROR_TABLE_V2,
+  mapProductFailureToPublicCode,
   parseCliArguments,
   runCli,
 } from "../src/cli-api.ts";
+import { APPLICATION_ERROR_CODES } from "../src/application.ts";
+import { DISPATCHER_ERROR_CODES } from "../src/dispatcher-application.ts";
+import { RELIABLE_EXECUTION_ERROR_CODES } from "../src/execution-loop.ts";
 
 const NOW = "2026-08-30T00:00:00.000Z";
 const EXPIRY = "2026-09-20T00:00:00.000Z";
@@ -40,6 +46,25 @@ const CASES = Object.freeze([
   ["backup.create", ["backup", "create"], []],
 ]);
 
+const COMMON = Object.freeze([
+  "project-id", "project", "expected-project-resource-revision", "1",
+  "expected-project-config-revision", "1", "task-id", "task", "expected-task-revision", "2",
+  "execution-id", "execution-1", "expected-execution-revision", "1", "expected-attempt-number", "1",
+  "expected-fencing-token", "1", "idempotency-key", "operation-1",
+]);
+
+const V2_ONLY_CASES = Object.freeze([
+  ["authorization.upgrade", ["authorization", "upgrade"], ["expires-at", EXPIRY, "confirm", "UPGRADE LOCAL CAPABILITIES"]],
+  ["dispatch.run", ["dispatch", "run"], ["idempotency-key", "dispatch-1", "lease-duration-seconds", "300"]],
+  ["dispatch.resume", ["dispatch", "resume"], ["run-id", "run-1"]],
+  ["execution.inspect", ["execution", "inspect"], COMMON],
+  ["execution.resume", ["execution", "resume"], [...COMMON, "continuation-reference", "continuation-1", "required-action-receipt-id", "required-1"]],
+  ["execution.retry", ["execution", "retry"], [...COMMON, "continuation-reference", "continuation-1", "required-action-receipt-id", "required-1"]],
+  ["execution.request-cancel", ["execution", "request-cancel"], [...COMMON, "reason-code", "cancel-1"]],
+  ["manual.outcome-report", ["manual", "outcome-report"], [...COMMON, "report-id", "report-1", "outcome", "wait", "code", "waiting-1", "evidence-reference", "evidence-1", "confirm", "RECORD MANUAL OUTCOME"]],
+  ["execution.accept-manual-completion", ["execution", "accept-manual-completion"], [...COMMON, "confirm", "ACCEPT MANUAL COMPLETION"]],
+]);
+
 function argsFor(commandPath, options) {
   const result = [...commandPath];
   for (let index = 0; index < options.length; index += 2) {
@@ -67,6 +92,49 @@ test("ato.api/v1 has one closed command tree and exact duplicate-free option set
   assert.equal(projectScope.ok, true);
 });
 
+test("ato.api/v2 is explicit, includes v1, and has one exact Phase 2 command tree", () => {
+  assert.equal(CLI_API_V2_VERSION, "ato.api/v2");
+  const inherited = parseCliArguments(["--api-version", CLI_API_V2_VERSION, "status"], NOW);
+  assert.equal(inherited.ok, true);
+  assert.equal(inherited.command.apiVersion, CLI_API_V2_VERSION);
+  for (const [id, commandPath, options] of V2_ONLY_CASES) {
+    const parsed = parseCliArguments(["--api-version", CLI_API_V2_VERSION, ...argsFor(commandPath, options)], NOW);
+    assert.equal(parsed.ok, true, `${id}:${JSON.stringify(parsed)}`);
+    assert.equal(parsed.command.id, id);
+    assert.equal(parsed.command.apiVersion, CLI_API_V2_VERSION);
+    assert.deepEqual(Object.keys(parsed.command.options).sort(), options.filter((_value, index) => index % 2 === 0).sort());
+    assert.equal(parseCliArguments(argsFor(commandPath, options), NOW).ok, false, `${id} leaked into default v1`);
+  }
+  assert.equal(parseCliArguments([
+    "--api-version", CLI_API_V2_VERSION, "authorization", "evaluate",
+    "--project-id", "project", "--expected-resource-revision", "1", "--expected-config-revision", "1",
+    "--action", "dispatch.run",
+  ], NOW).ok, true);
+});
+
+test("ato.api/v2 preserves 128-byte IDs but closes reason and Manual codes at 64 bytes", () => {
+  const code64 = `c${"a".repeat(63)}`;
+  const code65 = `c${"a".repeat(64)}`;
+  const id128 = `i${"a".repeat(127)}`;
+  const id129 = `i${"a".repeat(128)}`;
+  const cancel = (reasonCode) => [
+    "--api-version", CLI_API_V2_VERSION,
+    ...argsFor(["execution", "request-cancel"], [...COMMON, "reason-code", reasonCode]),
+  ];
+  const outcome = (code, evidenceReference = "evidence-1") => [
+    "--api-version", CLI_API_V2_VERSION,
+    ...argsFor(["manual", "outcome-report"], [
+      ...COMMON, "report-id", "report-1", "outcome", "wait", "code", code,
+      "evidence-reference", evidenceReference, "confirm", "RECORD MANUAL OUTCOME",
+    ]),
+  ];
+  assert.equal(parseCliArguments(cancel(code64), NOW).ok, true);
+  assert.equal(parseCliArguments(cancel(code65), NOW).code, "CLI_INVALID_INPUT");
+  assert.equal(parseCliArguments(outcome(code64, id128), NOW).ok, true);
+  assert.equal(parseCliArguments(outcome(code65, id128), NOW).code, "CLI_INVALID_INPUT");
+  assert.equal(parseCliArguments(outcome(code64, id129), NOW).code, "CLI_INVALID_INPUT");
+});
+
 test("CLI grammar rejects aliases, equals, response files, positionals, repeated globals, and misplaced globals", () => {
   const invalid = [
     [], ["unknown"], ["task"], ["status", "extra"], ["-j", "status"],
@@ -91,7 +159,7 @@ test("CLI grammar rejects aliases, equals, response files, positionals, repeated
   assert.deepEqual(parseCliArguments(["--format", "json", "unknown"], NOW), {
     ok: false, format: "json", command: "unknown", code: "CLI_INVALID_INPUT",
   });
-  assert.deepEqual(parseCliArguments(["--api-version", "ato.api/v2", "status"], NOW), {
+  assert.deepEqual(parseCliArguments(["--api-version", "ato.api/v3", "status"], NOW), {
     ok: false, format: "human", command: "status", code: "CLI_UNSUPPORTED_VERSION",
   });
   assert.equal(parseCliArguments(["--format", "yaml", "status"], NOW).format, "human");
@@ -149,6 +217,90 @@ test("the public code, exit, and fixed-message table is exact", () => {
     RESTORE_RECOVERY_REQUIRED: { exitCode: 8, message: "Restore requires manual recovery." },
     INTERNAL_ERROR: { exitCode: 9, message: "The operation failed internally." },
   });
+  assert.deepEqual(PUBLIC_ERROR_TABLE_V2, {
+    ...PUBLIC_ERROR_TABLE,
+    EXECUTION_NOT_FOUND: { exitCode: 5, message: "The execution was not found." },
+    DISPATCH_RUN_NOT_FOUND: { exitCode: 5, message: "The dispatcher run was not found." },
+    STALE_FENCE: { exitCode: 6, message: "The execution or dispatcher ownership fence is stale." },
+    LEASE_EXPIRED: { exitCode: 6, message: "The execution or dispatcher lease has expired." },
+    RECONCILIATION_REQUIRED: { exitCode: 6, message: "Durable reconciliation is required before the operation can continue." },
+    ADAPTER_FAILURE: { exitCode: 7, message: "The Manual execution adapter failed." },
+    AMBIGUOUS_EXTERNAL_STATE: { exitCode: 8, message: "The external execution state is ambiguous." },
+  });
+});
+
+test("every application, reliable-loop, and dispatcher error has the exact closed v2 public mapping", () => {
+  const application = {
+    INVALID_INPUT: "CLI_INVALID_INPUT",
+    BOOTSTRAP_ALREADY_CONSUMED: "RUNTIME_ALREADY_INITIALIZED",
+    BOOTSTRAP_REQUIRED: "RUNTIME_NOT_INITIALIZED",
+    AUTHORIZATION_DENIED: "AUTHORIZATION_DENIED",
+    PROJECT_NOT_FOUND: "PROJECT_NOT_FOUND",
+    PROJECT_ALREADY_REGISTERED: "PROJECT_ALREADY_REGISTERED",
+    PROJECT_REGISTRY_REJECTED: "PROJECT_REGISTRY_REJECTED",
+    TASK_NOT_FOUND: "TASK_NOT_FOUND",
+    GRANT_NOT_FOUND: "GRANT_NOT_FOUND",
+    STALE_REVISION: "STALE_REVISION",
+    DOMAIN_REJECTED: "DOMAIN_REJECTED",
+    SCOPE_EXPANSION_DENIED: "SCOPE_EXPANSION_DENIED",
+    CAPABILITY_RENEWAL_NOT_DUE: "CAPABILITY_RENEWAL_NOT_DUE",
+    CAPABILITY_UPGRADE_NOT_ELIGIBLE: "AUTHORIZATION_DENIED",
+  };
+  const reliable = {
+    INVALID_INPUT: "CLI_INVALID_INPUT",
+    AUTHORIZATION_DENIED: "AUTHORIZATION_DENIED",
+    CONFIRMATION_REQUIRED: "CONFIRMATION_REQUIRED",
+    PROJECT_NOT_FOUND: "PROJECT_NOT_FOUND",
+    PROJECT_DISABLED: "DOMAIN_REJECTED",
+    PROJECT_IDENTITY_CHANGED: "PROJECT_REGISTRY_REJECTED",
+    TASK_NOT_FOUND: "TASK_NOT_FOUND",
+    TASK_NOT_ELIGIBLE: "DOMAIN_REJECTED",
+    EXECUTION_NOT_FOUND: "EXECUTION_NOT_FOUND",
+    EXECUTION_TERMINAL: "DOMAIN_REJECTED",
+    IDEMPOTENCY_CONFLICT: "OPERATION_CONFLICT",
+    STALE_REVISION: "STALE_REVISION",
+    STALE_FENCE: "STALE_FENCE",
+    LEASE_EXPIRED: "LEASE_EXPIRED",
+    RECONCILIATION_REQUIRED: "RECONCILIATION_REQUIRED",
+    ADAPTER_FAILURE: "ADAPTER_FAILURE",
+    AMBIGUOUS_EXTERNAL_STATE: "AMBIGUOUS_EXTERNAL_STATE",
+    PERSISTENCE_FAILURE: "PERSISTENCE_UNAVAILABLE",
+  };
+  const dispatcher = {
+    INVALID_INPUT: "CLI_INVALID_INPUT",
+    AUTHORIZATION_DENIED: "AUTHORIZATION_DENIED",
+    IDEMPOTENCY_CONFLICT: "OPERATION_CONFLICT",
+    RUN_NOT_FOUND: "DISPATCH_RUN_NOT_FOUND",
+    RUN_NOT_RECONCILED: "RECONCILIATION_REQUIRED",
+    RUN_NOT_SEALED: "RECONCILIATION_REQUIRED",
+    MEMBER_NOT_FOUND: "RECONCILIATION_REQUIRED",
+    MEMBER_NOT_PENDING: "RECONCILIATION_REQUIRED",
+    STALE_REVISION: "STALE_REVISION",
+    STALE_OWNER: "STALE_FENCE",
+    LEASE_EXPIRED: "LEASE_EXPIRED",
+    LEASE_NOT_EXPIRED: "OPERATION_CONFLICT",
+    RECONCILIATION_INCOMPLETE: "RECONCILIATION_REQUIRED",
+    PROJECT_IDENTITY_CHANGED: "PROJECT_REGISTRY_REJECTED",
+    INTEGRITY_FAILURE: "STATE_CORRUPT",
+    PERSISTENCE_FAILURE: "PERSISTENCE_UNAVAILABLE",
+  };
+  assert.deepEqual(Object.keys(application), [...APPLICATION_ERROR_CODES]);
+  assert.deepEqual(Object.keys(reliable), [...RELIABLE_EXECUTION_ERROR_CODES]);
+  assert.deepEqual(Object.keys(dispatcher), [...DISPATCHER_ERROR_CODES]);
+  for (const code of APPLICATION_ERROR_CODES) {
+    assert.equal(mapProductFailureToPublicCode({ owner: "application", code, confirmationRequired: false }), application[code]);
+  }
+  assert.equal(mapProductFailureToPublicCode({
+    owner: "application", code: "AUTHORIZATION_DENIED", confirmationRequired: true,
+  }), "CONFIRMATION_REQUIRED");
+  for (const code of RELIABLE_EXECUTION_ERROR_CODES) {
+    assert.equal(mapProductFailureToPublicCode({ owner: "reliable", code }), reliable[code]);
+  }
+  for (const code of DISPATCHER_ERROR_CODES) {
+    assert.equal(mapProductFailureToPublicCode({ owner: "dispatcher", code }), dispatcher[code]);
+  }
+  assert.equal(mapProductFailureToPublicCode({ owner: "reliable", code: "UNCLASSIFIED" }), "INTERNAL_ERROR");
+  assert.equal(mapProductFailureToPublicCode({ owner: "unclassified", code: "UNCLASSIFIED" }), "INTERNAL_ERROR");
 });
 
 test("invalid run results use exact one-line human/JSON envelopes and never throw on a failed trusted clock", async () => {
@@ -172,4 +324,13 @@ test("invalid run results use exact one-line human/JSON envelopes and never thro
   assert.equal(failedClock.exitCode, 2);
   assert.equal(failedClock.stdout.includes("private clock failure"), false);
   assert.equal(failedClock.stderr, "");
+  const v2Invalid = await runCli([
+    "--format", "json", "--api-version", CLI_API_V2_VERSION,
+    "dispatch", "run", "--idempotency-key", "dispatch", "--lease-duration-seconds", "29",
+  ], { sourceCheckoutRoot: path.resolve(".") });
+  assert.deepEqual(v2Invalid, {
+    exitCode: 2,
+    stdout: '{"apiVersion":"ato.api/v2","command":"dispatch.run","ok":false,"error":{"code":"CLI_INVALID_INPUT","message":"The command input is invalid."}}\n',
+    stderr: "",
+  });
 });

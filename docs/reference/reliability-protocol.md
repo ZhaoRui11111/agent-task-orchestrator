@@ -11,10 +11,12 @@ attempts, leases, per-Task fencing, exact CAS, restart readback, the corrected
 ordered intent/observation/verified-receipt/finalization protocol for start,
 inspect, resume, retry, cancellation, Manual outcome reporting, verified
 interruption, reconcile-first expired execution, and separately accepted Manual
-completion. It also implements one library-only explicit-Manual dispatcher with
+completion. It also implements one explicit-Manual dispatcher with
 durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
 immutable finite membership, one terminal outcome per member, and
-completeness-gated summaries. It has no SchedulerBackend or scheduled trigger,
+completeness-gated summaries. One typed product facade exposes only these
+existing owners to explicit `ato.api/v2`, deriving non-public operation lineage
+from current durable state. It has no SchedulerBackend or scheduled trigger,
 workspace/publication, Codex/Git effect, ProjectPolicy, CompletionBackend, or
 completion gate; those sections remain requirements for their implementing
 plans.
@@ -304,8 +306,8 @@ successful finalization.
 
 ## Observable fan-out
 
-Schema v7 implements this section for the library-only explicit-Manual
-dispatcher. The reliable Manual loop remains the sole owner of each claimed
+Schema v7 implements this section for the explicit-Manual dispatcher. The
+reliable Manual loop remains the sole owner of each claimed
 member's adapter effect and receipt/finalization path; the dispatcher owns only
 ordering, durable run recovery, and complete member accounting.
 

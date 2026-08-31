@@ -11,8 +11,8 @@ executable TypeScript/Node toolchain and feasibility harness, a pure in-memory
 Domain Core for Project/Task rules, a safe local ProjectRegistry, a finite
 runtime authorization model, one typed Project/Task/dependency application
 service, schema-v7 SQLite persistence, a composable local Phase 1 `ato` product
-CLI, a typed library-only reliable Manual execution loop, and a library-only
-reconcile-first Manual dispatcher. The
+CLI, a typed reliable Manual execution loop, a reconcile-first Manual
+dispatcher, and an explicit `ato.api/v2` local Manual product surface. The
 application owner remains the sole business command/query owner and atomically
 coordinates Domain snapshots, registry/grant changes, authorization decisions,
 execution attempts, leases/fences, durable operation evidence, and sanitized audit. The CLI provides initialization,
@@ -22,14 +22,18 @@ The package exposes explicit capability upgrades, atomic claims, lease/fence
 handling, the strict `ato.execution/v1` contract kit, one durable local Manual
 backend, ordered intent/observation/verified-receipt/finalization recovery,
 resume/retry/cancel paths, verified interruption, and separately confirmed
-Manual completion acceptance. One explicit authorized Manual trigger can now
+Manual completion acceptance. A typed product facade resolves current durable
+lineage and composes those owners; the CLI remains typed ingress, trusted local
+identity/confirmation, redacted presentation, and fixed public-error mapping.
+One explicit authorized Manual trigger can now
 create an owned dispatcher run that reconciles old durable work, seals a finite
 candidate set, claims and prepares permitted Tasks through the existing owners,
-resolves every member, and publishes a completeness-checked summary. It still
-has no product orchestration runtime, MCP server, plugin, SchedulerBackend or
-scheduled trigger, Codex/Git/workspace adapter, ProjectPolicy or
-CompletionBackend gate, public Phase 2 CLI, supported release, or validated
-product platform integration.
+resolves every member, and publishes a completeness-checked summary. The real
+`manual-local` backend records no-workspace Manual lifecycle facts; it does not
+execute Task content or touch a Project repository. The repository still has
+no MCP server, plugin, SchedulerBackend or scheduled trigger,
+Codex/Git/workspace adapter, ProjectPolicy or CompletionBackend gate, supported
+release, or validated product platform integration.
 
 Unimplemented planned capabilities are not current capabilities. Design
 proposals and roadmaps must remain clearly labeled until their implementations
@@ -87,7 +91,7 @@ pnpm verify:offline
 `pnpm dependency:audit` is a separate network-dependent query. Neither the CI
 skeleton nor a command that was not run is evidence of a passing gate.
 
-## Reliable Manual execution library
+## Reliable Manual execution and product facade
 
 The package exports the provisional typed claim service and reliable Manual
 loop. Schema-v6 migration, bootstrap, and renewal do not create any of the six
@@ -107,15 +111,17 @@ current completion grant and fresh confirmation atomically accept the exact
 verified evidence. The production Manual adapter records only no-workspace
 turn state; it does not execute Task content or touch a Project repository.
 
-This service is not reachable through `ato.api/v1` or the `ato` CLI. By itself
-it does not select candidates or invoke Codex, Git, workspace, scheduler,
-policy, or completion-gate effects, and it must not be used as evidence for an
-executable product runtime or platform-support claim. The exact rules are owned by the
+This service remains absent from `ato.api/v1`. Explicit `ato.api/v2` commands
+reach it only through the typed product facade, which derives the non-public
+turn, intent, receipt, and finalization tuple from current schema-v7 state.
+Neither the facade nor the Manual backend invokes Codex, Git, workspace,
+scheduler, policy, completion-gate, or Task-content effects, and local
+development evidence is not a platform-support claim. The exact rules are owned by the
 [authorization contract](docs/reference/authorization-contract.md),
 [persistence contract](docs/reference/persistence-contract.md), and
 [reliability protocol](docs/reference/reliability-protocol.md).
 
-## Reconcile-first Manual dispatcher library
+## Reconcile-first Manual dispatcher
 
 Schema-v7 migration, bootstrap, and vocabulary-6 renewal do not create
 `dispatch.run`. A runtime must complete its own fresh identity- and
@@ -134,14 +140,16 @@ before the real local Manual effect is invoked through the reliable loop.
 Restart and takeover continue from those durable rows; a terminal run summary
 is withheld until every sealed member and every claimed intent is complete.
 
-This is an additive package-library surface only. It has one explicit Manual
-trigger, no scheduler cadence or SchedulerBackend, and no Phase 2 CLI/API,
-daemon, MCP, Codex/Git/workspace behavior, completion gates, release, or
-platform-support claim. Its ordering and fan-out rules are owned by the
+The package and explicit `ato.api/v2` product surface expose this one Manual
+trigger and durable run resume. They add no scheduler cadence or
+SchedulerBackend, daemon, MCP, Codex/Git/workspace behavior, completion gates,
+release, or platform-support claim. The dispatcher—not CLI code—owns candidate
+selection, reconciliation, fan-out, and summary completeness. Its ordering and
+fan-out rules are owned by the
 [scheduler contract](docs/reference/scheduler-contract.md) and
 [reliability protocol](docs/reference/reliability-protocol.md).
 
-## Local Phase 1 CLI
+## Local product CLI
 
 The source, build, and packed-install entry points implement the same contract:
 
@@ -165,10 +173,22 @@ ato authorization list --limit 100
 
 Restore always requires both current `runtime.restore` authority and its two
 exact request-local confirmations. Doctor is grant-independent and read-only.
-Use `--format json --api-version ato.api/v1` for the versioned single-line
-machine surface. The exhaustive command tree and stable public error/exit table
-are in the [CLI/API contract](docs/reference/cli-contract.md). This development
-package is not a release or platform-support claim.
+An omitted API version still selects the closed `ato.api/v1`. Explicit
+`ato.api/v2` inherits those Phase 1 commands and adds one-step capability
+upgrade, Manual dispatch/run resume, execution inspect/resume/retry/cancel,
+trusted Manual outcome reporting, and separately confirmed Manual completion:
+
+```powershell
+ato --api-version ato.api/v2 authorization upgrade --expires-at $expiry --confirm "UPGRADE LOCAL CAPABILITIES"
+ato --api-version ato.api/v2 dispatch run --idempotency-key manual-run-1 --lease-duration-seconds 300
+```
+
+Each newer vocabulary requires its own confirmed upgrade invocation; migration
+and renewal never grant Phase 2 authority. Use `--format json` for the
+versioned single-line machine surface. The exhaustive v1/v2 command trees,
+`COMMON` execution tuple, closed projections, and stable public error/exit
+tables are in the [CLI/API contract](docs/reference/cli-contract.md). This
+development package is not a release or platform-support claim.
 
 ## Maintainer development workflow
 

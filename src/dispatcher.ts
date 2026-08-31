@@ -36,6 +36,7 @@ import type { PersistenceStore } from "./persistence/store.ts";
 
 export interface ManualDispatcherIngress extends ReliableExecutionIngress {
   currentRuntimeRootKey(): string;
+  currentDispatcherOwner?(): string;
 }
 
 export interface ManualDispatcherOptions {
@@ -51,12 +52,17 @@ export interface ManualDispatcher {
 function dispatcherIngress(ingress: ManualDispatcherIngress): DispatcherIngress {
   return Object.freeze({
     currentActor: () => ingress.currentActor(),
-    currentWorkerOwner: () => ingress.currentLeaseOwner(),
+    currentWorkerOwner: () => ingress.currentDispatcherOwner?.() ?? ingress.currentLeaseOwner(),
+    currentExecutionLeaseOwner: () => ingress.currentLeaseOwner(),
     currentRuntimeRootKey: () => ingress.currentRuntimeRootKey(),
     now: () => ingress.now(),
     nextId: (kind: Parameters<DispatcherIngress["nextId"]>[0]) => ingress.nextId(kind === "observation" || kind === "run" ||
       kind === "reconciliation_item" || kind === "member" || kind === "execution" ? "operation" : kind),
   });
+}
+
+function currentDispatcherOwner(ingress: ManualDispatcherIngress): string {
+  return ingress.currentDispatcherOwner?.() ?? ingress.currentLeaseOwner();
 }
 
 function operationDeadline(ingress: ManualDispatcherIngress): string {
@@ -413,7 +419,7 @@ function createManualDispatcherInternal(
     try {
       let view = application.inspect(initial.runId);
       if (!view.ok) return view;
-      if (view.value.ownerId !== ingress.currentLeaseOwner()) {
+      if (view.value.ownerId !== currentDispatcherOwner(ingress)) {
         const takeover = application.takeover({
           kind: "dispatch.takeover",
           runId: view.value.runId,
@@ -583,7 +589,12 @@ function createManualDispatcherInternal(
   return Object.freeze({
     run: (command: DispatcherStartCommand) => {
       const started = application.start(command);
-      return started.ok ? continueRun(started.value) : started;
+      if (!started.ok) return started;
+      if (started.replayed && (started.value.terminalStatus !== null ||
+        (started.value.ownerId !== currentDispatcherOwner(ingress) && started.value.leaseExpiresAt > ingress.now()))) {
+        return started;
+      }
+      return continueRun(started.value);
     },
     resume: (runId: string) => {
       const current = application.inspect(runId);

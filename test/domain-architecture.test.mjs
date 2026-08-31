@@ -8,6 +8,7 @@ import { repoRoot } from "../scripts/repo-utils.mjs";
 const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "APPLICATION_ERROR_CODES",
   "AUTHORIZATION_ACTIONS",
+  "CLI_API_V2_VERSION",
   "CLI_API_VERSION",
   "DISPATCHER_ERROR_CODES",
   "DISPATCH_AUTHORIZATION_ACTIONS",
@@ -26,6 +27,7 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "PHASE2B_AUTHORIZATION_ACTIONS",
   "PROJECT_REGISTRY_ERROR_CODES",
   "PUBLIC_ERROR_TABLE",
+  "PUBLIC_ERROR_TABLE_V2",
   "PersistenceError",
   "ProjectRegistryError",
   "RELIABLE_EXECUTION_ERROR_CODES",
@@ -42,8 +44,10 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "createDomainSnapshot",
   "createExecutionApplicationService",
   "createLocalApplicationIngress",
+  "createLocalProductIngress",
   "createManualDispatcher",
   "createManualExecutionBackend",
+  "createProductRuntime",
   "createReliableExecutionService",
   "createReliableExecutionServiceWithHooks",
   "createTask",
@@ -112,23 +116,24 @@ function baseInput() {
   };
 }
 
-test("the package exposes the Phase 1 product plus the reconcile-first Manual dispatcher library surface", () => {
+test("the package exposes the local explicit-Manual Phase 2 product surface", () => {
   assert.deepEqual(Object.keys(packageSurface).sort(), [...EXPECTED_RUNTIME_EXPORTS].sort());
   assert.deepEqual(packageSurface.getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
-    phase: "phase2-reconcile-first-manual-dispatcher",
+    phase: "phase2-local-manual-product",
     domainCoreImplemented: true,
     persistenceFoundationImplemented: true,
     projectRegistryImplemented: true,
     runtimeAuthorizationImplemented: true,
     applicationServiceImplemented: true,
     localPhase1ProductCliImplemented: true,
+    localPhase2ProductCliImplemented: true,
     backupRestoreDoctorImplemented: true,
     durableExecutionClaimFoundationImplemented: true,
     reliableManualExecutionLoopImplemented: true,
     reconcileFirstManualDispatcherImplemented: true,
-    productRuntimeImplemented: false,
-    executionRuntimeImplemented: false,
+    productRuntimeImplemented: true,
+    executionRuntimeImplemented: true,
     supportedAdapters: ["manual-local"],
   });
   assert.deepEqual(packageSurface.TASK_STATES, [
