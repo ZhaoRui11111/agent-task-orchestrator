@@ -22,7 +22,7 @@ explicit-Manual dispatcher with bounded trusted ingress, run-owner fencing,
 reconcile-before-seal ordering, immutable membership, and complete outcomes. It still has no
 MCP server, SchedulerBackend or scheduled trigger, workspace control, Codex/Git adapter,
 ProjectPolicy, CompletionBackend/gates, team identity/RBAC, or supported
-platform security boundary. The explicit `ato.api/v2` facade and CLI expose
+platform security boundary. The sole current `ato.api/v1` facade and CLI expose
 only that local Manual subset; the backend does not execute Task content.
 
 The model assumes one local operator and treats repository content, Task text,
@@ -98,7 +98,7 @@ portions of N1, the local content/authorization portion of N3, the application
 audit plus CLI/doctor disclosure subset of N4, the current schema-version-1 SQLite/application/
 lifecycle/Manual-loop/dispatcher portions of N5 and N11, the local Manual intent/effect/
 inspection/receipt/finalization/crash/restart/stale-fence subset of N6 and N10,
-the explicit-Manual dispatcher worker-death/fan-out subset of N7, and the v1/v2
+the explicit-Manual dispatcher worker-death/fan-out subset of N7, and the sole-current-v1
 CLI portion of N8. Workspace, operational logger, SchedulerBackend/scheduled delivery,
 MCP, Codex/Git/external-service adapter, ProjectPolicy, CompletionBackend/gate,
 and publication portions remain future obligations;

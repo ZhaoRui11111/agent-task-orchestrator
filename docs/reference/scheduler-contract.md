@@ -7,7 +7,7 @@ reconcile-first dispatcher order and of planned scheduling,
 duplicate scheduled-trigger, missed-trigger, and dispatcher-worker-death
 semantics. The Manual trigger/run/heartbeat/takeover/recovery subset exists; no
 SchedulerBackend, schedule registration, hourly trigger, daemon, or supported
-platform behavior exists today. Explicit `ato.api/v2` `dispatch run` and
+platform behavior exists today. Current `ato.api/v1` `dispatch run` and
 `dispatch resume` are the only product triggers; they call this existing owner
 and add no cadence or delivery source.
 

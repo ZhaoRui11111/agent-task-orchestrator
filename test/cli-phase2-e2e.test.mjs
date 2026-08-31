@@ -33,7 +33,6 @@ function invoke(runtimeRoot, args) {
     sourceCli,
     "--runtime-root", runtimeRoot,
     "--format", "json",
-    "--api-version", "ato.api/v2",
     ...args,
   ], {
     cwd: repoRoot,
@@ -46,7 +45,7 @@ function invoke(runtimeRoot, args) {
   assert.match(result.stdout, /\n$/u);
   assert.equal(result.stdout.indexOf("\n"), result.stdout.length - 1);
   const body = JSON.parse(result.stdout);
-  assert.equal(body.apiVersion, "ato.api/v2");
+  assert.equal(body.apiVersion, "ato.api/v1");
   return { status: result.status, raw: result.stdout, body };
 }
 
@@ -142,7 +141,7 @@ function common(state, idempotencyKey, taskId = "phase2-task") {
   ];
 }
 
-test("source ato.api/v2 closes the real local Manual dispatch-to-completion loop across process restarts", async () => {
+test("source ato.api/v1 closes the real local Manual dispatch-to-completion loop across process restarts", async () => {
   const generation = mkdtempSync(path.join(tmpdir(), "ato-cli-phase2-"));
   const trustedRoot = trustedApplicationDataRoot();
   mkdirSync(trustedRoot, { recursive: true });
@@ -306,7 +305,7 @@ test("source ato.api/v2 closes the real local Manual dispatch-to-completion loop
   }
 });
 
-test("source ato.api/v2 opens the exact current baseline and completes one restart-safe Manual workflow", async (context) => {
+test("source ato.api/v1 opens the exact current baseline and completes one restart-safe Manual workflow", async (context) => {
   for (const schemaVersion of [1]) {
     await context.test("current-baseline", async () => {
       const generation = mkdtempSync(path.join(tmpdir(), "ato-cli-current-baseline-"));

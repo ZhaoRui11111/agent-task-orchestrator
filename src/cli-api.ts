@@ -21,7 +21,6 @@ import {
 import { PersistenceError } from "./persistence/errors.ts";
 import { inspectPrimaryIdentity, restoreBackup } from "./persistence/backup.ts";
 import {
-  createLocalApplicationIngress,
   createLocalProductIngress,
   loadLocalRuntime,
   prepareLocalRuntime,
@@ -42,7 +41,6 @@ import {
 } from "./product-runtime.ts";
 
 export const CLI_API_VERSION = "ato.api/v1" as const;
-export const CLI_API_V2_VERSION = "ato.api/v2" as const;
 
 export const PUBLIC_ERROR_TABLE = Object.freeze({
   CLI_INVALID_INPUT: Object.freeze({ exitCode: 2, message: "The command input is invalid." }),
@@ -57,12 +55,17 @@ export const PUBLIC_ERROR_TABLE = Object.freeze({
   TASK_NOT_FOUND: Object.freeze({ exitCode: 5, message: "The Task was not found." }),
   GRANT_NOT_FOUND: Object.freeze({ exitCode: 5, message: "The grant was not found." }),
   BACKUP_NOT_FOUND: Object.freeze({ exitCode: 5, message: "The backup generation was not found." }),
+  EXECUTION_NOT_FOUND: Object.freeze({ exitCode: 5, message: "The execution was not found." }),
+  DISPATCH_RUN_NOT_FOUND: Object.freeze({ exitCode: 5, message: "The dispatcher run was not found." }),
   STALE_REVISION: Object.freeze({ exitCode: 6, message: "The expected revision is stale." }),
   DOMAIN_REJECTED: Object.freeze({ exitCode: 6, message: "The requested Task operation was rejected." }),
   PROJECT_ALREADY_REGISTERED: Object.freeze({ exitCode: 6, message: "The Project is already registered." }),
   PROJECT_REGISTRY_REJECTED: Object.freeze({ exitCode: 6, message: "The Project registry rejected the operation." }),
   RESULT_LIMIT_EXCEEDED: Object.freeze({ exitCode: 6, message: "The requested result limit is invalid." }),
   OPERATION_CONFLICT: Object.freeze({ exitCode: 6, message: "The operation conflicts with current state." }),
+  STALE_FENCE: Object.freeze({ exitCode: 6, message: "The execution or dispatcher ownership fence is stale." }),
+  LEASE_EXPIRED: Object.freeze({ exitCode: 6, message: "The execution or dispatcher lease has expired." }),
+  RECONCILIATION_REQUIRED: Object.freeze({ exitCode: 6, message: "Durable reconciliation is required before the operation can continue." }),
   RUNTIME_UNSAFE: Object.freeze({ exitCode: 7, message: "The local runtime identity or topology is unsafe." }),
   RUNTIME_ACTIVE: Object.freeze({ exitCode: 7, message: "The local runtime is active." }),
   SCHEMA_UNSUPPORTED: Object.freeze({ exitCode: 7, message: "The runtime schema is unsupported." }),
@@ -70,27 +73,16 @@ export const PUBLIC_ERROR_TABLE = Object.freeze({
   STATE_CORRUPT: Object.freeze({ exitCode: 7, message: "The runtime state is corrupt." }),
   BACKUP_INVALID: Object.freeze({ exitCode: 7, message: "The backup generation is invalid." }),
   PERSISTENCE_UNAVAILABLE: Object.freeze({ exitCode: 7, message: "Local persistence is unavailable." }),
+  ADAPTER_FAILURE: Object.freeze({ exitCode: 7, message: "The Manual execution adapter failed." }),
   DATA_LOSS_ACK_REQUIRED: Object.freeze({ exitCode: 8, message: "The exact data-loss acknowledgement is required." }),
   RESTORE_CONFLICT: Object.freeze({ exitCode: 8, message: "Restore conflicts with current state." }),
   RESTORE_BLOCKED: Object.freeze({ exitCode: 8, message: "Restore is blocked." }),
   RESTORE_RECOVERY_REQUIRED: Object.freeze({ exitCode: 8, message: "Restore requires manual recovery." }),
+  AMBIGUOUS_EXTERNAL_STATE: Object.freeze({ exitCode: 8, message: "The external execution state is ambiguous." }),
   INTERNAL_ERROR: Object.freeze({ exitCode: 9, message: "The operation failed internally." }),
 } as const);
 
-export const PUBLIC_ERROR_TABLE_V2 = Object.freeze({
-  ...PUBLIC_ERROR_TABLE,
-  EXECUTION_NOT_FOUND: Object.freeze({ exitCode: 5, message: "The execution was not found." }),
-  DISPATCH_RUN_NOT_FOUND: Object.freeze({ exitCode: 5, message: "The dispatcher run was not found." }),
-  STALE_FENCE: Object.freeze({ exitCode: 6, message: "The execution or dispatcher ownership fence is stale." }),
-  LEASE_EXPIRED: Object.freeze({ exitCode: 6, message: "The execution or dispatcher lease has expired." }),
-  RECONCILIATION_REQUIRED: Object.freeze({ exitCode: 6, message: "Durable reconciliation is required before the operation can continue." }),
-  ADAPTER_FAILURE: Object.freeze({ exitCode: 7, message: "The Manual execution adapter failed." }),
-  AMBIGUOUS_EXTERNAL_STATE: Object.freeze({ exitCode: 8, message: "The external execution state is ambiguous." }),
-} as const);
-
 export type PublicErrorCode = keyof typeof PUBLIC_ERROR_TABLE;
-export type PublicErrorCodeV2 = keyof typeof PUBLIC_ERROR_TABLE_V2;
-type AnyPublicErrorCode = PublicErrorCodeV2;
 export type CliFormat = "human" | "json";
 
 interface ParsedCliCommand {
@@ -127,6 +119,12 @@ interface CommandSpec {
   readonly optional: readonly string[];
 }
 
+const EXECUTION_COMMON_OPTIONS = Object.freeze([
+  "project-id", "expected-project-resource-revision", "expected-project-config-revision", "task-id",
+  "expected-task-revision", "execution-id", "expected-execution-revision", "expected-attempt-number",
+  "expected-fencing-token", "idempotency-key",
+]);
+
 const COMMAND_SPECS = Object.freeze([
   { id: "status", path: ["status"], required: [], optional: [] },
   { id: "doctor", path: ["doctor"], required: [], optional: [] },
@@ -152,15 +150,6 @@ const COMMAND_SPECS = Object.freeze([
   { id: "dependency.add", path: ["dependency", "add"], required: ["project-id", "expected-project-resource-revision", "task-id", "expected-task-revision", "dependency-id", "expected-dependency-revision"], optional: [] },
   { id: "dependency.remove", path: ["dependency", "remove"], required: ["project-id", "expected-project-resource-revision", "task-id", "expected-task-revision", "dependency-id", "expected-dependency-revision"], optional: [] },
   { id: "backup.create", path: ["backup", "create"], required: [], optional: [] },
-] satisfies readonly CommandSpec[]);
-
-const EXECUTION_COMMON_OPTIONS = Object.freeze([
-  "project-id", "expected-project-resource-revision", "expected-project-config-revision", "task-id",
-  "expected-task-revision", "execution-id", "expected-execution-revision", "expected-attempt-number",
-  "expected-fencing-token", "idempotency-key",
-]);
-
-const V2_ONLY_COMMAND_SPECS = Object.freeze([
   { id: "authorization.upgrade", path: ["authorization", "upgrade"], required: ["expires-at", "confirm"], optional: [] },
   { id: "dispatch.run", path: ["dispatch", "run"], required: ["idempotency-key", "lease-duration-seconds"], optional: [] },
   { id: "dispatch.resume", path: ["dispatch", "resume"], required: ["run-id"], optional: [] },
@@ -172,8 +161,17 @@ const V2_ONLY_COMMAND_SPECS = Object.freeze([
   { id: "execution.accept-manual-completion", path: ["execution", "accept-manual-completion"], required: [...EXECUTION_COMMON_OPTIONS, "confirm"], optional: [] },
 ] satisfies readonly CommandSpec[]);
 
-const V2_COMMAND_SPECS = Object.freeze([...COMMAND_SPECS, ...V2_ONLY_COMMAND_SPECS]);
-const V2_ONLY_COMMAND_IDS: ReadonlySet<string> = new Set(V2_ONLY_COMMAND_SPECS.map((spec) => spec.id));
+const PRODUCT_COMMAND_IDS: ReadonlySet<string> = new Set([
+  "authorization.upgrade",
+  "dispatch.run",
+  "dispatch.resume",
+  "execution.inspect",
+  "execution.resume",
+  "execution.retry",
+  "execution.request-cancel",
+  "manual.outcome-report",
+  "execution.accept-manual-completion",
+]);
 
 const ONE_TOKEN_COMMANDS = new Set(["status", "doctor", "init", "restore"]);
 const FORBIDDEN_TEXT = /[\p{Cc}\p{Cf}]/u;
@@ -233,7 +231,6 @@ function validateOptions(
   spec: CommandSpec,
   options: Readonly<Record<string, string>>,
   now: string,
-  apiVersion: string,
 ): ParseFailure["code"] | null {
   const revisionOptions = [
     "expected-grant-revision",
@@ -266,8 +263,7 @@ function validateOptions(
     if (value !== undefined && !canonicalTimestamp(value)) return "CLI_INVALID_INPUT";
   }
   const action = options.action;
-  const actionVocabulary = apiVersion === CLI_API_V2_VERSION ? AUTHORIZATION_ACTIONS : PHASE1_AUTHORIZATION_ACTIONS;
-  if (action !== undefined && !(actionVocabulary as readonly string[]).includes(action)) {
+  if (action !== undefined && !(AUTHORIZATION_ACTIONS as readonly string[]).includes(action)) {
     return "CLI_INVALID_INPUT";
   }
   const root = options.root;
@@ -315,7 +311,7 @@ function validateOptions(
       return "CLI_INVALID_INPUT";
     }
   }
-  if (V2_ONLY_COMMAND_IDS.has(spec.id)) {
+  if (PRODUCT_COMMAND_IDS.has(spec.id)) {
     for (const name of [
       "project-id", "task-id", "execution-id", "idempotency-key", "continuation-reference",
       "required-action-receipt-id", "reason-code", "report-id", "code", "evidence-reference", "run-id",
@@ -384,13 +380,11 @@ export function parseCliArguments(args: readonly string[], now = new Date().toIS
   if (first === undefined || first.startsWith("-") || first.startsWith("@") || first.includes("=")) return parseFailure(format);
   const pathLength = ONE_TOKEN_COMMANDS.has(first) ? 1 : 2;
   const commandPath = args.slice(index, index + pathLength);
-  const registry = apiVersion === CLI_API_VERSION ? COMMAND_SPECS : apiVersion === CLI_API_V2_VERSION
-    ? V2_COMMAND_SPECS : V2_COMMAND_SPECS;
-  const spec = registry.find((candidate) =>
+  const spec = COMMAND_SPECS.find((candidate) =>
     candidate.path.length === commandPath.length && candidate.path.every((part, partIndex) => part === commandPath[partIndex])
   );
   if (spec === undefined) return parseFailure(format);
-  if (apiVersion !== CLI_API_VERSION && apiVersion !== CLI_API_V2_VERSION) {
+  if (apiVersion !== CLI_API_VERSION) {
     return parseFailure(format, spec.id, "CLI_UNSUPPORTED_VERSION");
   }
   if (runtimeRoot !== null && !absolutePath(runtimeRoot)) return parseFailure(format, spec.id);
@@ -416,7 +410,7 @@ export function parseCliArguments(args: readonly string[], now = new Date().toIS
   if (missing.includes("acknowledge-data-loss")) return parseFailure(format, spec.id, "DATA_LOSS_ACK_REQUIRED");
   if (missing.includes("confirm")) return parseFailure(format, spec.id, "CONFIRMATION_REQUIRED");
   if (missing.length !== 0) return parseFailure(format, spec.id);
-  const optionError = validateOptions(spec, options, now, apiVersion);
+  const optionError = validateOptions(spec, options, now);
   if (optionError !== null) return parseFailure(format, spec.id, optionError);
   const command = Object.freeze({ format, apiVersion, runtimeRoot, id: spec.id, options: Object.freeze(options) });
   if (spec.id === "restore" && options["acknowledge-data-loss"] !== "DISCARD CURRENT LOCAL DATA") {
@@ -600,13 +594,11 @@ function jsonValue(value: unknown): string {
 function failureResult(
   format: CliFormat,
   command: string,
-  code: AnyPublicErrorCode,
-  apiVersion: string = CLI_API_VERSION,
+  code: PublicErrorCode,
 ): CliRunResult {
-  const table = apiVersion === CLI_API_V2_VERSION ? PUBLIC_ERROR_TABLE_V2 : PUBLIC_ERROR_TABLE;
-  const definition = table[code as keyof typeof table] ?? PUBLIC_ERROR_TABLE.INTERNAL_ERROR;
+  const definition = PUBLIC_ERROR_TABLE[code] ?? PUBLIC_ERROR_TABLE.INTERNAL_ERROR;
   const stdout = format === "json"
-    ? `{"apiVersion":"${apiVersion}","command":${jsonValue(command)},"ok":false,"error":{"code":"${code}","message":${jsonValue(definition.message)}}}\n`
+    ? `{"apiVersion":"${CLI_API_VERSION}","command":${jsonValue(command)},"ok":false,"error":{"code":"${code}","message":${jsonValue(definition.message)}}}\n`
     : `ERROR ${command} code=${jsonValue(code)} message=${jsonValue(definition.message)}\n`;
   return Object.freeze({ exitCode: definition.exitCode, stdout, stderr: "" as const });
 }
@@ -615,11 +607,10 @@ function successResult(
   format: CliFormat,
   command: string,
   result: object,
-  apiVersion: string = CLI_API_VERSION,
 ): CliRunResult {
   const encoded = jsonValue(result);
   const stdout = format === "json"
-    ? `{"apiVersion":"${apiVersion}","command":${jsonValue(command)},"ok":true,"result":${encoded}}\n`
+    ? `{"apiVersion":"${CLI_API_VERSION}","command":${jsonValue(command)},"ok":true,"result":${encoded}}\n`
     : `OK ${command}${Object.entries(result).map(([key, value]) => ` ${key}=${jsonValue(value)}`).join("")}\n`;
   return Object.freeze({ exitCode: 0, stdout, stderr: "" as const });
 }
@@ -644,7 +635,7 @@ function mapApplicationFailure(failure: ApplicationFailure): PublicErrorCode {
   }
 }
 
-export function mapProductFailureToPublicCode(error: ProductRuntimeError): PublicErrorCodeV2 {
+export function mapProductFailureToPublicCode(error: ProductRuntimeError): PublicErrorCode {
   if (error.owner === "application") {
     switch (error.code) {
       case "INVALID_INPUT": return "CLI_INVALID_INPUT";
@@ -779,15 +770,6 @@ function applicationValueResult(
   throw new TypeError("Application result command is not projectable");
 }
 
-function parseFailureApiVersion(args: readonly string[]): string {
-  for (let index = 0; index + 1 < args.length; index += 2) {
-    const name = args[index];
-    if (name !== "--format" && name !== "--api-version" && name !== "--runtime-root") break;
-    if (name === "--api-version" && args[index + 1] === CLI_API_V2_VERSION) return CLI_API_V2_VERSION;
-  }
-  return CLI_API_VERSION;
-}
-
 function productCommon(command: ParsedCliCommand): Readonly<Record<string, unknown>> {
   return Object.freeze({
     projectId: option(command, "project-id"),
@@ -867,20 +849,20 @@ export async function runCli(args: readonly string[], options: CliRunOptions): P
     parseNow = "";
   }
   const parsed = parseCliArguments(args, parseNow);
-  if (!parsed.ok) return failureResult(parsed.format, parsed.command, parsed.code, parseFailureApiVersion(args));
+  if (!parsed.ok) return failureResult(parsed.format, parsed.command, parsed.code);
   const command = parsed.command;
   let store: PersistenceStore | null = null;
   let outcome: CliRunResult;
   try {
     const runtimeRoot = selectTrustedLocalRuntimeRoot(command.runtimeRoot);
     if (command.id === "doctor") {
-      return successResult(command.format, command.id, inspectRuntimeDoctor(runtimeRoot, options.sourceCheckoutRoot), command.apiVersion);
+      return successResult(command.format, command.id, inspectRuntimeDoctor(runtimeRoot, options.sourceCheckoutRoot));
     }
     const doctor = command.id === "restore"
       ? inspectRuntimeForRestoreAuthorizationPreflight(runtimeRoot, options.sourceCheckoutRoot)
       : inspectRuntimeDoctor(runtimeRoot, options.sourceCheckoutRoot);
     const block = mapDoctorBlock(command.id, doctor);
-    if (block !== null) return failureResult(command.format, command.id, block, command.apiVersion);
+    if (block !== null) return failureResult(command.format, command.id, block);
     const selection = command.id === "init"
       ? prepareLocalRuntime(command.runtimeRoot, options.sourceCheckoutRoot)
       : loadLocalRuntime(command.runtimeRoot, options.sourceCheckoutRoot);
@@ -892,48 +874,45 @@ export async function runCli(args: readonly string[], options: CliRunOptions): P
       now: clock,
       ...(options.nextId === undefined ? {} : { nextId: options.nextId }),
     });
-    const productIngress = command.apiVersion === CLI_API_V2_VERSION
-      ? createLocalProductIngress(selection.identity, Object.freeze({
-        ...ingressOptions,
-        expectedProductAction: confirmation.productAction,
-      }))
-      : null;
-    const ingress = productIngress ?? createLocalApplicationIngress(selection.identity, ingressOptions);
+    const productIngress = createLocalProductIngress(selection.identity, Object.freeze({
+      ...ingressOptions,
+      expectedProductAction: confirmation.productAction,
+    }));
+    const ingress = productIngress;
     store = await openPersistence(selection.layout, {
       applicationVersion: options.applicationVersion ?? "0.0.0-development",
     });
     const service = createApplicationService(store, ingress);
     outcome = await (async (): Promise<CliRunResult> => {
-      if (V2_ONLY_COMMAND_IDS.has(command.id)) {
-        if (productIngress === null) throw new TypeError("Phase 2 product command lacks v2 trusted ingress");
+      if (PRODUCT_COMMAND_IDS.has(command.id)) {
         const backend = createManualExecutionBackend(store!, { ingress: productIngress });
         const product = createProductRuntime(store!, productIngress, backend, backend);
         const result = executeProductCommand(product, command);
         return result.ok
-          ? successResult(command.format, command.id, result.value, command.apiVersion)
-          : failureResult(command.format, command.id, mapProductFailureToPublicCode(result.error), command.apiVersion);
+          ? successResult(command.format, command.id, result.value)
+          : failureResult(command.format, command.id, mapProductFailureToPublicCode(result.error));
       }
       if (command.id === "init") {
         const initialized = service.bootstrap({ kind: "authorization.bootstrap", expiresAt: option(command, "expires-at") });
-        if (!initialized.ok) return failureResult(command.format, command.id, mapApplicationFailure(initialized), command.apiVersion);
+        if (!initialized.ok) return failureResult(command.format, command.id, mapApplicationFailure(initialized));
         return successResult(command.format, command.id, Object.freeze({
           mode: "initialized",
           expiresAt: option(command, "expires-at"),
           capabilityCount: PHASE1_AUTHORIZATION_ACTIONS.length,
           epochRevision: 0,
-        }), command.apiVersion);
+        }));
       }
       if (command.id === "authorization.renew") {
         const renewed = service.renew({ kind: "authorization.capability.renew", expiresAt: option(command, "expires-at") });
-        if (!renewed.ok) return failureResult(command.format, command.id, mapApplicationFailure(renewed), command.apiVersion);
-        return successResult(command.format, command.id, renewed.value as unknown as Readonly<Record<string, unknown>>, command.apiVersion);
+        if (!renewed.ok) return failureResult(command.format, command.id, mapApplicationFailure(renewed));
+        return successResult(command.format, command.id, renewed.value as unknown as Readonly<Record<string, unknown>>);
       }
 
       const generationId = command.id === "backup.create" ? randomUUID() : null;
       const routed = applicationCommand(command, selection, generationId);
       if (routed === null) throw new TypeError("CLI command has no application route");
       const result: ApplicationResult<unknown> = service.execute(routed);
-      if (!result.ok) return failureResult(command.format, command.id, mapApplicationFailure(result), command.apiVersion);
+      if (!result.ok) return failureResult(command.format, command.id, mapApplicationFailure(result));
       if (command.id === "backup.create") {
         const authorization = parseApplicationLifecycleAuthorization(result.value);
         const generation = await store!.createBackup(authorization);
@@ -944,7 +923,7 @@ export async function runCli(args: readonly string[], options: CliRunOptions): P
           sourceSchemaVersion: manifest.sourceSchemaVersion,
           createdAt: manifest.createdAt,
           verified: true,
-        }), command.apiVersion);
+        }));
       }
       if (command.id === "restore") {
         const authorization = parseApplicationLifecycleAuthorization(result.value);
@@ -953,7 +932,7 @@ export async function runCli(args: readonly string[], options: CliRunOptions): P
         const restoreDoctor = inspectRuntimeDoctor(runtimeRoot, options.sourceCheckoutRoot);
         const restoreBlock = mapDoctorBlock(command.id, restoreDoctor);
         if (restoreBlock !== null) {
-          return failureResult(command.format, command.id, restoreBlock, command.apiVersion);
+          return failureResult(command.format, command.id, restoreBlock);
         }
         const expectedCurrent = await inspectPrimaryIdentity(selection.layout);
         const receipt = await restoreBackup(selection.layout, {
@@ -968,20 +947,20 @@ export async function runCli(args: readonly string[], options: CliRunOptions): P
           targetSchemaVersion: receipt.targetSchemaVersion,
           restoredAt: receipt.restoredAt,
           dataLossAcknowledged: true,
-        }), command.apiVersion);
+        }));
       }
-      return successResult(command.format, command.id, applicationValueResult(command, result.value, clock()), command.apiVersion);
+      return successResult(command.format, command.id, applicationValueResult(command, result.value, clock()));
     })();
   } catch (error) {
     const code = error instanceof PersistenceError ? mapPersistenceFailure(error) : "INTERNAL_ERROR";
-    outcome = failureResult(command.format, command.id, code, command.apiVersion);
+    outcome = failureResult(command.format, command.id, code);
   }
   if (store !== null) {
     try {
       await store.close();
     } catch (error) {
       const code = error instanceof PersistenceError ? mapPersistenceFailure(error) : "INTERNAL_ERROR";
-      return failureResult(command.format, command.id, code, command.apiVersion);
+      return failureResult(command.format, command.id, code);
     }
   }
   return outcome;

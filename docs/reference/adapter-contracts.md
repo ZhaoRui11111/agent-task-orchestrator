@@ -8,8 +8,8 @@ error taxonomy. The package implements the pure `ato.execution/v1` contract
 kit, one production `manual-local` adapter backed by the current schema-version-1 local Manual
 journal, and its narrow `ato.manual-outcome-control/v1` control. The Fake
 backend is test-only and unexported. The Manual dispatcher composes that
-unchanged execution port and adds no adapter contract. The explicit
-`ato.api/v2` product facade can invoke the dispatcher and reliable loop, but it
+unchanged execution port and adds no adapter contract. The sole current
+`ato.api/v1` product facade can invoke the dispatcher and reliable loop, but it
 does not change `ato.execution/v1`, turn the local journal into Task-content
 execution, or add an adapter. Workspace,
 Scheduler, ProjectPolicy, and Completion ports remain planned. No vendor,

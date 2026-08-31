@@ -6,8 +6,7 @@ export interface ScaffoldStatus {
   readonly projectRegistryImplemented: true;
   readonly runtimeAuthorizationImplemented: true;
   readonly applicationServiceImplemented: true;
-  readonly localPhase1ProductCliImplemented: true;
-  readonly localPhase2ProductCliImplemented: true;
+  readonly localProductCliImplemented: true;
   readonly backupRestoreDoctorImplemented: true;
   readonly durableExecutionClaimFoundationImplemented: true;
   readonly reliableManualExecutionLoopImplemented: true;
@@ -25,8 +24,7 @@ const STATUS: ScaffoldStatus = Object.freeze({
   projectRegistryImplemented: true,
   runtimeAuthorizationImplemented: true,
   applicationServiceImplemented: true,
-  localPhase1ProductCliImplemented: true,
-  localPhase2ProductCliImplemented: true,
+  localProductCliImplemented: true,
   backupRestoreDoctorImplemented: true,
   durableExecutionClaimFoundationImplemented: true,
   reliableManualExecutionLoopImplemented: true,
@@ -97,9 +95,7 @@ export {
 } from "./persistence/local-ingress.ts";
 export {
   CLI_API_VERSION,
-  CLI_API_V2_VERSION,
   PUBLIC_ERROR_TABLE,
-  PUBLIC_ERROR_TABLE_V2,
   parseCliArguments,
   runCli,
 } from "./cli-api.ts";
@@ -108,5 +104,4 @@ export type {
   CliRunOptions,
   CliRunResult,
   PublicErrorCode,
-  PublicErrorCodeV2,
 } from "./cli-api.ts";

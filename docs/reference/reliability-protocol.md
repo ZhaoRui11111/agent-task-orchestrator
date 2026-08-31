@@ -15,7 +15,7 @@ completion. It also implements one explicit-Manual dispatcher with
 durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
 immutable finite membership, one terminal outcome per member, and
 completeness-gated summaries. One typed product facade exposes only these
-existing owners to explicit `ato.api/v2`, deriving non-public operation lineage
+existing owners to the sole current `ato.api/v1`, deriving non-public operation lineage
 from current durable state. It has no SchedulerBackend or scheduled trigger,
 workspace/publication, Codex/Git effect, ProjectPolicy, CompletionBackend, or
 completion gate; those sections remain requirements for their implementing

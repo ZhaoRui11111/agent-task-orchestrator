@@ -12,7 +12,7 @@ Domain Core for Project/Task rules, a safe local ProjectRegistry, a finite
 runtime authorization model, one typed Project/Task/dependency application
 service, current schema-version-1 SQLite persistence, a composable local Phase 1 `ato` product
 CLI, a typed reliable Manual execution loop, a reconcile-first Manual
-dispatcher, and an explicit `ato.api/v2` local Manual product surface. The
+dispatcher, and a sole current `ato.api/v1` local Manual product surface. The
 application owner remains the sole business command/query owner and atomically
 coordinates Domain snapshots, registry/grant changes, authorization decisions,
 execution attempts, leases/fences, durable operation evidence, and sanitized audit. The CLI provides initialization,
@@ -111,8 +111,8 @@ current completion grant and fresh confirmation atomically accept the exact
 verified evidence. The production Manual adapter records only no-workspace
 turn state; it does not execute Task content or touch a Project repository.
 
-This service remains absent from `ato.api/v1`. Explicit `ato.api/v2` commands
-reach it only through the typed product facade, which derives the non-public
+Current `ato.api/v1` commands reach this service only through the typed product
+facade, which derives the non-public
 turn, intent, receipt, and finalization tuple from current schema-version-1 state.
 Neither the facade nor the Manual backend invokes Codex, Git, workspace,
 scheduler, policy, completion-gate, or Task-content effects, and local
@@ -140,7 +140,7 @@ before the real local Manual effect is invoked through the reliable loop.
 Restart and takeover continue from those durable rows; a terminal run summary
 is withheld until every sealed member and every claimed intent is complete.
 
-The package and explicit `ato.api/v2` product surface expose this one Manual
+The package and sole current `ato.api/v1` product surface expose this one Manual
 trigger and durable run resume. They add no scheduler cadence or
 SchedulerBackend, daemon, MCP, Codex/Git/workspace behavior, completion gates,
 release, or platform-support claim. The dispatcher—not CLI code—owns candidate
@@ -173,21 +173,23 @@ ato authorization list --limit 100
 
 Restore always requires both current `runtime.restore` authority and its two
 exact request-local confirmations. Doctor is grant-independent and read-only.
-An omitted API version still selects the closed `ato.api/v1`. Explicit
-`ato.api/v2` inherits those Phase 1 commands and adds one-step capability
-upgrade, Manual dispatch/run resume, execution inspect/resume/retry/cancel,
-trusted Manual outcome reporting, and separately confirmed Manual completion:
+Omitting `--api-version` and passing `--api-version ato.api/v1` select the same
+complete 33-command product tree, including one-step capability upgrade, Manual
+dispatch/run resume, execution inspect/resume/retry/cancel, trusted Manual
+outcome reporting, and separately confirmed Manual completion:
 
 ```powershell
-ato --api-version ato.api/v2 authorization upgrade --expires-at $expiry --confirm "UPGRADE LOCAL CAPABILITIES"
-ato --api-version ato.api/v2 dispatch run --idempotency-key manual-run-1 --lease-duration-seconds 300
+ato authorization upgrade --expires-at $expiry --confirm "UPGRADE LOCAL CAPABILITIES"
+ato dispatch run --idempotency-key manual-run-1 --lease-duration-seconds 300
 ```
 
 Each newer vocabulary requires its own confirmed upgrade invocation; migration
-and renewal never grant Phase 2 authority. Use `--format json` for the
-versioned single-line machine surface. The exhaustive v1/v2 command trees,
-`COMMON` execution tuple, closed projections, and stable public error/exit
-tables are in the [CLI/API contract](docs/reference/cli-contract.md). This
+and renewal never grant Phase 2 authority. Retired `ato.api/v2` and any other
+unsupported major fail before runtime construction or protected mutation; no
+compatibility fallback exists. Use `--format json` for the versioned single-line
+machine surface. The exhaustive 33-command tree, `COMMON` execution tuple,
+closed projections, and 37-code public error/exit table are in the
+[CLI/API contract](docs/reference/cli-contract.md). This
 development package is not a release or platform-support claim.
 
 ## Maintainer development workflow

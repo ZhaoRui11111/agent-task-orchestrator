@@ -3,7 +3,7 @@
 ## Status and authority
 
 This document is the normative owner of the implemented local runtime
-authorization model through the explicit `ato.api/v2` Manual product facade
+authorization model through the sole current `ato.api/v1` Manual product facade
 and reconcile-first Manual dispatcher. The implementation is deliberately
 limited to the local Phase 1 application and lifecycle surfaces, four
 database-local execution claim/lease actions, six vocabulary-6 Manual-loop
@@ -473,8 +473,8 @@ read-only doctor experience. Phase 2A adds the four local claim/lease grants;
 Phase 2B adds one separately confirmed vocabulary-6 step and the six exact
 Manual-loop grants and decisions described above. Phase 2C adds one separately
 confirmed vocabulary-7 step and the exact `dispatch.run` decision path for the
-explicit-Manual dispatcher. Phase 2D exposes only those existing decisions
-through explicit `ato.api/v2`; it adds no action, grant, epoch, implicit
+explicit-Manual dispatcher. The current product API exposes only those existing
+decisions through `ato.api/v1`; it adds no action, grant, epoch, implicit
 upgrade, or alternate authorization owner. It does not implement login,
 credentials, team accounts, RBAC, cloud identity, an external policy adapter,
 workspace or scheduler authorization, SchedulerBackend/scheduled delivery,

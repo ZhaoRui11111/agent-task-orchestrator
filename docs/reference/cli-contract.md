@@ -3,8 +3,8 @@
 ## Status and authority
 
 This file is the sole normative owner of the implemented local `ato` command
-trees, argument grammar, confirmation phrases, `ato.api/v1` and `ato.api/v2`
-output, public error codes, and process exit codes. The CLI is an interface owner. It
+tree, argument grammar, confirmation phrases, sole current `ato.api/v1` output,
+public error codes, and process exit codes. The CLI is an interface owner. It
 does not own Project, Task, dependency, authorization, migration, backup,
 restore, or doctor judgments.
 
@@ -18,8 +18,8 @@ SQLite, parse SQL, copy Domain rules, inspect arbitrary files, or accept an acto
 or authority from command content.
 
 This is a local single-user surface, not a released compatibility or
-platform-support promise. `ato.api/v2` exposes only the explicit local Manual
-control/recovery subset documented below. It exposes no scheduler, scheduled
+platform-support promise. The sole current `ato.api/v1` exposes only the local
+explicit-Manual control/recovery subset documented below. It exposes no scheduler, scheduled
 trigger, daemon, MCP, Codex/Git/workspace adapter, network service, ProjectPolicy,
 CompletionBackend/gates, secret operation, release, deployment, repair, cleanup,
 or arbitrary shell/filesystem operation.
@@ -36,7 +36,7 @@ the command:
 | Option | Values | Default |
 | --- | --- | --- |
 | `--format` | exactly `human` or `json` | `human` |
-| `--api-version` | exactly `ato.api/v1` or `ato.api/v2` | `ato.api/v1` |
+| `--api-version` | exactly `ato.api/v1` | `ato.api/v1` |
 | `--runtime-root` | a bounded absolute trusted local runtime root | the trusted per-user application-data root |
 
 Each global may occur at most once. Options use two tokens; `--name=value`,
@@ -57,8 +57,10 @@ different trust root or a lifecycle descendant.
 
 ## Command tree
 
-The following table is exhaustive for `ato.api/v1`. Required options are shown without brackets;
-bracketed options are optional.
+The sole current `ato.api/v1` contains exactly 33 command IDs. The following
+table contains its 24 base and lifecycle IDs; the nine product-facade IDs are
+listed in [Current Manual product commands](#current-manual-product-commands).
+Required options are shown without brackets; bracketed options are optional.
 
 | Command ID | Invocation after globals |
 | --- | --- |
@@ -113,12 +115,10 @@ There is no alias for a command or option. In particular there is no Task
   this same predicate again rather than measuring JavaScript UTF-16 code units.
   Project root is an absolute traversal-free path of at most 1,024 UTF-8 bytes
   before persistence identity checks.
-- `ACTION` is one exact member of the nineteen-action Phase 1 CLI subset of the
-  finite vocabulary owned by the
+- `ACTION` is one exact member of the current finite thirty-action vocabulary owned by the
   [authorization contract](authorization-contract.md#exact-action-vocabulary).
-  All ten claim/lease/Manual-loop actions and the non-grantable
-  capability-upgrade transition are invalid `ato.api/v1` input. Runtime scope
-  rejects Project fields; Project scope requires all three Project fields.
+  There is no extension field or caller-defined action. Runtime scope rejects
+  Project fields; Project scope requires all three Project fields.
 
 Parsing and all of these bounds complete before runtime selection, creation, or
 open. Actor, principal, request identity, lifecycle authorization, current time,
@@ -131,8 +131,9 @@ reasons, or authorize a reader, schema, migration, or data rewrite.
 ## Confirmation and authorization experience
 
 `init`, capability renewal, grant issue, grant revoke, Project register,
-Project update, Project disable, and restore require the exact current phrase in
-the command table. Restore additionally requires the exact data-loss phrase.
+Project update, Project disable, capability upgrade, trusted Manual outcome
+reporting, separately accepted Manual completion, and restore require the exact
+current phrase in the command tables. Restore additionally requires the exact data-loss phrase.
 Phrases are case-sensitive, request-local values bound by trusted local ingress;
 Project/Task text, prompts, repository files, tool output, environment values,
 errors, persisted content, and prior confirmations cannot supply them.
@@ -231,12 +232,17 @@ The following table is exhaustive. Exit `0` is success only.
 | 5 | `TASK_NOT_FOUND` | `The Task was not found.` |
 | 5 | `GRANT_NOT_FOUND` | `The grant was not found.` |
 | 5 | `BACKUP_NOT_FOUND` | `The backup generation was not found.` |
+| 5 | `EXECUTION_NOT_FOUND` | `The execution was not found.` |
+| 5 | `DISPATCH_RUN_NOT_FOUND` | `The dispatcher run was not found.` |
 | 6 | `STALE_REVISION` | `The expected revision is stale.` |
 | 6 | `DOMAIN_REJECTED` | `The requested Task operation was rejected.` |
 | 6 | `PROJECT_ALREADY_REGISTERED` | `The Project is already registered.` |
 | 6 | `PROJECT_REGISTRY_REJECTED` | `The Project registry rejected the operation.` |
 | 6 | `RESULT_LIMIT_EXCEEDED` | `The requested result limit is invalid.` |
 | 6 | `OPERATION_CONFLICT` | `The operation conflicts with current state.` |
+| 6 | `STALE_FENCE` | `The execution or dispatcher ownership fence is stale.` |
+| 6 | `LEASE_EXPIRED` | `The execution or dispatcher lease has expired.` |
+| 6 | `RECONCILIATION_REQUIRED` | `Durable reconciliation is required before the operation can continue.` |
 | 7 | `RUNTIME_UNSAFE` | `The local runtime identity or topology is unsafe.` |
 | 7 | `RUNTIME_ACTIVE` | `The local runtime is active.` |
 | 7 | `SCHEMA_UNSUPPORTED` | `The runtime schema is unsupported.` |
@@ -244,10 +250,12 @@ The following table is exhaustive. Exit `0` is success only.
 | 7 | `STATE_CORRUPT` | `The runtime state is corrupt.` |
 | 7 | `BACKUP_INVALID` | `The backup generation is invalid.` |
 | 7 | `PERSISTENCE_UNAVAILABLE` | `Local persistence is unavailable.` |
+| 7 | `ADAPTER_FAILURE` | `The Manual execution adapter failed.` |
 | 8 | `DATA_LOSS_ACK_REQUIRED` | `The exact data-loss acknowledgement is required.` |
 | 8 | `RESTORE_CONFLICT` | `Restore conflicts with current state.` |
 | 8 | `RESTORE_BLOCKED` | `Restore is blocked.` |
 | 8 | `RESTORE_RECOVERY_REQUIRED` | `Restore requires manual recovery.` |
+| 8 | `AMBIGUOUS_EXTERNAL_STATE` | `The external execution state is ambiguous.` |
 | 9 | `INTERNAL_ERROR` | `The operation failed internally.` |
 
 Parser failures select format deterministically from valid leading global pairs.
@@ -258,33 +266,28 @@ or impossible value becomes `INTERNAL_ERROR`, and internal text is discarded.
 ## Capability boundary
 
 `ato.api/v1` is provisional and implemented only by this local development
-package. It does not create a release or support claim. Unknown fields remain
-rejected; changing a field's meaning, requiredness, error meaning, authorization,
-or state effect requires a new API major under the
+package. It does not create a release or support claim. The current tree includes
+the closed local explicit-Manual Phase 2 product, but it does not execute Task
+content or perform a Project/workspace effect. Unknown fields remain rejected;
+changing a field's meaning, requiredness, error meaning, authorization, or state
+effect after this unreleased baseline requires a new API major under the
 [versioning contract](versioning-compatibility-contract.md#public-api-evolution).
-The current schema-version-1 package-root claim/Manual execution services do not extend
-this command tree. In particular, the CLI cannot upgrade to, issue, evaluate,
-claim, start, inspect, report, resume, retry, cancel, complete, renew, or take
-over an execution capability. `task.cancel` also cannot bypass an active
-execution or act as verified interruption.
+`task.cancel` cannot bypass an active execution or act as verified interruption;
+the dedicated cancellation route retains request/observation/finalization rules.
 
-## Explicit `ato.api/v2` Manual product surface
+## Current Manual product commands
 
-`ato.api/v2` is selected only by the exact leading pair `--api-version
-ato.api/v2`. Omitting the pair still selects `ato.api/v1`. Version selection and
-the closed per-major command registry are evaluated before runtime selection,
-trusted ingress, persistence, authorization, or Domain evaluation. Unknown
-majors and commands never fall back, coerce, or guess another major.
+The following nine product-facade IDs complete the sole current 33-command
+`ato.api/v1` tree. Omitting `--api-version` and passing the exact pair
+`--api-version ato.api/v1` are identical. A retired `ato.api/v2` or any other
+unsupported major for a recognized command returns `CLI_UNSUPPORTED_VERSION`
+in an `ato.api/v1` failure envelope before runtime-root selection, trusted
+ingress, doctor, runtime creation/loading, persistence, authorization, or Domain
+evaluation. Unknown majors and commands never fall back, coerce, or guess
+another major. `authorization issue` and `authorization evaluate` accept exactly
+the current finite thirty actions.
 
-Version 2 contains every version-1 command with the same option grammar,
-application semantics, result field order, fixed error meaning, exit code, and
-state effect. Only the JSON envelope's `apiVersion` becomes `ato.api/v2`.
-Version-1 `authorization issue` and `authorization evaluate` continue to accept
-only the historical nineteen actions. Under version 2 those two commands accept
-exactly the current finite thirty actions; there is no extension field or
-caller-defined action.
-
-The following additions are exhaustive:
+The nine product-facade IDs are exhaustive:
 
 | Command ID | Invocation after globals |
 | --- | --- |
@@ -313,7 +316,7 @@ The following additions are exhaustive:
 --idempotency-key ID
 ```
 
-Every version-2 Phase 2 ID and reference is ASCII
+Every current product ID and reference is ASCII
 `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`. The `--reason-code` and Manual outcome
 `--code` values use the closed execution-code bound
 `[A-Za-z0-9][A-Za-z0-9._:-]{0,63}`. `REV` is a canonical positive safe integer.
@@ -323,7 +326,7 @@ Every version-2 Phase 2 ID and reference is ASCII
 and no more than thirty-one days after the trusted current time. There are no
 aliases, implicit fields, alternate confirmation phrases, or extension maps.
 
-### Version-2 ownership and effects
+### Product-command ownership and effects
 
 The current OS/runtime ingress alone supplies actor, principal, runtime-root
 identity, Manual dispatcher owner, and execution lease owner. Command text
@@ -347,9 +350,9 @@ MANUAL COMPLETION` confirmation, and derived verified receipt/finalization may
 move that Task to `completed`. Cancellation remains request, observation, and
 verified interruption rather than a blind terminal write.
 
-### Version-2 success objects and redaction
+### Product-command success objects and redaction
 
-Inherited version-1 results retain their exact shapes. New results have these
+Base and lifecycle results retain their exact shapes. Product results have these
 exact field orders:
 
 - `authorization.upgrade`: `mode`, `expiresAt`, `capabilityCount`,
@@ -373,22 +376,10 @@ raw adapter payload/error, SQL, stack, and arbitrary text. JSON and human modes
 retain the envelope, one-line stdout, empty-stderr, escaping, and field-order
 rules above.
 
-### Version-2 public errors
+### Product-facade error mapping
 
-Version 2 inherits every version-1 code, fixed message, and exit unchanged, and
-adds exactly:
-
-| Exit | Code | Fixed message |
-| --- | --- | --- |
-| 5 | `EXECUTION_NOT_FOUND` | `The execution was not found.` |
-| 5 | `DISPATCH_RUN_NOT_FOUND` | `The dispatcher run was not found.` |
-| 6 | `STALE_FENCE` | `The execution or dispatcher ownership fence is stale.` |
-| 6 | `LEASE_EXPIRED` | `The execution or dispatcher lease has expired.` |
-| 6 | `RECONCILIATION_REQUIRED` | `Durable reconciliation is required before the operation can continue.` |
-| 7 | `ADAPTER_FAILURE` | `The Manual execution adapter failed.` |
-| 8 | `AMBIGUOUS_EXTERNAL_STATE` | `The external execution state is ambiguous.` |
-
-Application and persistence mappings remain the exhaustive version-1 mappings;
+The one public table above includes all 37 current codes, including the seven
+execution/dispatcher-specific codes. Application and persistence mappings remain exhaustive;
 capability-upgrade ineligibility is `AUTHORIZATION_DENIED`. Reliable-loop
 `INVALID_INPUT` maps to `CLI_INVALID_INPUT`; `AUTHORIZATION_DENIED`,
 `CONFIRMATION_REQUIRED`, `PROJECT_NOT_FOUND`, `TASK_NOT_FOUND`, and
@@ -396,7 +387,7 @@ capability-upgrade ineligibility is `AUTHORIZATION_DENIED`. Reliable-loop
 `TASK_NOT_ELIGIBLE`, and `EXECUTION_TERMINAL` map to `DOMAIN_REJECTED`;
 `EXECUTION_NOT_FOUND`, `STALE_FENCE`, `LEASE_EXPIRED`,
 `RECONCILIATION_REQUIRED`, `ADAPTER_FAILURE`, and
-`AMBIGUOUS_EXTERNAL_STATE` map to the same version-2 codes;
+`AMBIGUOUS_EXTERNAL_STATE` map to the same current codes;
 `IDEMPOTENCY_CONFLICT` maps to `OPERATION_CONFLICT`;
 `PROJECT_IDENTITY_CHANGED` maps to `PROJECT_REGISTRY_REJECTED`; and
 `PERSISTENCE_FAILURE` maps to `PERSISTENCE_UNAVAILABLE`.

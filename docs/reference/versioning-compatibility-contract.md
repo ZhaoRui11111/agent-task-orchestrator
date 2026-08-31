@@ -6,10 +6,10 @@ This file is the sole normative owner of schema, planned public API, and adapter
 versioning; forward migration and downgrade-by-restore policy; and the evidence
 required for a platform or external API support claim. The project now has one
 internal current SQLite baseline at schema version `1`, a provisional package-root
-Domain/ProjectRegistry/authorization/application/claim/Manual-loop/dispatcher/
-persistence surface, an implemented closed `ato.execution/v1` local port, and
-implemented provisional `ato.api/v1` plus explicit local-Manual `ato.api/v2`
-CLI majors. It still has no released product,
+  Domain/ProjectRegistry/authorization/application/claim/Manual-loop/dispatcher/
+  persistence surface, an implemented closed `ato.execution/v1` local port, and
+one implemented provisional `ato.api/v1` local explicit-Manual product CLI major.
+It still has no released product,
 validated platform, or supported external API.
 
 The [v0.1 matrix](../compatibility/v0.1.md) records evidence only. It cannot
@@ -61,14 +61,28 @@ tests; otherwise it returns a typed incompatibility error.
 The current `ato.api/v1` request and response shapes are closed, have no
 extension map, and reject unknown input. Its exact grammar, fields, key order,
 redaction, errors, and exits are owned by the [CLI/API contract](cli-contract.md).
-EP-02B and EP-02C add no command or response field to that public major.
-EP-02D preserves that major and its default selection exactly because adding
-Manual dispatch/execution commands, a thirty-action vocabulary, new state
-effects, result shapes, and errors is incompatible. Those additions therefore
-exist only under explicit `ato.api/v2`. Version 2 inherits every version-1
-command with unchanged semantics and result shape, adds only the closed local
-Manual product commands documented by the CLI owner, and has no extension map.
-Neither major is a released stability or platform-support promise.
+It contains exactly the complete local explicit-Manual Phase 2 product documented
+there. Omitting the version and selecting `ato.api/v1` explicitly are identical;
+all other majors are unsupported before runtime construction or protected state
+evaluation. This major is not a released stability or platform-support promise.
+
+### Unreleased current-v1 reset
+
+RC03 consumes one explicitly authorized pre-release exception to the normal
+same-major stability rule above. The package is private and remains
+`0.0.0-development`; no release, supported external caller, or durable artifact
+stores a product API major. RC03 therefore retires both the old limited
+`ato.api/v1` tree and the explicit `ato.api/v2` tree without a compatibility,
+translation, deprecation, or migration window, and redefines the complete
+existing Phase 2 product as the sole current `ato.api/v1`.
+
+The old trees survive only in immutable historical plans, audit evidence, and
+changelog entries. They are not readers, aliases, fallback branches, or support
+claims. A request naming retired `ato.api/v2` receives the sole current
+`CLI_UNSUPPORTED_VERSION` failure envelope and cannot create/open a runtime or
+mutate protected state. After this reset, the normal public-API evolution rules
+apply to the new current-v1 baseline; another same-major semantic reset requires
+new explicit approval and updated compatibility evidence.
 
 ## Adapter evolution and negotiation
 

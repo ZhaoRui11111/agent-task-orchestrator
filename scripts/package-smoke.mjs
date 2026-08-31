@@ -171,7 +171,7 @@ function runPhase2CliBoundary(entryPath, label, runtimeRoot, projectRoot, cwd, e
   const transcript = [];
   const invokeJson = (args, expectedStatus = 0) => {
     const observed = invokeNodeCli(entryPath, [
-      "--format", "json", "--api-version", "ato.api/v2", "--runtime-root", runtimeRoot, ...args,
+      "--format", "json", "--runtime-root", runtimeRoot, ...args,
     ], cwd, environment, nodeArgs);
     invariant(observed.status === expectedStatus && observed.stderr === "", `${label} CLI command failed: ${observed.stderr || observed.stdout}`);
     invariant(observed.stdout.endsWith("\n") && observed.stdout.indexOf("\n") === observed.stdout.length - 1,
@@ -236,7 +236,7 @@ function runPhase2CliBoundary(entryPath, label, runtimeRoot, projectRoot, cwd, e
   const completionReplay = invokeJson(completionArgs);
   invariant(completionReplay.body.ok && completionReplay.body.result.replayed, `${label} CLI completion replay drifted`);
   const human = invokeNodeCli(entryPath, [
-    "--format", "human", "--api-version", "ato.api/v2", "--runtime-root", runtimeRoot, ...completionArgs,
+    "--format", "human", "--runtime-root", runtimeRoot, ...completionArgs,
   ], cwd, environment, nodeArgs);
   invariant(human.status === 0 && human.stderr === "" && human.stdout.startsWith("OK execution.accept-manual-completion ") &&
     human.stdout.endsWith("\n") && human.stdout.indexOf("\n") === human.stdout.length - 1,
@@ -435,6 +435,22 @@ export async function resolve(specifier, context, nextResolve) {
       backupDeclarations,
     ),
     "packed declarations retain an obsolete backup or restore format surface",
+  );
+  const cliDeclarations = readFileSync(path.join(repoRoot, "dist", "cli-api.d.ts"), "utf8");
+  const indexDeclarations = readFileSync(path.join(repoRoot, "dist", "index.d.ts"), "utf8");
+  invariant(cliDeclarations.includes('CLI_API_VERSION: "ato.api/v1"'), "current CLI API declaration is absent");
+  invariant(cliDeclarations.includes("PUBLIC_ERROR_TABLE"), "current public error table declaration is absent");
+  invariant(cliDeclarations.includes("export type PublicErrorCode"), "current public error type declaration is absent");
+  invariant(
+    !/ato\.api\/v2|CLI_API_V2_VERSION|PUBLIC_ERROR_TABLE_V2|PublicErrorCodeV2|AnyPublicErrorCode/u.test(
+      `${cliDeclarations}\n${indexDeclarations}`,
+    ),
+    "packed declarations retain an obsolete product API surface",
+  );
+  invariant(indexDeclarations.includes("readonly localProductCliImplemented: true;"), "single product CLI status is absent");
+  invariant(
+    !/localPhase[12]ProductCliImplemented/u.test(indexDeclarations),
+    "packed declarations retain phase-specific product CLI status",
   );
 
   pnpm(["pack", "--pack-destination", generation], repoRoot);
@@ -727,8 +743,9 @@ void productRuntime;
       imported.status.projectRegistryImplemented === true &&
       imported.status.runtimeAuthorizationImplemented === true &&
       imported.status.applicationServiceImplemented === true &&
-      imported.status.localPhase1ProductCliImplemented === true &&
-      imported.status.localPhase2ProductCliImplemented === true &&
+      imported.status.localProductCliImplemented === true &&
+      !Object.hasOwn(imported.status, "localPhase1ProductCliImplemented") &&
+      !Object.hasOwn(imported.status, "localPhase2ProductCliImplemented") &&
       imported.status.backupRestoreDoctorImplemented === true &&
       imported.status.durableExecutionClaimFoundationImplemented === true &&
       imported.status.reliableManualExecutionLoopImplemented === true &&
@@ -757,11 +774,8 @@ void productRuntime;
   const positiveArgs = ["--format", "json", "--runtime-root", parityRoot, "doctor"];
   const humanArgs = ["--format", "human", "--runtime-root", parityRoot, "doctor"];
   const negativeArgs = ["--format", "json", "unknown", "private-input-must-not-echo"];
-  const v2PositiveArgs = ["--format", "json", "--api-version", "ato.api/v2", "--runtime-root", parityRoot, "doctor"];
-  const v2NegativeArgs = [
-    "--format", "json", "--api-version", "ato.api/v2", "dispatch", "run",
-    "--idempotency-key", "package-v2-invalid", "--lease-duration-seconds", "29",
-  ];
+  const explicitCurrentArgs = ["--format", "json", "--api-version", "ato.api/v1", "--runtime-root", parityRoot, "doctor"];
+  const retiredMajorArgs = ["--format", "json", "--api-version", "ato.api/v2", "--runtime-root", parityRoot, "doctor"];
   const sourceCli = path.join(repoRoot, "src", "cli.ts");
   const builtCli = path.join(repoRoot, "dist", "cli.js");
   const installedCli = path.join(consumer, "node_modules", "agent-task-orchestrator", "dist", "cli.js");
@@ -771,10 +785,10 @@ void productRuntime;
     invokeNodeCli(entry, humanArgs, consumer, cliEnvironment));
   const negativeResults = [sourceCli, builtCli, installedCli].map((entry) =>
     invokeNodeCli(entry, negativeArgs, consumer, cliEnvironment));
-  const v2PositiveResults = [sourceCli, builtCli, installedCli].map((entry) =>
-    invokeNodeCli(entry, v2PositiveArgs, consumer, cliEnvironment));
-  const v2NegativeResults = [sourceCli, builtCli, installedCli].map((entry) =>
-    invokeNodeCli(entry, v2NegativeArgs, consumer, cliEnvironment));
+  const explicitCurrentResults = [sourceCli, builtCli, installedCli].map((entry) =>
+    invokeNodeCli(entry, explicitCurrentArgs, consumer, cliEnvironment));
+  const retiredMajorResults = [sourceCli, builtCli, installedCli].map((entry) =>
+    invokeNodeCli(entry, retiredMajorArgs, consumer, cliEnvironment));
   const expectedPositive = {
     status: 0,
     stdout: '{"apiVersion":"ato.api/v1","command":"doctor","ok":true,"result":{"health":"not_initialized","initialized":false,"schemaVersion":null,"activeUse":false,"backupInventory":"empty","restoreState":"none"}}\n',
@@ -790,14 +804,9 @@ void productRuntime;
     stdout: 'OK doctor health="not_initialized" initialized=false schemaVersion=null activeUse=false backupInventory="empty" restoreState="none"\n',
     stderr: "",
   };
-  const expectedV2Positive = {
-    status: 0,
-    stdout: '{"apiVersion":"ato.api/v2","command":"doctor","ok":true,"result":{"health":"not_initialized","initialized":false,"schemaVersion":null,"activeUse":false,"backupInventory":"empty","restoreState":"none"}}\n',
-    stderr: "",
-  };
-  const expectedV2Negative = {
+  const expectedRetiredMajor = {
     status: 2,
-    stdout: '{"apiVersion":"ato.api/v2","command":"dispatch.run","ok":false,"error":{"code":"CLI_INVALID_INPUT","message":"The command input is invalid."}}\n',
+    stdout: '{"apiVersion":"ato.api/v1","command":"doctor","ok":false,"error":{"code":"CLI_UNSUPPORTED_VERSION","message":"The requested API version is unsupported."}}\n',
     stderr: "",
   };
   for (const observed of positiveResults) {
@@ -813,16 +822,16 @@ void productRuntime;
       `human CLI parity drifted: ${JSON.stringify(observed)}`,
     );
   }
-  for (const observed of v2PositiveResults) {
+  for (const observed of explicitCurrentResults) {
     invariant(
-      JSON.stringify(observed) === JSON.stringify(expectedV2Positive),
-      `v2 positive CLI parity drifted: ${JSON.stringify(observed)}`,
+      JSON.stringify(observed) === JSON.stringify(expectedPositive),
+      `explicit current CLI parity drifted: ${JSON.stringify(observed)}`,
     );
   }
-  for (const observed of v2NegativeResults) {
+  for (const observed of retiredMajorResults) {
     invariant(
-      JSON.stringify(observed) === JSON.stringify(expectedV2Negative),
-      `v2 negative CLI parity drifted: ${JSON.stringify(observed)}`,
+      JSON.stringify(observed) === JSON.stringify(expectedRetiredMajor),
+      `retired-major CLI parity drifted: ${JSON.stringify(observed)}`,
     );
   }
   const phase2ParityEnvironment = { ATO_SMOKE_HOME: isolatedHome };
@@ -863,8 +872,8 @@ void productRuntime;
   invariant(!existsSync(parityRoot), "read-only doctor created the absent runtime root");
   const installedBin = pnpm(["exec", "ato", ...positiveArgs], consumer, undefined, cliEnvironment);
   invariant(installedBin.stdout === expectedPositive.stdout && installedBin.stderr === "", "installed package bin drifted from direct CLI entry");
-  const installedV2Bin = pnpm(["exec", "ato", ...v2PositiveArgs], consumer, undefined, cliEnvironment);
-  invariant(installedV2Bin.stdout === expectedV2Positive.stdout && installedV2Bin.stderr === "", "installed package v2 bin drifted from direct CLI entry");
+  const installedExplicitBin = pnpm(["exec", "ato", ...explicitCurrentArgs], consumer, undefined, cliEnvironment);
+  invariant(installedExplicitBin.stdout === expectedPositive.stdout && installedExplicitBin.stderr === "", "installed package explicit-current bin drifted from direct CLI entry");
 
   pnpm(["remove", "agent-task-orchestrator"], consumer, storeDir);
   invariant(!existsSync(path.join(consumer, "node_modules", "agent-task-orchestrator")), "package uninstall left the installed package");

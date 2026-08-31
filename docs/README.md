@@ -50,8 +50,8 @@ Documentation has explicit roles so that current contracts, plans, and historica
 
 Plans describe proposed, active, or completed development work. They do not become current product capability without matching implementation, tests, and current documentation.
 
-Current references distinguish the implemented explicit local-Manual
-`ato.api/v2` product subset from the still-planned SchedulerBackend, scheduled
+Current references distinguish the implemented sole-`ato.api/v1` explicit
+local-Manual product subset from the still-planned SchedulerBackend, scheduled
 delivery, MCP, Codex/Git/workspace adapters, and policy/gated completion.
 
 All links in authoritative documentation must be repository-relative and resolve to committed files.

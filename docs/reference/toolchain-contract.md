@@ -105,9 +105,11 @@ into a disposable consumer without registry access, typecheck the public
   dispatch-to-completion restart path, and a fresh persistence backup; verify
   the exported reconcile-first dispatcher/product surfaces and status; and
   invoke the console entry. The console portion compares source, built, and
-  packed-installed CLI behavior for exact version-1 and version-2 successful
-  JSON/human responses, invalid input, public exits, and absence of read-only
-  doctor side effects.
+  packed-installed CLI behavior for omitted and explicit current `ato.api/v1`
+  JSON/human responses, retired-major refusal, invalid input, public exits, and
+  absence of read-only doctor side effects. Packed declarations must contain one
+  product API major, one public error table/type, and one
+  `localProductCliImplemented` status field.
 
 The package-root library export exposes a truthful capability status, the pure
 TypeScript Domain Core, ProjectRegistry identity owner, finite authorization

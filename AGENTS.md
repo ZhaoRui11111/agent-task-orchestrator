@@ -36,8 +36,8 @@ and separately confirmed Manual completion acceptance. The explicit
 Manual dispatcher adds a separately upgraded `dispatch.run` capability,
 durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
 immutable finite candidate membership, one terminal outcome per member, and a
-completeness-gated durable summary. The explicit `ato.api/v2` surface preserves
-`ato.api/v1`, performs confirmation-bound finite capability upgrades, and
+completeness-gated durable summary. The sole current `ato.api/v1` surface
+performs confirmation-bound finite capability upgrades and
 exposes Manual dispatch, durable execution inspection/recovery/cancellation,
 trusted Manual outcome reporting, and separately confirmed completion
 acceptance through one typed product facade. That facade derives non-public

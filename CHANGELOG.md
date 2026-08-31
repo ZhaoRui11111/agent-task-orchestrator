@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Replaced the unreleased limited-`ato.api/v1`/explicit-`ato.api/v2` split with
+  one current `ato.api/v1` local explicit-Manual product: one 33-command
+  registry, one 37-code public error table, identical omitted/explicit-v1
+  behavior, and pre-runtime refusal of every retired or unsupported major. The
+  package now exposes one `localProductCliImplemented` status while the
+  independent `ato.execution/v1` contract and all product semantics remain
+  unchanged; the old product majors have no compatibility window.
 - Replaced the unreleased schema-1-through-7 migration chain with one immutable
   `0001-current-baseline.sql` at schema version 1. Fresh bootstrap still starts
   at authorization vocabulary 4 and requires three separately confirmed,

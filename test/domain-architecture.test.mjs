@@ -8,7 +8,6 @@ import { repoRoot } from "../scripts/repo-utils.mjs";
 const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "APPLICATION_ERROR_CODES",
   "AUTHORIZATION_ACTIONS",
-  "CLI_API_V2_VERSION",
   "CLI_API_VERSION",
   "DISPATCHER_ERROR_CODES",
   "DISPATCH_AUTHORIZATION_ACTIONS",
@@ -27,7 +26,6 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "PHASE2B_AUTHORIZATION_ACTIONS",
   "PROJECT_REGISTRY_ERROR_CODES",
   "PUBLIC_ERROR_TABLE",
-  "PUBLIC_ERROR_TABLE_V2",
   "PersistenceError",
   "ProjectRegistryError",
   "RELIABLE_EXECUTION_ERROR_CODES",
@@ -126,8 +124,7 @@ test("the package exposes the local explicit-Manual Phase 2 product surface", ()
     projectRegistryImplemented: true,
     runtimeAuthorizationImplemented: true,
     applicationServiceImplemented: true,
-    localPhase1ProductCliImplemented: true,
-    localPhase2ProductCliImplemented: true,
+    localProductCliImplemented: true,
     backupRestoreDoctorImplemented: true,
     durableExecutionClaimFoundationImplemented: true,
     reliableManualExecutionLoopImplemented: true,
@@ -144,6 +141,19 @@ test("the package exposes the local explicit-Manual Phase 2 product surface", ()
     "completed",
     "cancelled",
   ]);
+});
+
+test("the product API has one current major while ato.execution/v1 stays independent", () => {
+  const cliSource = readFileSync(path.join(repoRoot, "src", "cli-api.ts"), "utf8");
+  const indexSource = readFileSync(path.join(repoRoot, "src", "index.ts"), "utf8");
+  const executionPortSource = readFileSync(path.join(repoRoot, "src", "execution-port.ts"), "utf8");
+  assert.match(cliSource, /CLI_API_VERSION\s*=\s*"ato\.api\/v1"/u);
+  assert.doesNotMatch(
+    `${cliSource}\n${indexSource}`,
+    /ato\.api\/v2|CLI_API_V2_VERSION|PUBLIC_ERROR_TABLE_V2|PublicErrorCodeV2|AnyPublicErrorCode|V2_ONLY_COMMAND_SPECS|localPhase[12]ProductCliImplemented/u,
+  );
+  assert.match(executionPortSource, /ato\.execution\/v1/u);
+  assert.doesNotMatch(executionPortSource, /ato\.api\/v[12]/u);
 });
 
 test("the Domain Core production owner has no module, I/O, clock, random, process, or vendor dependency", () => {

@@ -6,8 +6,8 @@ The repository has a governance and architecture-contract baseline, an
 executable toolchain and feasibility harness, a pure in-memory TypeScript
 Domain Core, a filesystem-identity ProjectRegistry, a finite local runtime
 authorization owner, a typed Project/Task/dependency application service, a
-local SQLite persistence foundation, the closed local Phase 1 product, and an
-explicit-Manual local Phase 2 product through `ato.api/v2`. One immutable
+local SQLite persistence foundation, the closed local Phase 1 product, and the
+complete explicit-Manual local Phase 2 product through the sole current `ato.api/v1`. One immutable
 schema-version-1 baseline directly owns metadata and exact Domain snapshots;
 ProjectRegistry; local identity; vocabulary-4-through-7 epochs and grants;
 requests, authorization decisions, lifecycle authorizations and append-only
@@ -95,8 +95,8 @@ The architecture separates:
   closed public CAS tuple, derives non-public durable lineage, composes the
   current application/dispatcher/reliable owners, and returns only bounded
   redacted product views.
-- `interfaces`: the implemented local `ato.api/v1` and explicit `ato.api/v2`
-  product CLI, plus a planned MCP surface; every business operation shares the
+- `interfaces`: the implemented sole current `ato.api/v1` product CLI, plus a
+  planned MCP surface; every business operation shares the
   application layer or product facade.
 
 Only the boundaries explicitly described above are implemented. In particular,
