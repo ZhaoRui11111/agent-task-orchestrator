@@ -10,8 +10,6 @@ export {
   type PrimaryFileMember,
   type PrimaryIdentity,
   type RestoreReceipt,
-  type RestoreReceiptV1,
-  type RestoreReceiptV2,
   type RestoreRequest,
   type RestoreInventoryState,
 } from "./backup.ts";

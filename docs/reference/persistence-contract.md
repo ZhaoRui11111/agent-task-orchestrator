@@ -514,27 +514,22 @@ main file. The owner allocates an unguessable private stage and publishes the
 whole two-member directory by same-parent rename only after all checks pass.
 The published inventory is exactly `state.sqlite3` and `manifest.json`.
 
-New generations use manifest schema version `2`. Its common fields bind:
+Every accepted generation uses the one current manifest schema version `2` and
+one exact field set. It binds:
 
-- generation ID and `manual` or `pre_upgrade` kind;
+- generation ID and the required `manual` kind;
 - database filename, byte length, and uppercase SHA-256;
 - source schema version, registry identity, schema fingerprint, and complete
   migration history; and
-- source application version and creation time.
+- source application version and creation time; and
+- required `application` provenance, the non-null `runtime.backup` lifecycle
+  authorization ID and digest, and the exact source application-state digest.
 
-Schema `2` additionally binds one exact provenance form:
-
-- an application-authorized `manual` backup records the lifecycle authorization
-  ID and digest plus the exact source application-state digest; or
-- an internal `pre_upgrade` backup records `pre_upgrade_internal` provenance and
-  no lifecycle authorization.
-
-Manifest schema `1` remains readable only as immutable historical verification
-evidence. A pre-upgrade generation, schema-1 generation, non-manual generation,
-or manual generation without current schema-2 application provenance is not a
-product restore source. These V1/V2 parser forms remain operational pending the
-separately scoped backup-format convergence; current startup has no upgrade
-path and never creates a pre-upgrade generation.
+There is no manifest-schema-1 reader, `pre_upgrade` kind,
+`pre_upgrade_internal` provenance, nullable-authorization writer, or historical
+generation success path. A schema-1, pre-upgrade, missing-field, extra-field,
+substituted-provenance, or otherwise malformed manifest is invalid immutable
+input. Verification and doctor do not rewrite, adopt, delete, or repair it.
 
 Verification rejects any extra/missing/reparse member, changed byte, malformed
 manifest, incompatible history/schema, integrity/FK failure, or current-schema
@@ -575,8 +570,8 @@ lengths, and SHA-256 values. A stale or caller-fabricated identity fails before
 protected mutation.
 
 The owner clones and verifies the selected generation into an exclusively
-reserved restore stage, creates a private retained generation, and writes one
-identity-bound schema-2 restore intent before moving primary bytes. The intent
+reserved restore stage, creates a private retained generation, and writes the
+one exact current identity-bound schema-2 restore intent before moving primary bytes. The intent
 binds the retained directory identity as well as the backup manifest and backup
 authorization digests, current restore authorization and authorized-state
 digest, expected primary set, and stage. It then:
@@ -586,7 +581,7 @@ digest, expected primary set, and stage. It then:
 2. publishes the verified staged database at `state.sqlite3`;
 3. performs schema, integrity, history, and typed readback on the published
    target;
-4. writes one immutable schema-2 restore receipt binding the backup and both
+4. writes the one exact current immutable schema-2 restore receipt binding the backup and both
    authorization lineages, prior identity, target checksum/schema, retained
    generation identity, application version, and time;
    and
@@ -601,6 +596,13 @@ recognized pre-publication, post-publication, or post-receipt state. Missing,
 duplicated, mixed, substituted, or unknown topology remains
 `RESTORE_BLOCKED` for current doctor classification and a later explicit user
 decision.
+
+There is no restore-intent-schema-1 or restore-receipt-schema-1 reader and no
+version-selected optional field set. Both current artifacts always carry the
+complete backup and restore authorization lineage. A retired, missing-field,
+extra-field, noncanonical, or substituted intent or receipt blocks explicit
+recovery and remains untouched; doctor reports the associated topology as
+ambiguous without performing a recovery write.
 
 The current failpoint evidence covers process interruption at these logical
 boundaries. It is not a power-loss durability, hardware recovery, backup

@@ -426,6 +426,16 @@ export async function resolve(specifier, context, nextResolve) {
     readFileSync(path.join(frozenInstall, "node_modules", "typescript", "package.json"), "utf8"),
   );
   invariant(installedCompiler.name === "typescript" && installedCompiler.version === "5.9.3", "frozen install compiler drifted");
+  const backupDeclarations = readFileSync(path.join(repoRoot, "dist", "persistence", "backup.d.ts"), "utf8");
+  invariant(backupDeclarations.includes('export type BackupKind = "manual";'), "backup kind declaration drifted");
+  invariant(backupDeclarations.includes("export interface BackupManifest"), "current backup manifest declaration is absent");
+  invariant(backupDeclarations.includes("export interface RestoreReceipt"), "current restore receipt declaration is absent");
+  invariant(
+    !/BackupManifestV[12]|RestoreIntentV[12]|RestoreReceiptV[12]|pre_upgrade|pre_upgrade_internal/u.test(
+      backupDeclarations,
+    ),
+    "packed declarations retain an obsolete backup or restore format surface",
+  );
 
   pnpm(["pack", "--pack-destination", generation], repoRoot);
   const tgz = readdirSync(generation).find((item) => item.endsWith(".tgz"));
@@ -461,8 +471,10 @@ export async function resolve(specifier, context, nextResolve) {
   type ExecutionBackend,
   type ManualOutcomeControl,
   type ReliableExecutionIngress,
+  type BackupManifest,
   type OpenPersistenceOptions,
   type ProductRuntime,
+  type RestoreReceipt,
   type RuntimeRootRequest,
 } from "agent-task-orchestrator";
 
@@ -474,6 +486,10 @@ const request: RuntimeRootRequest = {
 };
 void options;
 void request;
+const backupManifest = null as unknown as BackupManifest;
+const restoreReceipt = null as unknown as RestoreReceipt;
+void backupManifest;
+void restoreReceipt;
 void currentSchemaVersion();
 void getScaffoldStatus();
 void AUTHORIZATION_ACTIONS;

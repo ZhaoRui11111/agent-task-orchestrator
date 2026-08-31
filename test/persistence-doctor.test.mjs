@@ -17,8 +17,10 @@ import {
   inspectPrimaryIdentity,
   inspectRuntimeDoctor,
   openPersistence,
+  restoreBackup,
 } from "../src/index.ts";
 import { restoreBackupForTesting } from "../src/persistence/backup.ts";
+import { canonicalJson } from "../src/persistence/values.ts";
 import {
   authorizeTestLifecycle,
   cleanupPersistenceFixture,
@@ -238,7 +240,13 @@ test("doctor reports backup staging residue and invalid generations without dele
     await store.close();
     store = undefined;
     const manifestPath = path.join(corruptFixture.layout.backupGenerationsRoot, generation.generationId, "manifest.json");
-    writeFileSync(manifestPath, "{}\n");
+    const retiredManifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    retiredManifest.schemaVersion = 1;
+    delete retiredManifest.provenanceKind;
+    delete retiredManifest.lifecycleAuthorizationId;
+    delete retiredManifest.lifecycleAuthorizationSha256;
+    delete retiredManifest.sourceApplicationStateSha256;
+    writeFileSync(manifestPath, canonicalJson(retiredManifest));
     const corruptBefore = snapshotTree(corruptFixture.layout.root);
     assert.equal(doctor(corruptFixture).health, "backup_invalid");
     assert.deepEqual(snapshotTree(corruptFixture.layout.root), corruptBefore);
@@ -321,10 +329,64 @@ test("doctor reports ambiguous and pending restore state with restore precedence
       backupInventory: "valid", restoreState: "pending",
     });
     assert.deepEqual(snapshotTree(pending.layout.root), pendingBefore);
+    const retiredIntent = JSON.parse(readFileSync(pending.layout.restoreIntentPath, "utf8"));
+    retiredIntent.schemaVersion = 1;
+    delete retiredIntent.backupAuthorizationId;
+    delete retiredIntent.backupAuthorizationSha256;
+    delete retiredIntent.backupManifestSchemaVersion;
+    delete retiredIntent.restoreAuthorizationId;
+    delete retiredIntent.restoreAuthorizationSha256;
+    delete retiredIntent.restoreAuthorizedStateSha256;
+    writeFileSync(pending.layout.restoreIntentPath, canonicalJson(retiredIntent));
+    const retiredBefore = snapshotTree(pending.layout.root);
+    assert.deepEqual(doctor(pending), {
+      health: "restore_ambiguous", initialized: null, schemaVersion: null, activeUse: false,
+      backupInventory: "valid", restoreState: "ambiguous",
+    });
+    assert.deepEqual(snapshotTree(pending.layout.root), retiredBefore);
   } finally {
     if (store) await store.close();
     cleanupPersistenceFixture(ambiguous);
     cleanupPersistenceFixture(pending);
+  }
+});
+
+test("doctor leaves a retired completed restore receipt ambiguous and unchanged", async () => {
+  const fixture = createPersistenceFixture("doctor-retired-receipt");
+  let store;
+  try {
+    store = await openPersistence(fixture.layout, { applicationVersion: "doctor-retired-receipt" });
+    const generation = await createAuthorizedTestBackup(store);
+    const authorization = authorizeTestLifecycle(store, "runtime.restore", generation.generationId);
+    await store.close();
+    store = undefined;
+    const expectedCurrent = await inspectPrimaryIdentity(fixture.layout);
+    const receipt = await restoreBackup(fixture.layout, {
+      generationId: generation.generationId,
+      expectedCurrent,
+      acknowledgeDataLoss: true,
+      applicationVersion: "doctor-retired-receipt",
+      authorization,
+    });
+    const receiptPath = path.join(fixture.layout.restoreReceiptsRoot, `${receipt.restoreId}.json`);
+    const retiredReceipt = JSON.parse(readFileSync(receiptPath, "utf8"));
+    retiredReceipt.schemaVersion = 1;
+    delete retiredReceipt.backupAuthorizationId;
+    delete retiredReceipt.backupAuthorizationSha256;
+    delete retiredReceipt.backupManifestSha256;
+    delete retiredReceipt.restoreAuthorizationId;
+    delete retiredReceipt.restoreAuthorizationSha256;
+    delete retiredReceipt.restoreAuthorizedStateSha256;
+    writeFileSync(receiptPath, canonicalJson(retiredReceipt));
+    const before = snapshotTree(fixture.layout.root);
+    assert.deepEqual(doctor(fixture), {
+      health: "restore_ambiguous", initialized: null, schemaVersion: null, activeUse: false,
+      backupInventory: "valid", restoreState: "ambiguous",
+    });
+    assert.deepEqual(snapshotTree(fixture.layout.root), before);
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
   }
 });
 

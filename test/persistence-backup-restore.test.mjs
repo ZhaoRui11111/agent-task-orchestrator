@@ -56,6 +56,60 @@ import {
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceCli = path.join(repoRoot, "src", "cli.ts");
+const CURRENT_BACKUP_MANIFEST_FIELDS = Object.freeze([
+  "applicationVersion",
+  "createdAt",
+  "databaseFile",
+  "databaseLength",
+  "databaseSha256",
+  "generationId",
+  "kind",
+  "lifecycleAuthorizationId",
+  "lifecycleAuthorizationSha256",
+  "provenanceKind",
+  "schemaVersion",
+  "sourceApplicationStateSha256",
+  "sourceHistory",
+  "sourceRegistryIdentity",
+  "sourceSchemaFingerprint",
+  "sourceSchemaVersion",
+].sort());
+const CURRENT_RESTORE_INTENT_FIELDS = Object.freeze([
+  "applicationVersion",
+  "backupAuthorizationId",
+  "backupAuthorizationSha256",
+  "backupGenerationId",
+  "backupManifestSchemaVersion",
+  "backupManifestSha256",
+  "createdAt",
+  "expectedCurrent",
+  "retainedDirectoryIdentity",
+  "restoreAuthorizationId",
+  "restoreAuthorizationSha256",
+  "restoreAuthorizedStateSha256",
+  "restoreId",
+  "schemaVersion",
+  "stageIdentity",
+  "targetSchemaVersion",
+].sort());
+const CURRENT_RESTORE_RECEIPT_FIELDS = Object.freeze([
+  "applicationVersion",
+  "backupAuthorizationId",
+  "backupAuthorizationSha256",
+  "backupGenerationId",
+  "backupManifestSha256",
+  "previousIdentitySha256",
+  "retainedDirectory",
+  "retainedDirectoryIdentity",
+  "restoredAt",
+  "restoreAuthorizationId",
+  "restoreAuthorizationSha256",
+  "restoreAuthorizedStateSha256",
+  "restoreId",
+  "schemaVersion",
+  "targetDatabaseSha256",
+  "targetSchemaVersion",
+].sort());
 
 async function seedTask(store, body = "first") {
   const initialResult = createDomainSnapshot(emptySnapshot());
@@ -214,11 +268,19 @@ test("manual backup refuses another reader, then publishes an exact authorized g
     const generation = await createAuthorizedTestBackup(first);
     const verified = verifyBackupGeneration(fixture.layout, generation.generationId);
     assert.deepEqual(verified, generation);
+    assert.equal(verified.manifest.schemaVersion, 2);
     assert.equal(verified.manifest.kind, "manual");
+    assert.equal(verified.manifest.provenanceKind, "application");
+    assert.equal(typeof verified.manifest.lifecycleAuthorizationId, "string");
+    assert.match(verified.manifest.lifecycleAuthorizationSha256, /^[0-9A-F]{64}$/u);
+    assert.match(verified.manifest.sourceApplicationStateSha256, /^[0-9A-F]{64}$/u);
     assert.equal(verified.manifest.sourceSchemaVersion, 1);
     assert.equal(verified.manifest.sourceHistory.length, 1);
     const directory = path.join(fixture.layout.backupGenerationsRoot, generation.generationId);
     assert.deepEqual(readdirSync(directory).sort(), ["manifest.json", "state.sqlite3"]);
+    const manifestPath = path.join(directory, "manifest.json");
+    assert.deepEqual(Object.keys(JSON.parse(readFileSync(manifestPath, "utf8"))).sort(), CURRENT_BACKUP_MANIFEST_FIELDS);
+    assert.equal(readFileSync(manifestPath, "utf8"), canonicalJson(verified.manifest));
     const database = new DatabaseSync(path.join(directory, "state.sqlite3"), { readOnly: true });
     assert.equal(String(Object.values(database.prepare("PRAGMA journal_mode").get())[0]).toLowerCase(), "delete");
     database.close();
@@ -686,6 +748,8 @@ test("backup revalidates clone identities, sidecars, exact inventory, and public
     try {
       store = await openPersistence(fixture.layout, { applicationVersion: "boundary" });
       await seedTask(store);
+      const generationId = randomUUID();
+      const authorization = authorizeTestLifecycle(store, "runtime.backup", generationId);
       await store.close();
       store = undefined;
       database = openPrimaryDatabase(fixture.layout.databasePath);
@@ -695,7 +759,7 @@ test("backup revalidates clone identities, sidecars, exact inventory, and public
             database,
             fixture.layout,
             "boundary",
-            "pre_upgrade",
+            authorization,
             token,
             {
               afterClone: boundary === "publish" || boundary === "inventory" ? undefined : () => {
@@ -877,8 +941,8 @@ test("backup verification refuses missing, changed, extra, newer, or wrong-appli
   }
 });
 
-test("legacy and non-manual generations remain verifiable history but are never restorable", async () => {
-  for (const provenance of ["legacy", "non-manual"]) {
+test("schema-one and pre-upgrade backup artifacts are immutable invalid input", async () => {
+  for (const provenance of ["schema-one", "pre-upgrade"]) {
     const fixture = createPersistenceFixture(`backup-history-${provenance}`);
     let store;
     try {
@@ -899,7 +963,7 @@ test("legacy and non-manual generations remain verifiable history but are never 
         "manifest.json",
       );
       const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-      if (provenance === "legacy") {
+      if (provenance === "schema-one") {
         manifest.schemaVersion = 1;
         delete manifest.provenanceKind;
         delete manifest.lifecycleAuthorizationId;
@@ -913,10 +977,13 @@ test("legacy and non-manual generations remain verifiable history but are never 
         manifest.sourceApplicationStateSha256 = null;
       }
       writeFileSync(manifestPath, canonicalJson(manifest));
+      const generationDirectory = path.dirname(manifestPath);
+      const generationBefore = runtimeInventory(generationDirectory);
+      const primaryBefore = readRegularFile(fixture.layout.databasePath);
 
-      assert.equal(
-        verifyBackupGeneration(fixture.layout, backup.generationId).generationId,
-        backup.generationId,
+      assert.throws(
+        () => verifyBackupGeneration(fixture.layout, backup.generationId),
+        (error) => expectPersistenceError(error, "BACKUP_INVALID"),
       );
       await assert.rejects(
         restoreBackup(fixture.layout, {
@@ -929,6 +996,10 @@ test("legacy and non-manual generations remain verifiable history but are never 
         (error) => expectPersistenceError(error, "BACKUP_INVALID"),
       );
       assert.equal(existsSync(fixture.layout.restoreIntentPath), false);
+      assert.deepEqual(runtimeInventory(generationDirectory), generationBefore);
+      const primaryAfter = readRegularFile(fixture.layout.databasePath);
+      assert.deepEqual(primaryAfter.identity, primaryBefore.identity);
+      assert.equal(sha256(primaryAfter.bytes), sha256(primaryBefore.bytes));
     } finally {
       if (store) await store.close();
       cleanupPersistenceFixture(fixture);
@@ -1316,40 +1387,137 @@ test("interruption after publication or receipt resumes without fabricating roll
   }
 });
 
-test("corrupt durable restore intent blocks recovery without adopting state", async () => {
-  const fixture = createPersistenceFixture("restore-corrupt-intent");
-  let store;
-  try {
-    store = await openPersistence(fixture.layout, { applicationVersion: "restore" });
-    const backedUp = await seedTask(store);
-    const generation = await createAuthorizedTestBackup(store);
-    const restoreAuthorization = authorizeTestLifecycle(store, "runtime.restore", generation.generationId);
-    await store.close();
-    store = undefined;
-    const expectedCurrent = await inspectPrimaryIdentity(fixture.layout);
-    await assert.rejects(
-      restoreBackupForTesting(
-        fixture.layout,
-        {
-          generationId: generation.generationId,
-          expectedCurrent,
-          acknowledgeDataLoss: true,
-          applicationVersion: "restore",
-          authorization: restoreAuthorization,
+test("current restore intent is exact and retired or malformed intents remain blocked evidence", async () => {
+  for (const corruption of ["schema-one", "missing-field", "extra-field", "noncanonical"]) {
+    const fixture = createPersistenceFixture(`restore-intent-${corruption}`);
+    let store;
+    try {
+      store = await openPersistence(fixture.layout, { applicationVersion: "restore" });
+      await seedTask(store);
+      const generation = await createAuthorizedTestBackup(store);
+      const restoreAuthorization = authorizeTestLifecycle(store, "runtime.restore", generation.generationId);
+      await store.close();
+      store = undefined;
+      const expectedCurrent = await inspectPrimaryIdentity(fixture.layout);
+      await assert.rejects(
+        restoreBackupForTesting(
+          fixture.layout,
+          {
+            generationId: generation.generationId,
+            expectedCurrent,
+            acknowledgeDataLoss: true,
+            applicationVersion: "restore",
+            authorization: restoreAuthorization,
+          },
+          { afterRetain: () => { throw new Error("interrupt"); } },
+        ),
+        (error) => expectPersistenceError(error, "RESTORE_RECOVERY_REQUIRED"),
+      );
+      const currentIntentBytes = readFileSync(fixture.layout.restoreIntentPath, "utf8");
+      const intent = JSON.parse(currentIntentBytes);
+      assert.equal(intent.schemaVersion, 2);
+      assert.equal(intent.backupManifestSchemaVersion, 2);
+      assert.deepEqual(Object.keys(intent).sort(), CURRENT_RESTORE_INTENT_FIELDS);
+      assert.equal(currentIntentBytes, canonicalJson(intent));
+      if (corruption === "schema-one") {
+        intent.schemaVersion = 1;
+        delete intent.backupAuthorizationId;
+        delete intent.backupAuthorizationSha256;
+        delete intent.backupManifestSchemaVersion;
+        delete intent.restoreAuthorizationId;
+        delete intent.restoreAuthorizationSha256;
+        delete intent.restoreAuthorizedStateSha256;
+      } else if (corruption === "missing-field") {
+        delete intent.restoreAuthorizationId;
+      } else if (corruption === "extra-field") {
+        intent.unsupported = true;
+      }
+      writeFileSync(
+        fixture.layout.restoreIntentPath,
+        corruption === "noncanonical" ? `${JSON.stringify(intent, null, 2)}\n` : canonicalJson(intent),
+      );
+      const restoreBefore = runtimeInventory(fixture.layout.restoreRoot);
+      await assert.rejects(
+        recoverInterruptedRestore(fixture.layout),
+        (error) => expectPersistenceError(error, "RESTORE_BLOCKED"),
+      );
+      assert.equal(inspectRuntimeDoctor(fixture.layout.root, fixture.sourceCheckoutRoot).restoreState, "ambiguous");
+      assert.deepEqual(runtimeInventory(fixture.layout.restoreRoot), restoreBefore);
+      assert.equal(existsSync(fixture.layout.restoreIntentPath), true);
+    } finally {
+      if (store) await store.close();
+      cleanupPersistenceFixture(fixture);
+    }
+  }
+});
+
+test("current restore receipt is exact and retired or malformed receipts remain blocked evidence", async () => {
+  for (const corruption of ["schema-one", "missing-field", "extra-field", "noncanonical"]) {
+    const fixture = createPersistenceFixture(`restore-receipt-${corruption}`);
+    let store;
+    try {
+      store = await openPersistence(fixture.layout, { applicationVersion: "restore" });
+      await seedTask(store);
+      const generation = await createAuthorizedTestBackup(store);
+      const restoreAuthorization = authorizeTestLifecycle(store, "runtime.restore", generation.generationId);
+      await store.close();
+      store = undefined;
+      const expectedCurrent = await inspectPrimaryIdentity(fixture.layout);
+      let restoreId;
+      await assert.rejects(
+        restoreBackupForTesting(
+          fixture.layout,
+          {
+            generationId: generation.generationId,
+            expectedCurrent,
+            acknowledgeDataLoss: true,
+            applicationVersion: "restore",
+            authorization: restoreAuthorization,
+          },
+          { afterReceipt: () => { throw new Error("interrupt"); } },
+        ),
+        (error) => {
+          expectPersistenceError(error, "RESTORE_RECOVERY_REQUIRED");
+          restoreId = error.details.restoreId;
+          return true;
         },
-        { afterRetain: () => { throw new Error("interrupt"); } },
-      ),
-      (error) => expectPersistenceError(error, "RESTORE_RECOVERY_REQUIRED"),
-    );
-    writeFileSync(fixture.layout.restoreIntentPath, "{}\n");
-    await assert.rejects(
-      recoverInterruptedRestore(fixture.layout),
-      (error) => expectPersistenceError(error, "RESTORE_BLOCKED"),
-    );
-    assert.equal(existsSync(fixture.layout.restoreIntentPath), true);
-  } finally {
-    if (store) await store.close();
-    cleanupPersistenceFixture(fixture);
+      );
+      assert.ok(restoreId);
+      const receiptPath = path.join(fixture.layout.restoreReceiptsRoot, `${restoreId}.json`);
+      const currentReceiptBytes = readFileSync(receiptPath, "utf8");
+      const receipt = JSON.parse(currentReceiptBytes);
+      assert.equal(receipt.schemaVersion, 2);
+      assert.deepEqual(Object.keys(receipt).sort(), CURRENT_RESTORE_RECEIPT_FIELDS);
+      assert.equal(currentReceiptBytes, canonicalJson(receipt));
+      if (corruption === "schema-one") {
+        receipt.schemaVersion = 1;
+        delete receipt.backupAuthorizationId;
+        delete receipt.backupAuthorizationSha256;
+        delete receipt.backupManifestSha256;
+        delete receipt.restoreAuthorizationId;
+        delete receipt.restoreAuthorizationSha256;
+        delete receipt.restoreAuthorizedStateSha256;
+      } else if (corruption === "missing-field") {
+        delete receipt.restoreAuthorizationId;
+      } else if (corruption === "extra-field") {
+        receipt.unsupported = true;
+      }
+      writeFileSync(
+        receiptPath,
+        corruption === "noncanonical" ? `${JSON.stringify(receipt, null, 2)}\n` : canonicalJson(receipt),
+      );
+      const restoreBefore = runtimeInventory(fixture.layout.restoreRoot);
+      await assert.rejects(
+        recoverInterruptedRestore(fixture.layout),
+        (error) => expectPersistenceError(error, "RESTORE_BLOCKED"),
+      );
+      assert.equal(inspectRuntimeDoctor(fixture.layout.root, fixture.sourceCheckoutRoot).restoreState, "ambiguous");
+      assert.deepEqual(runtimeInventory(fixture.layout.restoreRoot), restoreBefore);
+      assert.equal(existsSync(fixture.layout.restoreIntentPath), true);
+    } finally {
+      if (store) await store.close();
+      cleanupPersistenceFixture(fixture);
+    }
   }
 });
 

@@ -123,8 +123,12 @@ would mean stopping the newer runtime,
 selecting a verified backup created by the target older schema/application,
 restoring it to a private location, validating it with that target reader, and
 atomically publishing it under the persistence recovery rules. The current
-product restore accepts only current schema-version-1 application-authorized manual
-backups and therefore provides data rollback, not schema downgrade support.
+product restore accepts only current manifest-schema-2 application-authorized
+manual backups whose source database is the current schema version `1`, and
+therefore provides data rollback, not schema downgrade support. Manifest,
+restore-intent, and restore-receipt schema `1` artifacts have no current reader;
+they remain untouched incompatible evidence rather than an implicit migration
+or repair source.
 
 Data accepted after the backup is not present after downgrade. The operator
 must receive that consequence before restore authorization. Opening a newer

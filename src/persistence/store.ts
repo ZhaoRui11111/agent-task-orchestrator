@@ -174,10 +174,9 @@ class PersistenceStoreOwner implements PersistenceStore {
           this.#database,
           this.layout,
           this.applicationVersion,
-          "manual",
+          authorization,
           token,
           hooks,
-          authorization,
         );
       } finally {
         this.#applicationWritesBlocked = false;

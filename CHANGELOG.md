@@ -12,6 +12,13 @@ All notable changes to this project will be documented in this file.
   pre-baseline, noncurrent, newer, corrupt, and pre-existing zero-length
   database before writable open and preserves no pre-Phase-3 data migration
   path.
+- Replaced the backup manifest, restore intent, and restore receipt V1/V2
+  compatibility unions with one exact current schema-2 format for each
+  artifact. Backup creation now has only the application-authorized `manual`
+  writer, restore recovery validates both authorization lineages
+  unconditionally, and schema-1, pre-upgrade, missing, extra, or malformed
+  artifacts remain invalid or ambiguous read-only evidence without changing
+  the public `ato.api/v1` or `ato.api/v2` product behavior.
 - Initialized repository governance and documentation boundaries.
 - Selected the Apache License 2.0 and documented contribution and attribution policy.
 - Added accepted architecture decisions and authoritative Phase 0 domain, persistence, reliability, adapter, scheduler, completion/workspace, security, observability, compatibility, and validation contracts.
