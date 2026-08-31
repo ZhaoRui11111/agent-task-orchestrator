@@ -1,7 +1,6 @@
 import {
   createDispatcherApplicationService,
   type DispatcherApplicationOptions,
-  type DispatcherApplicationService,
   type DispatcherFailure,
   type DispatcherIngress,
   type DispatcherReconciliationResolution,
@@ -29,7 +28,6 @@ import {
   readApplicationStateForOwner,
   type ApplicationState,
   type DispatcherMemberRecord,
-  type DispatcherRunRecord,
   type ExecutionOperationIntent,
 } from "./persistence/application-repository.ts";
 import type { PersistenceStore } from "./persistence/store.ts";
@@ -179,7 +177,6 @@ function processIntent(
   }
   const execution = state.executions.find((candidate) => candidate.executionId === intent.executionId);
   const task = state.domain.tasks.find((candidate) => candidate.id === intent.taskId);
-  const turn = state.manualTurns.find((candidate) => candidate.executionId === intent.executionId);
   if (execution === undefined || task === undefined) return null;
   const base = Object.freeze({
     projectId: intent.projectId,

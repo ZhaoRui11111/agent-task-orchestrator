@@ -144,12 +144,19 @@ test("the package exposes the local explicit-Manual Phase 2 product surface", ()
 });
 
 test("the product API has one current major while ato.execution/v1 stays independent", () => {
-  const cliSource = readFileSync(path.join(repoRoot, "src", "cli-api.ts"), "utf8");
+  const cliModelSource = readFileSync(path.join(repoRoot, "src", "cli-api-model.ts"), "utf8");
+  const cliSources = [
+    "cli-api-model.ts",
+    "cli-api-parser.ts",
+    "cli-api-presentation.ts",
+    "cli-api-runtime.ts",
+    "cli-api.ts",
+  ].map((relative) => readFileSync(path.join(repoRoot, "src", relative), "utf8")).join("\n");
   const indexSource = readFileSync(path.join(repoRoot, "src", "index.ts"), "utf8");
   const executionPortSource = readFileSync(path.join(repoRoot, "src", "execution-port.ts"), "utf8");
-  assert.match(cliSource, /CLI_API_VERSION\s*=\s*"ato\.api\/v1"/u);
+  assert.match(cliModelSource, /CLI_API_VERSION\s*=\s*"ato\.api\/v1"/u);
   assert.doesNotMatch(
-    `${cliSource}\n${indexSource}`,
+    `${cliSources}\n${indexSource}`,
     /ato\.api\/v2|CLI_API_V2_VERSION|PUBLIC_ERROR_TABLE_V2|PublicErrorCodeV2|AnyPublicErrorCode|V2_ONLY_COMMAND_SPECS|localPhase[12]ProductCliImplemented/u,
   );
   assert.match(executionPortSource, /ato\.execution\/v1/u);

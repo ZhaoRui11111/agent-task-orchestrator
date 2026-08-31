@@ -76,6 +76,12 @@ if (tsconfig.compilerOptions?.module !== "NodeNext" || tsconfig.compilerOptions?
 if (tsconfig.compilerOptions?.rewriteRelativeImportExtensions !== true) {
   failures.push("TypeScript source/package relative-extension parity drifted");
 }
+if (tsconfig.compilerOptions?.noUnusedLocals !== true || tsconfig.compilerOptions?.noUnusedParameters !== true) {
+  failures.push("TypeScript unused declaration enforcement drifted");
+}
+if (EXPECTED_PRODUCTION_SOURCE_FILES.length !== 43) {
+  failures.push("production source count drifted");
+}
 failures.push(
   ...productionBoundaryFailures(inventory, (relative) =>
     readFileSync(path.join(repoRoot, relative), "utf8"),

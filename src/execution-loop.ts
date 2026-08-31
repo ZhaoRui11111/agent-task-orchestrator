@@ -1,6 +1,5 @@
 import {
   evaluateAuthorization,
-  type AuthorizationAction,
   type AuthorizationEvaluation,
   type AuthorizationPolicyResult,
 } from "./authorization.ts";
@@ -42,7 +41,6 @@ import {
   type ExecutionInspectReceipt,
   type ExecutionInspectRequest,
   type ExecutionLifecycle,
-  type ExecutionPortResult,
   type ExecutionResumeRequest,
   type ExecutionSemanticIdentity,
   type ExecutionStartRequest,

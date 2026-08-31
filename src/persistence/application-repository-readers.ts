@@ -42,7 +42,6 @@ import type {
   ManualBackendTurnRecord,
   ManualBackendOperationRecord,
   ManualCompletionDecisionRecord,
-  AuthorizationGrantEpochLinkRecord,
   DispatcherTriggerRequestRecord,
   DispatcherAuthorizationDecisionRecord,
   DispatcherRunStatus,
@@ -60,14 +59,8 @@ import type {
   DispatcherMemberDenialDecisionRecord,
   DispatcherMemberDenialAuditRecord,
   DispatcherRunSummaryRecord,
-  ApplicationState,
-  NewGrantRecord,
-  NewLocalIdentityRecord,
-  NewCapabilityEpochRecord,
-  NewLifecycleAuthorizationRecord,
-  NewExecutionAttemptRecord,
 } from "./application-repository-model.ts";
-import { canonicalJson, exactRecord, isCanonicalUtcTimestamp, isNonemptyString, sha256 } from "./values.ts";
+import { canonicalJson, exactRecord, isCanonicalUtcTimestamp, isNonemptyString } from "./values.ts";
 
 type TargetKind = ApplicationRequestRecord["targetKind"];
 type RequestResult = ApplicationRequestRecord["result"];

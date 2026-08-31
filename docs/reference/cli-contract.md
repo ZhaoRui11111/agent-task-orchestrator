@@ -17,6 +17,14 @@ calls the existing dispatcher or reliable execution owner. The CLI does not open
 SQLite, parse SQL, copy Domain rules, inspect arbitrary files, or accept an actor
 or authority from command content.
 
+The stable `src/cli-api.ts` interface facade contains explicit exports only.
+Its physical model, parser, presentation, and runtime modules do not create new
+business owners: the parser owns pure grammar and pre-effect refusal, the
+presentation module owns bounded public mapping/rendering, and the runtime
+module alone selects trusted local ingress, opens/closes the product runtime,
+and performs a parsed command. `src/cli.ts` remains the byte-stable console
+entrypoint and contains no product judgment.
+
 This is a local single-user surface, not a released compatibility or
 platform-support promise. The sole current `ato.api/v1` exposes only the local
 explicit-Manual control/recovery subset documented below. It exposes no scheduler, scheduled

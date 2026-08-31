@@ -16,10 +16,16 @@ Manual-loop intents, authorization bindings, observations, verified receipts,
 finalizations, terminal facts and journal records; and bounded dispatcher run,
 reconciliation, membership, member-outcome and summary records. Lifecycle
 authorization uses only state-digest version 4.
-The application service orchestrates business owners in one
-transaction; persistence never selects a Domain command or grants authority.
-The CLI is only typed ingress, trusted local identity/confirmation setup,
-presentation, and public error mapping. A typed product facade derives the
+The application service orchestrates business owners in one transaction;
+persistence never selects a Domain command or grants authority. Its physical
+implementation is split into database-free model, input, policy, Domain
+coordination, and service modules behind one explicit `application.ts` facade;
+the service module remains the sole transaction-orchestration owner. The CLI
+is only typed ingress, trusted local identity/confirmation setup,
+presentation, and public error mapping. Its physical API implementation is
+split into model, parser, presentation, and runtime modules behind one
+explicit `cli-api.ts` facade; the runtime module alone opens and closes the
+product runtime or performs command effects. A typed product facade derives the
 current non-public Project/Task/execution/turn/intent/receipt/finalization tuple
 from current schema-version-1 state and composes the existing application, dispatcher, and
 reliable-loop owners. A separate typed execution application
@@ -77,7 +83,9 @@ The architecture separates:
   confirmation-bound capability upgrades, the reliable Manual operation
   protocol, reconciliation, verified interruption, and Manual completion
   acceptance. It depends on injected port/control interfaces, never a concrete
-  backend.
+  backend. The physical `application-model`, `application-input`,
+  `application-policy`, `application-domain`, and `application-service`
+  modules preserve that one semantic owner behind the stable facade.
 - `persistence`: the implemented SQLite runtime-root, connection, single
   current-baseline migration, combined schema-version-1 repository, transaction, lifecycle handoff,
   execution attempt/sequence, Manual-loop and dispatcher record storage,
@@ -97,7 +105,10 @@ The architecture separates:
   redacted product views.
 - `interfaces`: the implemented sole current `ato.api/v1` product CLI, plus a
   planned MCP surface; every business operation shares the
-  application layer or product facade.
+  application layer or product facade. The physical `cli-api-model`,
+  `cli-api-parser`, `cli-api-presentation`, and `cli-api-runtime` modules split
+  types, pure parsing, rendering/mapping, and effects without splitting this
+  interface ownership.
 
 Only the boundaries explicitly described above are implemented. In particular,
 the Manual adapter mutates only its persistence-owned local journal through a
@@ -116,7 +127,11 @@ runtime component.
   persistence, content, nor concrete adapters.
 - `application` orchestrates domain, ProjectRegistry, authorization, and
   persistence owners but does not copy Domain judgments or depend on concrete
-  adapters.
+  adapters. Within its physical family, model has no inward Application
+  dependency; input depends only on model; policy depends only on model and
+  input; Domain coordination depends only on model and policy; and service
+  composes exactly model, input, policy, and Domain coordination. No internal
+  module imports the facade.
 - `persistence` depends inward on `domain`, owns SQLite/filesystem storage
   mechanics and typed application records, and neither invokes authorization
   policy nor performs external Project effects.
@@ -131,7 +146,11 @@ runtime component.
   persistence readback, never on CLI parsing or presentation; it neither
   selects Domain transitions nor reimplements authorization/reconciliation.
 - `interfaces` call the application layer or product facade, and `observability`
-  consumes structured events without becoming a state owner.
+  consumes structured events without becoming a state owner. Within the CLI
+  API family, model has no internal dependency, parser and presentation each
+  depend only on model, and runtime composes exactly model, parser, and
+  presentation. Parser and presentation do not import each other, and no
+  internal module imports the facade.
 
 The exact behavior behind these boundaries belongs to the
 [contract ownership inventory](docs/reference/contract-ownership.md). Domain

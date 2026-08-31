@@ -11,7 +11,6 @@ import {
   openReadOnlyDatabase,
   runWriteTransaction,
   type SqliteDatabase,
-  sqliteInteger,
   verifyDatabaseIntegrity,
 } from "./database.ts";
 import { PersistenceError, persistenceFailure } from "./errors.ts";

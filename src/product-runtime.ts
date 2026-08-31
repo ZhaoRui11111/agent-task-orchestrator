@@ -17,7 +17,6 @@ import type {
 import {
   createReliableExecutionService,
   type ExecutionLoopCancelCommand,
-  type ExecutionLoopInspectCommand,
   type ExecutionLoopResumeCommand,
   type ManualCompletionCommand,
   type ManualOutcomeCommand,

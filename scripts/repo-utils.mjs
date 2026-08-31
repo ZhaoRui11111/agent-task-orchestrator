@@ -19,8 +19,17 @@ export const taskArtifactsRoot = path.join(repoRoot, ".task-artifacts");
 const ownedGenerationReceipts = new Map();
 
 export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
+  "src/application-domain.ts",
+  "src/application-input.ts",
+  "src/application-model.ts",
+  "src/application-policy.ts",
+  "src/application-service.ts",
   "src/application.ts",
   "src/authorization.ts",
+  "src/cli-api-model.ts",
+  "src/cli-api-parser.ts",
+  "src/cli-api-presentation.ts",
+  "src/cli-api-runtime.ts",
   "src/cli-api.ts",
   "src/cli.ts",
   "src/dispatcher-application.ts",
@@ -67,6 +76,15 @@ const ALLOWED_PERSISTENCE_BUILTINS = new Set([
   "node:sqlite",
   "node:url",
 ]);
+
+export const EXPECTED_CLI_NODE_BUILTINS = Object.freeze({
+  "src/cli-api-model.ts": Object.freeze([]),
+  "src/cli-api-parser.ts": Object.freeze(["node:path"]),
+  "src/cli-api-presentation.ts": Object.freeze([]),
+  "src/cli-api-runtime.ts": Object.freeze(["node:crypto"]),
+  "src/cli-api.ts": Object.freeze([]),
+  "src/cli.ts": Object.freeze(["node:path", "node:url"]),
+});
 
 export const EXPECTED_PACKAGE_SCRIPTS = Object.freeze({
   build: "tsc -p tsconfig.json",
@@ -144,12 +162,17 @@ export function productionBoundaryFailures(inventory, readSource) {
       ...source.matchAll(/\bimport\s*["'](node:[^"']+)["']/gu),
       ...source.matchAll(/\bimport\s*\(\s*["'](node:[^"']+)["']\s*\)/gu),
     ].map((match) => match[1]);
+    const expectedCliBuiltins = EXPECTED_CLI_NODE_BUILTINS[relative];
+    if (expectedCliBuiltins !== undefined &&
+      JSON.stringify([...builtins].sort()) !== JSON.stringify(expectedCliBuiltins)) {
+      failures.push(`${relative}: CLI Node built-in mapping drifted`);
+    }
     for (const builtin of builtins) {
-    const registryBuiltin = relative === "src/project-registry.ts" && (builtin === "node:fs" || builtin === "node:path");
-    const cliBuiltin = (relative === "src/cli.ts" || relative === "src/cli-api.ts") &&
-      (builtin === "node:crypto" || builtin === "node:path" || builtin === "node:url");
-    const manualAdapterBuiltin = relative === "src/manual-execution-backend.ts" && builtin === "node:crypto";
-    if (!relative.startsWith("src/persistence/") && !registryBuiltin && !cliBuiltin && !manualAdapterBuiltin) {
+      const registryBuiltin = relative === "src/project-registry.ts" &&
+        (builtin === "node:fs" || builtin === "node:path");
+      const cliBuiltin = expectedCliBuiltins?.includes(builtin) === true;
+      const manualAdapterBuiltin = relative === "src/manual-execution-backend.ts" && builtin === "node:crypto";
+      if (!relative.startsWith("src/persistence/") && !registryBuiltin && !cliBuiltin && !manualAdapterBuiltin) {
         failures.push(`${relative}: Node built-in escaped the persistence owner boundary`);
       } else if (!ALLOWED_PERSISTENCE_BUILTINS.has(builtin)) {
         failures.push(`${relative}: undeclared persistence built-in ${builtin}`);

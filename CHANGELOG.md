@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Decomposed the Application and CLI API combination files into exact acyclic
+  model/input/policy/Domain/service and model/parser/presentation/runtime
+  module families behind their stable explicit facades. The service and CLI
+  runtime remain the sole transaction/effect owners; the 33-command,
+  37-error `ato.api/v1` surface, package/console behavior, authorization and
+  persistence semantics remain unchanged. TypeScript now enforces unused
+  locals and parameters natively, with no compatibility or suppression layer.
 - Decomposed the combined application persistence repository into database-free
   model, per-table reader, digest, combined-state, lifecycle, and transaction
   modules behind one explicit re-export facade. The application family still

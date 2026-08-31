@@ -21,6 +21,12 @@ The repository uses:
 - TypeScript `5.9.3` as the only development dependency, with no production
   dependencies.
 
+The TypeScript configuration keeps strict checking and natively enables both
+`noUnusedLocals` and `noUnusedParameters`. Repository lint verifies those
+options remain enabled; unused declarations or imports must be removed at
+their owner rather than hidden by dummy reads, renaming, suppression, or broad
+exports.
+
 `pnpm-lock.yaml` is required and must resolve that exact TypeScript version
 with registry integrity metadata. Dependency lifecycle scripts are disabled
 for installation and are prohibited in this package. Automatic dependency
@@ -128,16 +134,41 @@ wildcard. The `ato` console is the local Phase 1 and explicit-Manual Phase 2
 product CLI defined by the
 [CLI/API contract](cli-contract.md).
 
-Production source is limited to `src/index.ts`, `src/domain.ts`, `src/cli.ts`,
-`src/cli-api.ts`, `src/project-registry.ts`, `src/authorization.ts`,
-`src/application.ts`, `src/execution-application.ts`, `src/execution-port.ts`,
-`src/execution-loop.ts`, `src/manual-execution-backend.ts`,
-`src/dispatcher-application.ts`, `src/dispatcher.ts`, the narrow built-in
-declarations in `src/node-builtins.d.ts`, `src/product-runtime.ts`, and
-`src/persistence/`. `node:sqlite`
-is confined to the persistence owner; `node:crypto` is used only for bounded
-Manual receipt integrity and existing identity/digest owners. The package has
-no production dependency and must not acquire a scheduler, MCP,
+Production source is exactly these 43 files:
+
+- `src/index.ts`, `src/domain.ts`, `src/cli.ts`, `src/cli-api.ts`,
+  `src/cli-api-model.ts`, `src/cli-api-parser.ts`,
+  `src/cli-api-presentation.ts`, `src/cli-api-runtime.ts`,
+  `src/project-registry.ts`, and `src/authorization.ts`;
+- `src/application.ts`, `src/application-model.ts`,
+  `src/application-input.ts`, `src/application-policy.ts`,
+  `src/application-domain.ts`, `src/application-service.ts`,
+  `src/execution-application.ts`, `src/execution-port.ts`,
+  `src/execution-loop.ts`, `src/manual-execution-backend.ts`,
+  `src/dispatcher-application.ts`, `src/dispatcher.ts`,
+  `src/node-builtins.d.ts`, and `src/product-runtime.ts`;
+- `src/persistence/application-repository.ts`,
+  `src/persistence/application-repository-model.ts`,
+  `src/persistence/application-repository-readers.ts`,
+  `src/persistence/application-repository-digest.ts`,
+  `src/persistence/application-repository-state.ts`,
+  `src/persistence/application-repository-lifecycle.ts`,
+  `src/persistence/application-repository-transaction.ts`,
+  `src/persistence/backup.ts`, `src/persistence/database.ts`,
+  `src/persistence/doctor.ts`, `src/persistence/errors.ts`,
+  `src/persistence/index.ts`, `src/persistence/local-ingress.ts`,
+  `src/persistence/manual-backend-repository.ts`,
+  `src/persistence/migrations.ts`, `src/persistence/repository.ts`,
+  `src/persistence/runtime.ts`, `src/persistence/store.ts`, and
+  `src/persistence/values.ts`.
+
+`node:sqlite` is confined to the persistence owner. Within the CLI entrypoint
+and API family, `src/cli.ts` imports exactly `node:path` and `node:url`, the
+parser imports exactly `node:path`, the runtime imports exactly `node:crypto`,
+and the model, presentation, and facade import no Node built-in. Other existing
+identity, digest, Manual-integrity, filesystem, and SQLite owners retain their
+narrow declarations; no shared CLI-family or wildcard built-in exception is
+allowed. The package has no production dependency and must not acquire a scheduler, MCP,
 Codex/Git/workspace adapter, ProjectPolicy, CompletionBackend/gates, daemon, or
 external-effect orchestrator as part of this boundary. The Fake backend remains
 test-only and absent from the packed inventory.

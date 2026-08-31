@@ -69,10 +69,6 @@ const MIGRATION_SOURCES = Object.freeze([
 let cachedRegistry: readonly MigrationDescriptor[] | undefined;
 const FINGERPRINT_COLUMNS = Object.freeze(["type", "name", "tbl_name", "sql"] as const);
 
-function compareStrings(left: string, right: string): number {
-  return left < right ? -1 : left > right ? 1 : 0;
-}
-
 function migrationUrl(fileName: string): URL {
   return new URL(`../../migrations/${fileName}`, import.meta.url);
 }

@@ -259,6 +259,26 @@ function runPhase2CliBoundary(entryPath, label, runtimeRoot, projectRoot, cwd, e
 const expectedEntries = [
   "package/LICENSE",
   "package/README.md",
+  "package/dist/application-domain.d.ts",
+  "package/dist/application-domain.d.ts.map",
+  "package/dist/application-domain.js",
+  "package/dist/application-domain.js.map",
+  "package/dist/application-input.d.ts",
+  "package/dist/application-input.d.ts.map",
+  "package/dist/application-input.js",
+  "package/dist/application-input.js.map",
+  "package/dist/application-model.d.ts",
+  "package/dist/application-model.d.ts.map",
+  "package/dist/application-model.js",
+  "package/dist/application-model.js.map",
+  "package/dist/application-policy.d.ts",
+  "package/dist/application-policy.d.ts.map",
+  "package/dist/application-policy.js",
+  "package/dist/application-policy.js.map",
+  "package/dist/application-service.d.ts",
+  "package/dist/application-service.d.ts.map",
+  "package/dist/application-service.js",
+  "package/dist/application-service.js.map",
   "package/dist/application.d.ts",
   "package/dist/application.d.ts.map",
   "package/dist/application.js",
@@ -267,6 +287,22 @@ const expectedEntries = [
   "package/dist/authorization.d.ts.map",
   "package/dist/authorization.js",
   "package/dist/authorization.js.map",
+  "package/dist/cli-api-model.d.ts",
+  "package/dist/cli-api-model.d.ts.map",
+  "package/dist/cli-api-model.js",
+  "package/dist/cli-api-model.js.map",
+  "package/dist/cli-api-parser.d.ts",
+  "package/dist/cli-api-parser.d.ts.map",
+  "package/dist/cli-api-parser.js",
+  "package/dist/cli-api-parser.js.map",
+  "package/dist/cli-api-presentation.d.ts",
+  "package/dist/cli-api-presentation.d.ts.map",
+  "package/dist/cli-api-presentation.js",
+  "package/dist/cli-api-presentation.js.map",
+  "package/dist/cli-api-runtime.d.ts",
+  "package/dist/cli-api-runtime.d.ts.map",
+  "package/dist/cli-api-runtime.js",
+  "package/dist/cli-api-runtime.js.map",
   "package/dist/cli-api.d.ts",
   "package/dist/cli-api.d.ts.map",
   "package/dist/cli-api.js",
@@ -395,6 +431,8 @@ const expectedEntries = [
   "package/package.json",
 ].sort();
 
+invariant(expectedEntries.length === 172, `packed expected inventory count drifted: ${expectedEntries.length}`);
+
 const packageManagerVersion = pnpm(["--version"], repoRoot).stdout.trim();
 invariant(packageManagerVersion === "11.19.0", `pnpm version drifted: ${packageManagerVersion}`);
 
@@ -460,11 +498,25 @@ export async function resolve(specifier, context, nextResolve) {
     ),
     "packed declarations retain an obsolete backup or restore format surface",
   );
-  const cliDeclarations = readFileSync(path.join(repoRoot, "dist", "cli-api.d.ts"), "utf8");
+  const cliFacadeDeclarations = readFileSync(path.join(repoRoot, "dist", "cli-api.d.ts"), "utf8");
+  const cliModelDeclarations = readFileSync(path.join(repoRoot, "dist", "cli-api-model.d.ts"), "utf8");
+  const cliDeclarations = [
+    "cli-api-model.d.ts",
+    "cli-api-parser.d.ts",
+    "cli-api-presentation.d.ts",
+    "cli-api-runtime.d.ts",
+    "cli-api.d.ts",
+  ].map((relative) => readFileSync(path.join(repoRoot, "dist", relative), "utf8")).join("\n");
   const indexDeclarations = readFileSync(path.join(repoRoot, "dist", "index.d.ts"), "utf8");
-  invariant(cliDeclarations.includes('CLI_API_VERSION: "ato.api/v1"'), "current CLI API declaration is absent");
-  invariant(cliDeclarations.includes("PUBLIC_ERROR_TABLE"), "current public error table declaration is absent");
-  invariant(cliDeclarations.includes("export type PublicErrorCode"), "current public error type declaration is absent");
+  invariant(
+    cliFacadeDeclarations.includes("CLI_API_VERSION") &&
+      cliFacadeDeclarations.includes("PUBLIC_ERROR_TABLE") &&
+      cliFacadeDeclarations.includes('from "./cli-api-model.ts"'),
+    "current CLI facade declaration exports are absent",
+  );
+  invariant(cliModelDeclarations.includes('CLI_API_VERSION: "ato.api/v1"'), "current CLI API declaration is absent");
+  invariant(cliModelDeclarations.includes("PUBLIC_ERROR_TABLE"), "current public error table declaration is absent");
+  invariant(cliModelDeclarations.includes("export type PublicErrorCode"), "current public error type declaration is absent");
   invariant(
     !/ato\.api\/v2|CLI_API_V2_VERSION|PUBLIC_ERROR_TABLE_V2|PublicErrorCodeV2|AnyPublicErrorCode/u.test(
       `${cliDeclarations}\n${indexDeclarations}`,

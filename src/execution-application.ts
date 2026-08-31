@@ -23,7 +23,6 @@ import {
   type AuthorizationDecisionRecord,
   type ExecutionAttempt,
   type RegisteredProject,
-  type TaskExecutionSequence,
 } from "./persistence/application-repository.ts";
 import { PersistenceError } from "./persistence/errors.ts";
 import type { PersistenceStore } from "./persistence/store.ts";
