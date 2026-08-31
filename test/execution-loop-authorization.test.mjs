@@ -159,21 +159,24 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
       const currentEpochId = state.epochs.at(-1)?.epochId;
       assert.ok(currentEpochId);
       assert.equal(inspection.prepare(
-        "SELECT count(*) AS count FROM authorization_grant_epoch_v6_links WHERE capability_epoch_id=?",
-      ).get(currentEpochId).count, PHASE2A_AUTHORIZATION_ACTIONS.length);
-      assert.equal(inspection.prepare(
-        "SELECT count(*) AS count FROM authorization_grants_v6 WHERE capability_epoch_id=?",
-      ).get(currentEpochId).count, EP02B_ACTIONS.length);
+        "SELECT count(*) AS count FROM authorization_grants WHERE capability_epoch_id=?",
+      ).get(currentEpochId).count, PHASE2B_AUTHORIZATION_ACTIONS.length);
       assert.equal(inspection.prepare(
         `SELECT count(*) AS count
-         FROM authorization_grant_epoch_v6_links AS epoch_link
-         JOIN authorization_grants AS grant_record
-           ON grant_record.grant_id=epoch_link.grant_id AND grant_record.action=epoch_link.action
-         WHERE epoch_link.capability_epoch_id=?
-           AND grant_record.capability_epoch_id IS NULL
-           AND grant_record.issuer_grant_id IS NULL
-           AND grant_record.source_grant_id IS NULL`,
-      ).get(currentEpochId).count, PHASE2A_AUTHORIZATION_ACTIONS.length);
+         FROM authorization_grants
+         WHERE capability_epoch_id=?
+           AND issuer_grant_id IS NULL
+           AND source_grant_id IS NULL`,
+      ).get(currentEpochId).count, PHASE2B_AUTHORIZATION_ACTIONS.length);
+      assert.deepEqual(inspection.prepare(
+        `SELECT name FROM sqlite_schema
+         WHERE name IN (
+           'authorization_capability_epochs_v6', 'authorization_capability_epochs_v7',
+           'authorization_grants_v6', 'authorization_grants_v7',
+           'authorization_grant_epoch_v6_links', 'authorization_grant_epoch_v7_legacy_links',
+           'authorization_grant_epoch_v7_v6_links'
+         ) ORDER BY name`,
+      ).all(), []);
       assert.deepEqual(inspection.prepare("PRAGMA foreign_key_check").all(), []);
     } finally {
       inspection.close();
@@ -205,60 +208,59 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
   }
 });
 
-const vocabularySixCorruptions = Object.freeze([
+const currentGrantCorruptions = Object.freeze([
   Object.freeze({
-    name: "an existing action stored in authorization_grants_v6",
+    name: "a missing current Manual action",
     mutate(database) {
-      database.exec("DROP TRIGGER authorization_grants_v6_revoke_only");
-      assert.throws(
-        () => database.prepare(
-          "UPDATE authorization_grants_v6 SET action='runtime.status' WHERE action='execution.start'",
-        ).run(),
-      );
-      database.exec("PRAGMA ignore_check_constraints=ON");
+      database.exec("DROP TRIGGER authorization_grants_no_delete");
       assert.equal(database.prepare(
-        "UPDATE authorization_grants_v6 SET action='runtime.status' WHERE action='execution.start'",
-      ).run().changes, 1);
-      database.exec("PRAGMA ignore_check_constraints=OFF");
-    },
-  }),
-  Object.freeze({
-    name: "a missing vocabulary-6 Manual action",
-    mutate(database) {
-      database.exec("DROP TRIGGER authorization_grants_v6_no_delete");
-      assert.equal(database.prepare(
-        "DELETE FROM authorization_grants_v6 WHERE action='execution.start'",
+        "DELETE FROM authorization_grants WHERE action='execution.start'",
       ).run().changes, 1);
     },
   }),
   Object.freeze({
-    name: "a cross-table duplicate authorization grant id",
+    name: "a missing direct capability epoch relation",
     mutate(database) {
-      const insertDuplicate = () => database.prepare(
-        `INSERT INTO authorization_grants_v6(
-          grant_id, revision, actor_id, action, scope_kind, scope_project_id,
-          scope_resource_revision, scope_config_revision, not_before, expires_at,
-          revoked_at, issuer_grant_id, source_grant_id, capability_epoch_id,
-          created_request_id, revoked_request_id
-        )
-        SELECT grant_id, revision, actor_id, 'execution.start', scope_kind, scope_project_id,
-          scope_resource_revision, scope_config_revision, not_before, expires_at,
-          revoked_at, issuer_grant_id, source_grant_id, NULL,
-          created_request_id, revoked_request_id
-        FROM authorization_grants ORDER BY grant_id LIMIT 1`,
-      ).run();
-      assert.throws(insertDuplicate, /authorization grant identifiers must be globally unique/);
-      database.exec("DROP TRIGGER authorization_grants_v6_global_id_guard");
-      assert.equal(insertDuplicate().changes, 1);
+      database.exec("DROP TRIGGER authorization_grants_revoke_only");
+      assert.equal(database.prepare(
+        "UPDATE authorization_grants SET capability_epoch_id=NULL WHERE action='execution.start'",
+      ).run().changes, 1);
     },
   }),
 ]);
 
-for (const corruption of vocabularySixCorruptions) {
-  test(`schema-v6 decoder rejects ${corruption.name}`, async () => {
-    const fixture = createPersistenceFixture(`execution-v6-corrupt-${corruption.name.replaceAll(" ", "-")}`);
+test("current schema rejects a duplicated action in one capability epoch", async () => {
+  const fixture = createPersistenceFixture("execution-current-duplicate-action");
+  try {
+    await seedVocabularySix(fixture, "execution-current-duplicate-action");
+    const database = new DatabaseSync(fixture.layout.databasePath);
     try {
-      await seedVocabularySix(fixture, `execution-v6-corrupt-${corruption.name.replaceAll(" ", "-")}`);
+      database.exec("PRAGMA foreign_keys=ON");
+      assert.throws(
+        () => database.exec(`
+          INSERT INTO authorization_grants
+          SELECT grant_id || '-duplicate', revision, actor_id, action, scope_kind, scope_project_id,
+            scope_resource_revision, scope_config_revision, not_before, expires_at, revoked_at,
+            issuer_grant_id, source_grant_id, capability_epoch_id, created_request_id, revoked_request_id
+          FROM authorization_grants
+          WHERE action='execution.start' AND capability_epoch_id IS NOT NULL
+        `),
+        /UNIQUE constraint failed: authorization_grants\.capability_epoch_id, authorization_grants\.action/u,
+      );
+      assert.doesNotThrow(() => readApplicationState(database));
+    } finally {
+      database.close();
+    }
+  } finally {
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+for (const corruption of currentGrantCorruptions) {
+  test(`current decoder rejects ${corruption.name}`, async () => {
+    const fixture = createPersistenceFixture(`execution-current-corrupt-${corruption.name.replaceAll(" ", "-")}`);
+    try {
+      await seedVocabularySix(fixture, `execution-current-corrupt-${corruption.name.replaceAll(" ", "-")}`);
       const database = new DatabaseSync(fixture.layout.databasePath);
       try {
         database.exec("PRAGMA foreign_keys=ON");

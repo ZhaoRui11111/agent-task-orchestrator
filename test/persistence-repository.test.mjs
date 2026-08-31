@@ -287,14 +287,12 @@ test("decoder rejects a wrong SQLite storage class at its sole ingress", async (
   const database = new DatabaseSync(":memory:");
   try {
     const registry = loadMigrationRegistry();
-    const metadataSql = registry[0].sql;
-    const storageSql = registry[1].sql.replaceAll(" STRICT;", ";");
+    const storageSql = registry[0].sql.replaceAll(" STRICT;", ";");
     database.exec("PRAGMA foreign_keys=ON");
-    database.exec(metadataSql);
     database.exec(storageSql);
     database
       .prepare(
-        "INSERT INTO schema_metadata(singleton, schema_version, domain_initialized, registry_identity, schema_fingerprint, updated_at) VALUES (1, 2, 0, ?, ?, 'test')",
+        "INSERT INTO schema_metadata(singleton, schema_version, domain_initialized, registry_identity, schema_fingerprint, updated_at) VALUES (1, 1, 0, ?, ?, 'test')",
       )
       .run("0".repeat(64), "0".repeat(64));
     initializeDomainSnapshot(database, fullDomainSnapshot());
@@ -334,7 +332,7 @@ test("foreign-key failure rolls back the complete transaction", async () => {
   }
 });
 
-test("authoritative v3 open refuses an incomplete consumed request relation", async () => {
+test("current open refuses an incomplete consumed request relation", async () => {
   const fixture = createPersistenceFixture("application-corrupt-relation");
   let store;
   try {
@@ -359,7 +357,7 @@ test("authoritative v3 open refuses an incomplete consumed request relation", as
   }
 });
 
-test("authoritative v3 decoder refuses unknown action and malformed canonical audit details", async () => {
+test("current decoder refuses unknown action and malformed canonical audit details", async () => {
   for (const corruption of ["action", "details"]) {
     const fixture = createPersistenceFixture(`application-corrupt-${corruption}`);
     let store;

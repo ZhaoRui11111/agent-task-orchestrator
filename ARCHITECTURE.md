@@ -7,27 +7,21 @@ executable toolchain and feasibility harness, a pure in-memory TypeScript
 Domain Core, a filesystem-identity ProjectRegistry, a finite local runtime
 authorization owner, a typed Project/Task/dependency application service, a
 local SQLite persistence foundation, the closed local Phase 1 product, and an
-explicit-Manual local Phase 2 product through `ato.api/v2`. Schema versions `1`
-through `7` own metadata, exact Domain snapshots,
-ProjectRegistry, local identity and authorization epochs, grants, requests,
-authorization decisions, lifecycle coordination, and append-only application
-audit; schema `5` additionally owns ordered execution attempts, one active
-execution per Task, lease state, per-Task fencing, and claim idempotency/CAS.
-Schema `6` adds only the reliable Manual-loop authorization lineage,
-operation requests/decisions/audit, semantic intents and their immutable
-prepare/act/finalize authorization-binding chain, ordered observations,
-verified receipts, finalizations, execution terminal facts, a durable Manual
- turn/operation journal, and Manual completion decisions. Schema `7` adds only
- vocabulary-7 authorization lineage, lifecycle-digest provenance version 4,
- and bounded explicit-Manual dispatcher records for trigger decisions, run
- ownership/heartbeat, reconciliation, immutable candidate membership, member
- outcomes, and completeness-gated summaries.
+explicit-Manual local Phase 2 product through `ato.api/v2`. One immutable
+schema-version-1 baseline directly owns metadata and exact Domain snapshots;
+ProjectRegistry; local identity; vocabulary-4-through-7 epochs and grants;
+requests, authorization decisions, lifecycle authorizations and append-only
+audit; ordered execution attempts, lease state and per-Task fencing; reliable
+Manual-loop intents, authorization bindings, observations, verified receipts,
+finalizations, terminal facts and journal records; and bounded dispatcher run,
+reconciliation, membership, member-outcome and summary records. Lifecycle
+authorization uses only state-digest version 4.
 The application service orchestrates business owners in one
 transaction; persistence never selects a Domain command or grants authority.
 The CLI is only typed ingress, trusted local identity/confirmation setup,
 presentation, and public error mapping. A typed product facade derives the
 current non-public Project/Task/execution/turn/intent/receipt/finalization tuple
-from schema-v7 state and composes the existing application, dispatcher, and
+from current schema-version-1 state and composes the existing application, dispatcher, and
 reliable-loop owners. A separate typed execution application
 service retains claim, inspection, and renewal. The typed
 `ReliableExecutionLoop` owns prepare/execute/observe/verify/finalize and
@@ -84,8 +78,8 @@ The architecture separates:
   protocol, reconciliation, verified interruption, and Manual completion
   acceptance. It depends on injected port/control interfaces, never a concrete
   backend.
-- `persistence`: the implemented SQLite runtime-root, connection, staged
-  migration, combined schema-v7 repository, transaction, lifecycle handoff,
+- `persistence`: the implemented SQLite runtime-root, connection, single
+  current-baseline migration, combined schema-version-1 repository, transaction, lifecycle handoff,
   execution attempt/sequence, Manual-loop and dispatcher record storage,
   backup, restore, read-only doctor, and typed-corruption owner; later records
   are added only by their implementing phase.

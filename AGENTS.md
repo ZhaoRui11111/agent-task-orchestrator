@@ -25,9 +25,10 @@ restore, and read-only doctor surfaces are implemented for local
 Project/Task/dependency management. The application owner alone selects Domain
 commands, evaluates current explicit grants, and coordinates accepted
 snapshot/registry/grant/decision/audit/lifecycle commits; persistence still
-neither authorizes nor selects a Domain mutation. Schema v7 and the typed
-execution owners implement atomic claims, ordered attempts, leases, per-Task
-fencing, explicit vocabulary-6 upgrade, the corrected `ato.execution/v1` port,
+neither authorizes nor selects a Domain mutation. The single current
+schema-version-1 baseline and the typed execution owners implement atomic
+claims, ordered attempts, leases, per-Task fencing, explicit
+confirmation-bound vocabulary upgrades, the corrected `ato.execution/v1` port,
 one durable local Manual backend journal, and the ordered
 intent/observation/verified-receipt/finalization protocol for start, inspect,
 resume, retry, cancellation, trusted Manual outcome reporting, reconciliation,
@@ -40,7 +41,7 @@ completeness-gated durable summary. The explicit `ato.api/v2` surface preserves
 exposes Manual dispatch, durable execution inspection/recovery/cancellation,
 trusted Manual outcome reporting, and separately confirmed completion
 acceptance through one typed product facade. That facade derives non-public
-execution tuples from schema-v7 state and composes the existing owners; the CLI
+execution tuples from current schema-version-1 state and composes the existing owners; the CLI
 owns only typed ingress, trusted identity/confirmation plumbing, presentation,
 and fixed public error mapping. Adapter work remains
 outside writer transactions, turn success alone never completes a Task, lease
@@ -59,7 +60,7 @@ executable entry points, the [domain contract](docs/reference/domain-contract.md
 for Domain Core behavior, the
 [authorization contract](docs/reference/authorization-contract.md) for the
 current finite local grant model, and the
-[persistence contract](docs/reference/persistence-contract.md) for the staged
+[persistence contract](docs/reference/persistence-contract.md) for the current
 schema and storage/recovery boundary. The
 [reliability protocol](docs/reference/reliability-protocol.md) owns the current
 claim/lease/fence, Manual effect, and dispatcher fan-out protocol. The

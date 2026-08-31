@@ -82,7 +82,7 @@ are the outcome. Claim/takeover reuse returns that persisted outcome only when
 the complete applicable tuple and actor match; otherwise it is an integrity
 conflict.
 
-Schema-v6 Manual-loop intents bind their operation kind and action, Project
+Current Manual-loop intents bind their operation kind and action, Project
 resource/config revisions, Task/input revision, execution revision, attempt and
 fence, local Manual policy binding, adapter/contract versions,
 `workspace_mode=none`, authorization binding, requested deadline, and every
@@ -141,7 +141,7 @@ winner. No adapter call occurs in that transaction; a later explicit
   decision from a worker carries its execution ID and fencing token. A value
   lower than or different from the current token is rejected before mutation.
 
-The schema-v5 effect-free takeover shortcut is unavailable when schema-v6 state
+The direct effect-free takeover shortcut is unavailable when reliable-loop state
 contains an unfinished intent, Manual journal operation, or terminal evidence.
 The typed claim service returns `RECONCILIATION_REQUIRED`; the Manual loop first
 performs authorized independent inspection and persists the result. Only a
@@ -166,7 +166,7 @@ current state is reconciled explicitly.
 
 ## Intent, receipt, verification, and finalization
 
-Schema v6 implements this section for the local Manual execution loop. Other
+The local Manual execution loop implements this section. Other
 adapters, publication, workspace, completion gates, and dispatcher fan-out do
 not inherit that evidence.
 
@@ -306,7 +306,7 @@ successful finalization.
 
 ## Observable fan-out
 
-Schema v7 implements this section for the explicit-Manual dispatcher. The
+The explicit-Manual dispatcher implements this section. The
 reliable Manual loop remains the sole owner of each claimed
 member's adapter effect and receipt/finalization path; the dispatcher owns only
 ordering, durable run recovery, and complete member accounting.

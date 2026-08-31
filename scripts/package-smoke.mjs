@@ -244,7 +244,7 @@ function runPhase2CliBoundary(entryPath, label, runtimeRoot, projectRoot, cwd, e
   const normalizedHuman = human.stdout.replaceAll(completionReplay.body.result.executionId, "<executionId>");
 
   const finalState = readCliBoundaryState(entryPath, runtimeRoot, environment, nodeArgs);
-  invariant(finalState.schemaVersion === 7, `${label} CLI schema drifted`);
+  invariant(finalState.schemaVersion === 1, `${label} CLI schema drifted`);
   invariant(finalState.task?.state === "completed", `${label} CLI Task did not complete`);
   invariant(finalState.completionDecisionCount === 1, `${label} CLI completion replay duplicated a decision`);
   invariant(finalState.dispatcherRunCount === 1, `${label} CLI dispatch replay duplicated a run`);
@@ -367,13 +367,7 @@ const expectedEntries = [
   "package/dist/project-registry.d.ts.map",
   "package/dist/project-registry.js",
   "package/dist/project-registry.js.map",
-  "package/migrations/0001-persistence-metadata.sql",
-  "package/migrations/0002-phase1-task-storage.sql",
-  "package/migrations/0003-phase1-application.sql",
-  "package/migrations/0004-phase1-cli.sql",
-  "package/migrations/0005-phase2-execution-claim.sql",
-  "package/migrations/0006-phase2-manual-execution.sql",
-  "package/migrations/0007-phase2-dispatcher.sql",
+  "package/migrations/0001-current-baseline.sql",
   "package/package.json",
 ].sort();
 
@@ -731,7 +725,7 @@ void productRuntime;
       imported.claim === true &&
       imported.manual === true &&
       imported.dispatcherExport === true &&
-      imported.schema === 7 &&
+      imported.schema === 1 &&
       imported.backup === true,
     "package export Domain Core, persistence registry, or capability status drifted",
   );

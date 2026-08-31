@@ -18,8 +18,6 @@ import { readApplicationStateForOwner } from "../src/persistence/application-rep
 import {
   cleanupPersistenceFixture,
   createPersistenceFixture,
-  createVersionThreeDatabase,
-  createVersionTwoDatabase,
 } from "./persistence-test-helpers.mjs";
 
 const TEST_PRINCIPAL_SHA256 = "A".repeat(64);
@@ -274,7 +272,6 @@ test("trusted bootstrap and authorized Project/Task commands share one durable a
     assert.equal(state.identity.actorId, "local-actor");
     assert.equal(state.identity.principalSha256, TEST_PRINCIPAL_SHA256);
     assert.equal(state.identity.bootstrapRequestId, state.bootstrap.requestId);
-    assert.equal(state.identity.adoptionRequestId, state.bootstrap.requestId);
     await store.close();
     store = undefined;
 
@@ -392,50 +389,25 @@ test("finite capability renewal is append-only, due-bounded, revocation-aware, a
   }
 });
 
-test("a migrated v3 bootstrap is adopted once without rewriting historical actor or grants", async () => {
-  const fixture = createPersistenceFixture("application-v3-adoption");
+test("fresh bootstrap advances through each confirmed capability vocabulary exactly once", async () => {
+  const fixture = createPersistenceFixture("application-fresh-upgrades");
   let store;
   try {
-    createVersionThreeDatabase(fixture.layout);
-    store = await openPersistence(fixture.layout, { applicationVersion: "v3-adoption" });
-    const before = readApplicationStateForOwner(store);
-    assert.equal(before.bootstrap.vocabularyVersion, 3);
-    assert.equal(before.bootstrap.actorId, "legacy-v3-owner");
-    assert.equal(before.identity, null);
-    assert.equal(before.grants.length, 15);
-
+    store = await openPersistence(fixture.layout, { applicationVersion: "fresh-upgrades" });
     const trusted = mutableAuthorizationIngress();
     const service = createApplicationService(store, trusted);
-    const closedBeforeAdoption = service.execute({ kind: "runtime.status" });
-    assert.equal(closedBeforeAdoption.ok, false);
-    assert.equal(closedBeforeAdoption.error.code, "AUTHORIZATION_DENIED");
-    assert.deepEqual(readApplicationStateForOwner(store), before);
-
-    const adopted = service.renew({
-      kind: "authorization.capability.renew",
+    const initialized = service.bootstrap({
+      kind: "authorization.bootstrap",
       expiresAt: "2026-09-20T12:00:00.000Z",
     });
-    assert.equal(adopted.ok, true);
-    assert.deepEqual(adopted.value, {
-      mode: "adopted",
-      expiresAt: "2026-09-20T12:00:00.000Z",
-      capabilityCount: 19,
-      epochRevision: 1,
-    });
+    assert.equal(initialized.ok, true);
     let state = readApplicationStateForOwner(store);
-    assert.equal(state.bootstrap.actorId, "legacy-v3-owner");
-    assert.equal(state.bootstrap.trustedPrincipal, "legacy-v3-principal");
+    assert.equal(state.bootstrap.vocabularyVersion, 4);
     assert.equal(state.identity.actorId, "owner");
     assert.equal(state.identity.principalSha256, TEST_PRINCIPAL_SHA256);
     assert.equal(state.identity.bootstrapRequestId, state.bootstrap.requestId);
-    assert.equal(state.identity.adoptionRequestId, state.epochs[0].requestId);
-    assert.equal(state.grants.filter((grant) => grant.actorId === "legacy-v3-owner").length, 15);
     assert.equal(state.grants.filter((grant) => grant.actorId === "owner").length, 19);
     assert.equal(service.execute({ kind: "runtime.status" }).ok, true);
-    assert.equal(service.renew({
-      kind: "authorization.capability.renew",
-      expiresAt: "2026-09-21T12:00:00.000Z",
-    }).error.code, "CAPABILITY_RENEWAL_NOT_DUE");
 
     const upgraded = service.upgrade({
       kind: "authorization.capability.upgrade",
@@ -443,15 +415,14 @@ test("a migrated v3 bootstrap is adopted once without rewriting historical actor
     });
     assert.equal(upgraded.ok, true);
     assert.equal(upgraded.value.mode, "upgraded");
-    assert.equal(upgraded.value.epochRevision, 2);
+    assert.equal(upgraded.value.epochRevision, 1);
     assert.equal(upgraded.value.capabilityCount, PHASE2A_AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
-    assert.equal(state.bootstrap.vocabularyVersion, 3);
-    assert.equal(state.bootstrap.actorId, "legacy-v3-owner");
-    assert.equal(state.epochs.length, 2);
+    assert.equal(state.bootstrap.vocabularyVersion, 4);
+    assert.equal(state.bootstrap.actorId, "owner");
+    assert.equal(state.epochs.length, 1);
     assert.equal(state.epochs.at(-1)?.vocabularyVersion, 5);
-    assert.equal(state.grants.filter((grant) => grant.actorId === "legacy-v3-owner").length, 15);
-    assert.equal(state.grants.length, 15 + 19 + PHASE2A_AUTHORIZATION_ACTIONS.length);
+    assert.equal(state.grants.length, 19 + PHASE2A_AUTHORIZATION_ACTIONS.length);
     assert.equal(
       PHASE2A_AUTHORIZATION_ACTIONS.every((action) => state.grants.some(
         (grant) => grant.actorId === "owner" && grant.action === action && grant.revokedAt === null,
@@ -464,12 +435,12 @@ test("a migrated v3 bootstrap is adopted once without rewriting historical actor
     });
     assert.equal(manualUpgraded.ok, true);
     assert.equal(manualUpgraded.value.mode, "upgraded");
-    assert.equal(manualUpgraded.value.epochRevision, 3);
+    assert.equal(manualUpgraded.value.epochRevision, 2);
     assert.equal(manualUpgraded.value.capabilityCount, PHASE2B_AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
-    assert.equal(state.epochs.length, 3);
+    assert.equal(state.epochs.length, 2);
     assert.equal(state.epochs.at(-1)?.vocabularyVersion, 6);
-    assert.equal(state.grants.length, 15 + 19 + PHASE2A_AUTHORIZATION_ACTIONS.length + PHASE2B_AUTHORIZATION_ACTIONS.length);
+    assert.equal(state.grants.length, 19 + PHASE2A_AUTHORIZATION_ACTIONS.length + PHASE2B_AUTHORIZATION_ACTIONS.length);
     assert.equal(state.grants.some(
       (grant) => grant.actorId === "owner" && grant.action === "execution.completion.accept" && grant.revokedAt === null,
     ), true);
@@ -478,7 +449,7 @@ test("a migrated v3 bootstrap is adopted once without rewriting historical actor
       expiresAt: "2026-09-24T12:00:00.000Z",
     });
     assert.equal(dispatcherUpgraded.ok, true);
-    assert.equal(dispatcherUpgraded.value.epochRevision, 4);
+    assert.equal(dispatcherUpgraded.value.epochRevision, 3);
     assert.equal(dispatcherUpgraded.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
     assert.equal(state.epochs.at(-1)?.vocabularyVersion, 7);
@@ -491,7 +462,7 @@ test("a migrated v3 bootstrap is adopted once without rewriting historical actor
     }).error.code, "CAPABILITY_UPGRADE_NOT_ELIGIBLE");
 
     await store.close();
-    store = await openPersistence(fixture.layout, { applicationVersion: "v3-adoption-restart" });
+    store = await openPersistence(fixture.layout, { applicationVersion: "fresh-upgrades-restart" });
     state = readApplicationStateForOwner(store);
     assert.equal(state.identity.actorId, "owner");
     assert.equal(state.epochs.at(-1)?.vocabularyVersion, 7);
@@ -1271,42 +1242,41 @@ test("ProjectRegistry rejects duplicate local identity and duplicate canonical r
   }
 });
 
-test("v2 Domain Project upgrade binds the legacy identity through ProjectRegistry without duplication", async () => {
-  const fixture = createPersistenceFixture("application-v2-project-binding");
+test("fresh ProjectRegistry preserves opaque Project and Task identifiers without duplication", async () => {
+  const fixture = createPersistenceFixture("application-fresh-project-binding");
   let store;
   try {
-    const legacyProjectId = `研发 项目 ${"p".repeat(140)}`;
+    const opaqueProjectId = `研发 项目 ${"p".repeat(140)}`;
     const opaqueTaskId = `任务 one ${"t".repeat(140)}`;
-    createVersionTwoDatabase(fixture.layout, "legacy-v2", legacyProjectId);
-    store = await openPersistence(fixture.layout, { applicationVersion: "registry-v3" });
+    store = await openPersistence(fixture.layout, { applicationVersion: "registry-current" });
     const service = createApplicationService(store, ingress());
     assert.equal(service.bootstrap({ kind: "authorization.bootstrap", expiresAt: "2026-09-20T12:00:00.000Z" }).ok, true);
     const registered = service.execute({
       kind: "project.register",
-      projectId: legacyProjectId,
+      projectId: opaqueProjectId,
       root: fixture.projectRoot,
     });
     assert.equal(registered.ok, true);
     const created = service.execute({
       kind: "task.create",
-      projectId: legacyProjectId,
+      projectId: opaqueProjectId,
       expectedProjectResourceRevision: 1,
       taskId: opaqueTaskId,
-      body: "opaque identifiers survive the v2-to-v3 binding",
+      body: "opaque identifiers survive the fresh registry binding",
       supersedesTaskId: null,
     });
     assert.equal(created.ok, true);
     const inspected = service.execute({
       kind: "task.inspect",
-      projectId: legacyProjectId,
+      projectId: opaqueProjectId,
       expectedProjectResourceRevision: 1,
       taskId: opaqueTaskId,
       expectedTaskRevision: 1,
     });
     assert.equal(inspected.ok, true);
     const state = readApplicationStateForOwner(store);
-    assert.deepEqual(state.domain.projects, [{ id: legacyProjectId, enabled: true }]);
-    assert.deepEqual(state.projects.map((project) => project.projectId), [legacyProjectId]);
+    assert.deepEqual(state.domain.projects, [{ id: opaqueProjectId, enabled: true }]);
+    assert.deepEqual(state.projects.map((project) => project.projectId), [opaqueProjectId]);
     assert.deepEqual(state.domain.tasks.map((task) => task.id), [opaqueTaskId]);
     assert.equal(state.requests.at(-1).targetId, opaqueTaskId);
     assert.equal(state.audit.at(-1).targetId, opaqueTaskId);

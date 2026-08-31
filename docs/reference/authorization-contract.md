@@ -6,8 +6,8 @@ This document is the normative owner of the implemented local runtime
 authorization model through the explicit `ato.api/v2` Manual product facade
 and reconcile-first Manual dispatcher. The implementation is deliberately
 limited to the local Phase 1 application and lifecycle surfaces, four
-database-local execution claim/lease actions, six schema-v6 Manual-loop
-actions, and one schema-v7 dispatcher action. It
+database-local execution claim/lease actions, six vocabulary-6 Manual-loop
+actions, and one vocabulary-7 dispatcher action. It
 is not an operating-system
 account system, team identity service, RBAC product, cloud identity provider,
 or authorization for development and external actions.
@@ -128,7 +128,7 @@ implemented local trust-root transitions but are deliberately non-grantable.
 
 ## One-time bootstrap
 
-A fresh schema-v7 runtime has no grants. Exactly once, a trusted local caller
+A fresh current schema-version-1 runtime has no grants. Exactly once, a trusted local caller
 may invoke `authorization.bootstrap` with a finite expiry no more than 31 days
 after the trusted ingress time. Bootstrap requires a separate high-risk
 confirmation and atomically:
@@ -153,7 +153,7 @@ Bootstrap is a local trust-root ceremony, not a default administrator role.
 The fixed initial grants expire and can be revoked. There is no environment
 override, self-authorizing content, hidden fallback grant, or second bootstrap.
 
-## Local identity adoption, upgrade, and capability epochs
+## Local identity, upgrade, renewal, and capability epochs
 
 `authorization.capability.renew` is a non-grantable local trust-root
 maintenance transition. It is not part of the grantable vocabulary and
@@ -161,14 +161,10 @@ cannot be delegated. It requires the exact current OS-derived identity,
 runtime-root identity, a fresh named confirmation, a finite expiry more than
 seven and no more than 31 days ahead, and one atomic terminal readback.
 
-An upgraded schema-v3 bootstrap must be adopted through that transition before
-any ordinary command. Adoption preserves the immutable legacy bootstrap and
-grants as history, establishes the schema-v4 local identity, and appends the
-first immutable capability epoch plus nineteen new origin grants. A native
-schema-v4, schema-v5, schema-v6, or schema-v7 bootstrap already establishes local identity
-and needs no adoption. Native schema-v7 bootstrap still establishes a
-vocabulary-4 bootstrap and only the nineteen Phase 1 origin grants; it creates
-no capability epoch.
+Fresh bootstrap establishes the immutable local identity, a vocabulary-4
+bootstrap and only the nineteen Phase 1 origin grants. It creates no capability
+epoch and no later-vocabulary authority. There is no identity-adoption mode or
+historical-schema transition.
 
 `authorization.capability.upgrade` is the only transition that creates a newer
 execution vocabulary. It is non-grantable and requires the exact current
@@ -186,17 +182,16 @@ readiness, ordinary grant issue, and renewal cannot substitute for either
 ceremony. Repetition or concurrent lineage change fails without a partial epoch
 or grant set.
 
-After adoption or native bootstrap, renewal is eligible only when the current
+After bootstrap, renewal is eligible only when the current
 origin expires within seven days or has expired. Revocation of any still-current
 origin grant blocks early renewal; revocation is not a shortcut to replace a
 capability. Each accepted renewal appends a contiguous positive epoch revision,
 the exact vocabulary/version digest, a request/decision/audit unit, and one new
 finite origin grant for every action in the already-current vocabulary:
 nineteen for vocabulary 4, twenty-three for vocabulary 5, twenty-nine for
-vocabulary 6, or thirty for vocabulary 7. A vocabulary-7 epoch is physically
-partitioned as twenty-three linked legacy grants, six linked v6 grants, and one
-v7 `dispatch.run` grant; global grant IDs and the exact epoch action set remain
-one logical inventory. Renewal never changes a vocabulary version. Previous epochs and
+vocabulary 6, or thirty for vocabulary 7. Every epoch and current origin grant
+uses the single `authorization_capability_epochs` and `authorization_grants`
+relations with direct `capability_epoch_id` provenance. Renewal never changes a vocabulary version. Previous epochs and
 grants remain immutable history.
 Concurrent state or epoch changes fail atomically as stale.
 
@@ -213,7 +208,7 @@ Every grant has these semantic fields:
 - nullable `issuerGrantId`, `sourceGrantId`, and `capabilityEpochId` in one
   exclusive provenance shape: all three null for fixed bootstrap grants;
   non-null issuer/source with a null epoch for delegated grants; or a non-null
-  immutable epoch with null issuer/source for renewed/adopted origin grants.
+  immutable epoch with null issuer/source for renewed or upgraded origin grants.
 
 A grant is usable only for the trusted actor, exact action, exact scope, exact
 current Project revisions, and time interval `notBefore <= now < expiresAt`,
@@ -262,7 +257,7 @@ ingress after a matching grant is found:
 - `runtime.restore`
 - `execution.completion.accept`
 
-Capability adoption/renewal and each capability upgrade also require a fresh
+Capability renewal and each capability upgrade also require a fresh
 high-risk confirmation even though they are deliberately not grantable actions.
 The trusted Manual outcome ingress separately requires a fresh named
 `manual.turn.report` confirmation after a current exact `execution.inspect`
@@ -435,8 +430,8 @@ exact newly allocated lifecycle authorization ID; operation/generation matching
 is never used as a non-unique substitute, including on a retry.
 
 For restore, application evaluation and this durable handoff precede backup
-inventory or selected-generation verification. Revoked, expired, missing, and
-pre-adoption authority therefore receives the same denial for valid, absent, or
+inventory or selected-generation verification. Revoked, expired, or missing
+current authority therefore receives the same denial for valid, absent, or
 corrupt generation material.
 
 The persistence owner accepts only that closed typed handoff. It re-decodes the

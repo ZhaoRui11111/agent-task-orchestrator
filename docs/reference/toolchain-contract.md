@@ -113,14 +113,14 @@ The package-root library export exposes a truthful capability status, the pure
 TypeScript Domain Core, ProjectRegistry identity owner, finite authorization
 owner, typed Phase 1 and claim application services, the pure execution port
   kit, production local Manual backend/control, reliable execution loop,
-reconcile-first Manual dispatcher, typed local product facade, schema-v7
+reconcile-first Manual dispatcher, typed local product facade, current schema-version-1
 persistence foundation, local lifecycle surfaces, and versioned product CLI
 API. The packed inventory includes the
-immutable SQL files under `migrations/`. The source and compiled migration
-registry consume either a uniform LF or CRLF transport of those files and
-reconstruct the same frozen per-migration canonical bytes before checksum
+single immutable SQL file under `migrations/`. The source and compiled migration
+registry consume either a uniform LF or CRLF transport of that file and
+reconstruct the same frozen canonical bytes before checksum
 verification and execution. `.gitattributes` declares an explicit historical
-checkout EOL for every shipped migration; a future migration requires its own
+checkout EOL for the shipped baseline; a future migration requires its own
 reviewed registry identity and per-file attribute rather than inheriting a
 wildcard. The `ato` console is the local Phase 1 and explicit-Manual Phase 2
 product CLI defined by the
@@ -150,7 +150,7 @@ The following package scripts are the public local entry points:
 | `pnpm typecheck` | Strict TypeScript checking without output |
 | `pnpm build` | Produce the ESM package and declarations |
 | `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop/dispatcher/product-facade atomicity and security, port/adapter contracts, crash/restart recovery, persistence, versioned CLI, doctor, and real local feasibility contracts |
-| `pnpm test:persistence` | Run the targeted schema-v7 migration, repository/decoder, Manual journal/evidence, dispatcher, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
+| `pnpm test:persistence` | Run the targeted current schema-version-1 baseline, repository/decoder, Manual journal/evidence, dispatcher, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
 | `pnpm docs:check` | Resolve exact-case repository-relative Markdown links, validate same-file and cross-file heading fragments, and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |
 | `pnpm package:smoke` | Pack and consume the declared package boundary offline |

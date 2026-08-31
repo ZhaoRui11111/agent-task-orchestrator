@@ -15,7 +15,7 @@ successful narrow check does not waive another applicable route.
 | Documentation or governance | Repository documentation gate, including exact-case local targets and same-file/cross-file fragments, plus authority review and capability-truthfulness review |
 | Domain or state machine | Targeted unit tests plus property/state-machine tests for legal and illegal histories |
 | ProjectRegistry or application service | Canonical path/identity and revision negatives, typed command/query parity with Domain, accepted/denied atomicity, restart readback, concurrent writers, injected failure, and public-boundary tests |
-| Persistence, schema, migration, backup, restore, or doctor | Targeted repository tests, fresh/upgrade/downgrade matrix, canonical migration identity from uniform LF and CRLF transports, malformed/mixed-EOL pre-mutation refusal, concurrent-reader/writer tests, read-only diagnostic tests, and interruption or corruption recovery |
+| Persistence, schema, migration, backup, restore, or doctor | Targeted repository tests, exact fresh-baseline and incompatible/noncurrent refusal matrix, canonical migration identity from uniform LF and CRLF transports, malformed/mixed-EOL pre-mutation refusal, concurrent-reader/writer tests, read-only diagnostic tests, and interruption or corruption recovery |
 | Dispatcher, publication, lease, or recovery | Contract tests, competing-worker tests, fencing and CAS tests, and failpoint recovery at every durable transition |
 | Adapter or external side effect | Shared adapter contract suite plus E2E on every platform/API combination for which support will be claimed |
 | CLI, MCP, or another public interface | Schema and negative-input tests plus application-service parity tests proving there is no second business-rule implementation |
@@ -82,8 +82,9 @@ current entry points are owned by the
 [toolchain contract](toolchain-contract.md), targeted Domain Core unit/seeded
 state-machine/dependency-direction tests, ProjectRegistry path/identity tests,
 finite authorization and application Domain-parity/atomicity tests, and
-targeted persistence tests for schema v7, migrations from every shipped prefix,
-frozen canonical checksums from LF and CRLF checkout transports, malformed
+targeted persistence tests for the sole current schema-version-1 baseline,
+incompatible/noncurrent refusal before mutation, its frozen canonical checksum
+from LF and CRLF checkout transports, malformed
 migration-source refusal before SQLite mutation, exact combined repository
 mapping, concurrent reader/writer behavior, runtime-root negatives, lifecycle
 authorization, backup, restore, read-only doctor, typed corruption, and

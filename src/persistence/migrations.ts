@@ -40,14 +40,12 @@ export interface SchemaEvidence {
 }
 
 export interface MigrationResult extends SchemaEvidence {
-  readonly migratedFrom: number;
+  readonly createdFresh: boolean;
   readonly appliedVersions: readonly number[];
-  readonly preUpgradeBackupGeneration: string | null;
 }
 
 export interface MigrationOptions {
   readonly applicationVersion: string;
-  readonly beforeUpgrade?: (evidence: SchemaEvidence) => Promise<string>;
 }
 
 interface MigrationSource {
@@ -61,52 +59,10 @@ interface MigrationSource {
 const MIGRATION_SOURCES = Object.freeze([
   Object.freeze({
     version: 1,
-    id: "persistence-metadata",
-    fileName: "0001-persistence-metadata.sql",
-    canonicalLineEnding: "crlf",
-    checksumSha256: "E31C5A3D24E4DB99620635A9CE83F752978C5FD2AF7A15C84CE13BEECAC9C34F",
-  }),
-  Object.freeze({
-    version: 2,
-    id: "phase1-task-storage",
-    fileName: "0002-phase1-task-storage.sql",
-    canonicalLineEnding: "crlf",
-    checksumSha256: "0FC2DEECBC8ABBA31F9E5063A870706320F66C5AEE882E4A05DA0CADCF9CEC7E",
-  }),
-  Object.freeze({
-    version: 3,
-    id: "phase1-application",
-    fileName: "0003-phase1-application.sql",
-    canonicalLineEnding: "crlf",
-    checksumSha256: "58D428B10198B7483ECB6CED2F88D8DA81A97B052CF650ED4CD012D7183F0702",
-  }),
-  Object.freeze({
-    version: 4,
-    id: "phase1-product-cli",
-    fileName: "0004-phase1-cli.sql",
+    id: "current-baseline",
+    fileName: "0001-current-baseline.sql",
     canonicalLineEnding: "lf",
-    checksumSha256: "3446455B4A49C2339EC22E6B99FFF5DD43908D0BEB45EFCE099A79D732CF6557",
-  }),
-  Object.freeze({
-    version: 5,
-    id: "phase2-execution-claim",
-    fileName: "0005-phase2-execution-claim.sql",
-    canonicalLineEnding: "lf",
-    checksumSha256: "27AB1730F5A56A2127479C02570068E6BA1CA3DB565147FB0325AAA412CD5C81",
-  }),
-  Object.freeze({
-    version: 6,
-    id: "phase2-manual-execution",
-    fileName: "0006-phase2-manual-execution.sql",
-    canonicalLineEnding: "lf",
-    checksumSha256: "3D27258B3C9FB4B11B56B989CA2F341CB4DC68C96168D864D3763D93A4799153",
-  }),
-  Object.freeze({
-    version: 7,
-    id: "phase2-dispatcher",
-    fileName: "0007-phase2-dispatcher.sql",
-    canonicalLineEnding: "lf",
-    checksumSha256: "7AB43795AE91C9825E6851393C690144246AFCD14D00C916D978AA708F387987",
+    checksumSha256: "EF756403D6D03EF73208326B0234991CBC4189372121474E6AD97C11BA70F6BD",
   }),
 ] satisfies readonly MigrationSource[]);
 
@@ -168,6 +124,9 @@ export function canonicalizeMigrationSqlForTesting(version: number, bytes: Uint8
 }
 
 function validateRegistry(registry: readonly MigrationDescriptor[]): void {
+  if (registry.length !== 1) {
+    throw persistenceFailure("MIGRATION_HISTORY_MISMATCH", "Migration registry must contain exactly one current baseline");
+  }
   const ids = new Set<string>();
   const checksums = new Set<string>();
   for (const [index, migration] of registry.entries()) {
@@ -200,16 +159,11 @@ export function loadMigrationRegistry(): readonly MigrationDescriptor[] {
   return cachedRegistry;
 }
 
-export function migrationRegistryIdentity(
-  registry: readonly MigrationDescriptor[],
-  version: number = registry.length,
-): string {
-  if (!Number.isSafeInteger(version) || version < 1 || version > registry.length) {
-    throw persistenceFailure("SCHEMA_UNSUPPORTED", "Schema version has no registry prefix", { version });
-  }
+export function migrationRegistryIdentity(registry: readonly MigrationDescriptor[]): string {
+  validateRegistry(registry);
   return sha256(
     canonicalJson(
-      registry.slice(0, version).map((migration) => ({
+      registry.map((migration) => ({
         checksumSha256: migration.checksumSha256,
         id: migration.id,
         version: migration.version,
@@ -239,10 +193,10 @@ export function liveSchemaFingerprint(database: SqliteDatabase): string {
   return sha256(canonicalJson(schemaRows(database)));
 }
 
-function expectedSchemaFingerprint(registry: readonly MigrationDescriptor[], version: number): string {
+function expectedSchemaFingerprint(registry: readonly MigrationDescriptor[]): string {
   const database = new DatabaseSync(":memory:");
   try {
-    for (const migration of registry.slice(0, version)) database.exec(migration.sql);
+    database.exec(registry[0]!.sql);
     return liveSchemaFingerprint(database);
   } finally {
     database.close();
@@ -281,6 +235,7 @@ export function inspectSchemaEvidence(
   database: SqliteDatabase,
   registry: readonly MigrationDescriptor[] = loadMigrationRegistry(),
 ): SchemaEvidence {
+  validateRegistry(registry);
   const initial = emptySchemaEvidence(database);
   if (initial === null) return initial ?? Object.freeze({ schemaVersion: 0, registryIdentity: "", schemaFingerprint: "", history: Object.freeze([]) });
 
@@ -311,13 +266,13 @@ export function inspectSchemaEvidence(
   if (domainInitialized !== 0 && domainInitialized !== 1) {
     throw persistenceFailure("MIGRATION_HISTORY_MISMATCH", "Domain initialization marker is invalid");
   }
-  if (schemaVersion > registry.length) {
+  if (schemaVersion > 1) {
     throw persistenceFailure("SCHEMA_NEWER", "Database schema is newer than this binary", {
       databaseVersion: schemaVersion,
-      supportedVersion: registry.length,
+      supportedVersion: 1,
     });
   }
-  if (schemaVersion < 1) {
+  if (schemaVersion !== 1) {
     throw persistenceFailure("MIGRATION_HISTORY_MISMATCH", "Schema metadata version is invalid");
   }
   const registryIdentity = sqliteText(metadata.registry_identity, "schema_metadata.registry_identity");
@@ -333,8 +288,8 @@ export function inspectSchemaEvidence(
   ) {
     throw persistenceFailure("MIGRATION_HISTORY_MISMATCH", "PRAGMA user_version does not match schema metadata");
   }
-  if (historyRows.length !== schemaVersion) {
-    throw persistenceFailure("MIGRATION_HISTORY_MISMATCH", "Migration history length does not match schema version");
+  if (historyRows.length !== 1) {
+    throw persistenceFailure("MIGRATION_HISTORY_MISMATCH", "Migration history must contain the current baseline only");
   }
   const history: MigrationHistoryEntry[] = historyRows.map((row, index) => {
     const version = sqliteInteger(row.version, "migration_history.version");
@@ -344,7 +299,7 @@ export function inspectSchemaEvidence(
     const applicationVersion = sqliteText(row.application_version, "migration_history.application_version");
     const expected = registry[index];
     if (expected === undefined || version !== index + 1 || migrationId !== expected.id) {
-      throw persistenceFailure("MIGRATION_HISTORY_MISMATCH", "Migration history does not match the registry prefix", {
+      throw persistenceFailure("MIGRATION_HISTORY_MISMATCH", "Migration history does not match the current baseline", {
         version,
       });
     }
@@ -363,11 +318,11 @@ export function inspectSchemaEvidence(
   if (history.at(-1)?.appliedAt !== updatedAt) {
     throw persistenceFailure("MIGRATION_HISTORY_MISMATCH", "Schema metadata timestamp does not match history");
   }
-  const expectedRegistryIdentity = migrationRegistryIdentity(registry, schemaVersion);
+  const expectedRegistryIdentity = migrationRegistryIdentity(registry);
   if (registryIdentity !== expectedRegistryIdentity) {
     throw persistenceFailure("MIGRATION_HISTORY_MISMATCH", "Stored registry identity does not match history");
   }
-  const expectedFingerprint = expectedSchemaFingerprint(registry, schemaVersion);
+  const expectedFingerprint = expectedSchemaFingerprint(registry);
   const observedFingerprint = liveSchemaFingerprint(database);
   if (schemaFingerprint !== expectedFingerprint || observedFingerprint !== expectedFingerprint) {
     throw persistenceFailure("MIGRATION_HISTORY_MISMATCH", "Live schema does not match the migration registry");
@@ -381,7 +336,7 @@ export function inspectSchemaEvidence(
   });
 }
 
-function applyMigration(
+function applyCurrentBaseline(
   database: SqliteDatabase,
   registry: readonly MigrationDescriptor[],
   migration: MigrationDescriptor,
@@ -392,9 +347,9 @@ function applyMigration(
     database.exec("BEGIN IMMEDIATE");
     database.exec(migration.sql);
     const fingerprint = liveSchemaFingerprint(database);
-    const expectedFingerprint = expectedSchemaFingerprint(registry, migration.version);
+    const expectedFingerprint = expectedSchemaFingerprint(registry);
     if (fingerprint !== expectedFingerprint) {
-      throw persistenceFailure("MIGRATION_FAILED", "Migration schema postcondition did not match its registry prefix", {
+      throw persistenceFailure("MIGRATION_FAILED", "Current baseline schema postcondition did not match its registry", {
         version: migration.version,
       });
     }
@@ -403,20 +358,12 @@ function applyMigration(
         "INSERT INTO migration_history(version, migration_id, checksum_sha256, applied_at, application_version) VALUES (?, ?, ?, ?, ?)",
       )
       .run(migration.version, migration.id, migration.checksumSha256, appliedAt, applicationVersion);
-    const identity = migrationRegistryIdentity(registry, migration.version);
-    if (migration.version === 1) {
-      database
-        .prepare(
-          "INSERT INTO schema_metadata(singleton, schema_version, domain_initialized, registry_identity, schema_fingerprint, updated_at) VALUES (1, ?, 0, ?, ?, ?)",
-        )
-        .run(migration.version, identity, fingerprint, appliedAt);
-    } else {
-      database
-        .prepare(
-          "UPDATE schema_metadata SET schema_version = ?, registry_identity = ?, schema_fingerprint = ?, updated_at = ? WHERE singleton = 1",
-        )
-        .run(migration.version, identity, fingerprint, appliedAt);
-    }
+    const identity = migrationRegistryIdentity(registry);
+    database
+      .prepare(
+        "INSERT INTO schema_metadata(singleton, schema_version, domain_initialized, registry_identity, schema_fingerprint, updated_at) VALUES (1, 1, 0, ?, ?, ?)",
+      )
+      .run(identity, fingerprint, appliedAt);
     database.exec(`PRAGMA user_version=${migration.version}`);
     verifyDatabaseIntegrity(database);
     database.exec("COMMIT");
@@ -442,28 +389,18 @@ async function migrateDatabaseWithRegistry(
   }
   validateRegistry(registry);
   let evidence = inspectSchemaEvidence(database, registry);
-  const migratedFrom = evidence.schemaVersion;
-  let preUpgradeBackupGeneration: string | null = null;
-  if (migratedFrom > 0 && migratedFrom < registry.length) {
-    if (options.beforeUpgrade === undefined) {
-      throw persistenceFailure("MIGRATION_FAILED", "Existing schemas require a verified pre-upgrade backup");
-    }
-    preUpgradeBackupGeneration = await options.beforeUpgrade(evidence);
-    if (!isNonemptyString(preUpgradeBackupGeneration)) {
-      throw persistenceFailure("MIGRATION_FAILED", "Pre-upgrade backup did not return an immutable generation");
-    }
-  }
+  const createdFresh = evidence.schemaVersion === 0;
   const appliedVersions: number[] = [];
-  for (const migration of registry.slice(migratedFrom)) {
-    applyMigration(database, registry, migration, options.applicationVersion);
-    appliedVersions.push(migration.version);
+  if (createdFresh) {
+    const baseline = registry[0]!;
+    applyCurrentBaseline(database, registry, baseline, options.applicationVersion);
+    appliedVersions.push(1);
   }
   evidence = inspectSchemaEvidence(database, registry);
   return Object.freeze({
     ...evidence,
-    migratedFrom,
+    createdFresh,
     appliedVersions: Object.freeze(appliedVersions),
-    preUpgradeBackupGeneration,
   });
 }
 

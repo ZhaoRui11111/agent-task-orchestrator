@@ -5,7 +5,7 @@
 This file is the sole normative owner of port directions, current port
 identifiers and versions, operation shapes, receipt envelopes, and adapter
 error taxonomy. The package implements the pure `ato.execution/v1` contract
-kit, one production `manual-local` adapter backed by the schema-v6 local Manual
+kit, one production `manual-local` adapter backed by the current schema-version-1 local Manual
 journal, and its narrow `ato.manual-outcome-control/v1` control. The Fake
 backend is test-only and unexported. The Manual dispatcher composes that
 unchanged execution port and adds no adapter contract. The explicit

@@ -23,11 +23,9 @@ import {
   authorizeTestLifecycle,
   cleanupPersistenceFixture,
   createAuthorizedTestBackup,
+  createCurrentDatabase,
+  createIncompatibleDatabase,
   createPersistenceFixture,
-  createVersionOneDatabase,
-  createVersionThreeDatabase,
-  createVersionThreeDomainDatabase,
-  createVersionTwoDatabase,
 } from "./persistence-test-helpers.mjs";
 
 const TEST_PRINCIPAL_SHA256 = "A".repeat(64);
@@ -113,88 +111,55 @@ test("doctor classifies absent, partial, and unsafe runtime topology without cre
   }
 });
 
-test("doctor reports every shipped schema prefix and preserves exact v3 historical bytes", () => {
-  const cases = [
-    ["v1", createVersionOneDatabase, false, 1],
-    ["v2", createVersionTwoDatabase, false, 2],
-    ["v3-domain", (layout) => createVersionThreeDomainDatabase(layout, "doctor-v3-domain", "legacy-project"), false, 3],
-    ["v3-application", createVersionThreeDatabase, true, 3],
-  ];
-  for (const [label, create, initialized, version] of cases) {
-    const fixture = createPersistenceFixture(`doctor-${label}`);
-    try {
-      create(fixture.layout);
-      const before = snapshotTree(fixture.layout.root);
-      assert.deepEqual(doctor(fixture), {
-        health: "upgrade_required",
-        initialized,
-        schemaVersion: version,
-        activeUse: false,
-        backupInventory: "empty",
-        restoreState: "none",
-      });
-      assert.deepEqual(snapshotTree(fixture.layout.root), before);
-      const database = new DatabaseSync(fixture.layout.databasePath, { readOnly: true });
-      assert.equal(database.prepare("PRAGMA user_version").get().user_version, version);
-      database.close();
-    } finally {
-      cleanupPersistenceFixture(fixture);
-    }
-  }
-});
-
-test("doctor distinguishes schema-v4 Domain-only, pre-adoption, healthy, and active states", async () => {
-  const domainFixture = createPersistenceFixture("doctor-v4-domain");
-  const adoptionFixture = createPersistenceFixture("doctor-v4-preadoption");
-  const healthyFixture = createPersistenceFixture("doctor-v4-healthy");
-  let domainStore;
-  let adoptionStore;
-  let healthyStore;
+test("doctor distinguishes current uninitialized, active, and healthy state without mutation", async () => {
+  const fixture = createPersistenceFixture("doctor-current-state");
+  let store;
   try {
-    createVersionThreeDomainDatabase(domainFixture.layout, "doctor-v4-domain", "legacy-project");
-    domainStore = await openPersistence(domainFixture.layout, { applicationVersion: "doctor-v4-domain" });
-    await domainStore.close();
-    domainStore = undefined;
-    assert.deepEqual(doctor(domainFixture), {
+    createCurrentDatabase(fixture.layout, "doctor-current");
+    const before = snapshotTree(fixture.layout.root);
+    assert.deepEqual(doctor(fixture), {
       health: "not_initialized", initialized: false, schemaVersion: CURRENT_SCHEMA_VERSION, activeUse: false,
-      backupInventory: "valid", restoreState: "none",
+      backupInventory: "empty", restoreState: "none",
     });
+    assert.deepEqual(snapshotTree(fixture.layout.root), before);
 
-    createVersionThreeDatabase(adoptionFixture.layout);
-    adoptionStore = await openPersistence(adoptionFixture.layout, { applicationVersion: "doctor-v4-preadoption" });
-    await adoptionStore.close();
-    adoptionStore = undefined;
-    assert.deepEqual(doctor(adoptionFixture), {
-      health: "upgrade_required", initialized: true, schemaVersion: CURRENT_SCHEMA_VERSION, activeUse: false,
-      backupInventory: "valid", restoreState: "none",
-    });
-
-    healthyStore = await openPersistence(healthyFixture.layout, { applicationVersion: "doctor-v4-healthy" });
-    initialize(healthyStore);
-    assert.deepEqual(doctor(healthyFixture), {
+    store = await openPersistence(fixture.layout, { applicationVersion: "doctor-current-open" });
+    initialize(store);
+    assert.deepEqual(doctor(fixture), {
       health: "runtime_active", initialized: null, schemaVersion: null, activeUse: true,
       backupInventory: "empty", restoreState: "none",
     });
-    await healthyStore.close();
-    healthyStore = undefined;
-    assert.deepEqual(doctor(healthyFixture), {
+    await store.close();
+    store = undefined;
+    assert.deepEqual(doctor(fixture), {
       health: "healthy", initialized: true, schemaVersion: CURRENT_SCHEMA_VERSION, activeUse: false,
       backupInventory: "empty", restoreState: "none",
     });
   } finally {
-    if (domainStore) await domainStore.close();
-    if (adoptionStore) await adoptionStore.close();
-    if (healthyStore) await healthyStore.close();
-    cleanupPersistenceFixture(domainFixture);
-    cleanupPersistenceFixture(adoptionFixture);
-    cleanupPersistenceFixture(healthyFixture);
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
   }
 });
 
-test("doctor rejects partial schema-v3 application relations as corrupt", () => {
-  const fixture = createPersistenceFixture("doctor-v3-partial-application");
+test("doctor refuses a noncurrent nonempty database without changing its inventory", () => {
+  const fixture = createPersistenceFixture("doctor-incompatible-database");
   try {
-    createVersionThreeDomainDatabase(fixture.layout);
+    createIncompatibleDatabase(fixture.layout);
+    const before = snapshotTree(fixture.layout.root);
+    assert.deepEqual(doctor(fixture), {
+      health: "migration_invalid", initialized: null, schemaVersion: null, activeUse: false,
+      backupInventory: "empty", restoreState: "none",
+    });
+    assert.deepEqual(snapshotTree(fixture.layout.root), before);
+  } finally {
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("doctor rejects partial current application relations as corrupt", () => {
+  const fixture = createPersistenceFixture("doctor-current-partial-application");
+  try {
+    createCurrentDatabase(fixture.layout);
     const database = new DatabaseSync(fixture.layout.databasePath);
     database.prepare(
       `INSERT INTO application_requests(
@@ -205,29 +170,6 @@ test("doctor rejects partial schema-v3 application relations as corrupt", () => 
     ).run();
     database.close();
     assert.equal(doctor(fixture).health, "state_corrupt");
-  } finally {
-    cleanupPersistenceFixture(fixture);
-  }
-});
-
-test("doctor uses the shared schema-v3 application decoder and never classifies semantic corruption as upgradeable", () => {
-  const fixture = createPersistenceFixture("doctor-v3-semantic-corruption");
-  try {
-    createVersionThreeDatabase(
-      fixture.layout,
-      "doctor-corrupt-v3-application",
-      { inspectDecisionGrantMismatch: true },
-    );
-    const before = snapshotTree(fixture.layout.root);
-    assert.deepEqual(doctor(fixture), {
-      health: "state_corrupt",
-      initialized: null,
-      schemaVersion: 3,
-      activeUse: false,
-      backupInventory: "empty",
-      restoreState: "none",
-    });
-    assert.deepEqual(snapshotTree(fixture.layout.root), before);
   } finally {
     cleanupPersistenceFixture(fixture);
   }
@@ -255,7 +197,7 @@ test("doctor precedence distinguishes newer schema, migration drift, and corrupt
     });
 
     database = new DatabaseSync(migration.layout.databasePath);
-    database.prepare("UPDATE migration_history SET checksum_sha256=? WHERE version=2").run("0".repeat(64));
+    database.prepare("UPDATE migration_history SET checksum_sha256=? WHERE version=1").run("0".repeat(64));
     database.close();
     assert.equal(doctor(migration).health, "migration_invalid");
 

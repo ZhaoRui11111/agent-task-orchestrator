@@ -5,8 +5,6 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
   AUTHORIZATION_ACTIONS,
-  PHASE2A_AUTHORIZATION_ACTIONS,
-  PHASE2B_AUTHORIZATION_ACTIONS,
   createApplicationService,
   createDispatcherApplicationService,
   createManualDispatcher,
@@ -19,9 +17,7 @@ import {
   applicationStateSha256ForLifecycleAuthorization,
   readApplicationState,
   readApplicationStateForOwner,
-  versionSixApplicationStateSha256,
 } from "../src/persistence/application-repository.ts";
-import { canonicalJson, sha256 } from "../src/persistence/values.ts";
 import {
   cleanupPersistenceFixture,
   createPersistenceFixture,
@@ -196,16 +192,7 @@ test("schema migration and vocabulary six do not grant dispatch.run; only the co
       (link) => link.capabilityEpochId === upgradedEpochId,
     );
     assert.equal(upgradedLinks.length, AUTHORIZATION_ACTIONS.length);
-    assert.deepEqual(
-      Object.fromEntries(["legacy", "v6", "v7"].map((owner) => [
-        owner, upgradedLinks.filter((link) => link.physicalOwner === owner).length,
-      ])),
-      {
-        legacy: PHASE2A_AUTHORIZATION_ACTIONS.length,
-        v6: PHASE2B_AUTHORIZATION_ACTIONS.length - PHASE2A_AUTHORIZATION_ACTIONS.length,
-        v7: 1,
-      },
-    );
+    assert.deepEqual(upgradedLinks.map((link) => link.action).sort(), [...AUTHORIZATION_ACTIONS].sort());
 
     trusted.setNow("2026-08-30T12:00:05.000Z");
     const allowed = dispatcher.start({
@@ -249,51 +236,9 @@ test("schema migration and vocabulary six do not grant dispatch.run; only the co
       (link) => link.capabilityEpochId === state.epochs.at(-1).epochId,
     );
     assert.equal(renewedLinks.length, AUTHORIZATION_ACTIONS.length);
-    assert.deepEqual(
-      Object.fromEntries(["legacy", "v6", "v7"].map((owner) => [
-        owner, renewedLinks.filter((link) => link.physicalOwner === owner).length,
-      ])),
-      {
-        legacy: PHASE2A_AUTHORIZATION_ACTIONS.length,
-        v6: PHASE2B_AUTHORIZATION_ACTIONS.length - PHASE2A_AUTHORIZATION_ACTIONS.length,
-        v7: 1,
-      },
-    );
+    assert.deepEqual(renewedLinks.map((link) => link.action).sort(), [...AUTHORIZATION_ACTIONS].sort());
     assert.equal(state.dispatcherRuns.length, 1);
-    const vocabularySevenEpochIds = new Set(
-      state.epochs.filter((epoch) => epoch.vocabularyVersion === 7).map((epoch) => epoch.epochId),
-    );
-    const vocabularySevenGrantIds = new Set(state.authorizationGrantEpochLinks
-      .filter((link) => vocabularySevenEpochIds.has(link.capabilityEpochId))
-      .map((link) => link.grantId));
-    const phaseOneProjection = {
-      audit: state.audit,
-      bootstrap: state.bootstrap,
-      decisions: state.decisions,
-      domain: state.domain,
-      epochs: state.epochs.filter((epoch) => epoch.vocabularyVersion <= 6),
-      grants: state.grants.filter((grant) => !vocabularySevenGrantIds.has(grant.grantId)),
-      identity: state.identity,
-      registry: state.projects,
-      requests: state.requests,
-    };
-    assert.equal(versionSixApplicationStateSha256(state), sha256(canonicalJson({
-      ...phaseOneProjection,
-      executionSequences: state.executionSequences,
-      executions: state.executions,
-      executionAuthorizationDecisions: state.executionAuthorizationDecisions,
-      executionFinalizations: state.executionFinalizations,
-      executionTerminalStates: state.executionTerminalStates,
-      executionIntents: state.executionIntents,
-      executionIntentAuthorizationBindings: state.executionIntentAuthorizationBindings,
-      executionObservations: state.executionObservations,
-      executionOperationAudit: state.executionOperationAudit,
-      executionOperationRequests: state.executionOperationRequests,
-      executionReceipts: state.executionReceipts,
-      manualBackendOperations: state.manualBackendOperations,
-      manualCompletionDecisions: state.manualCompletionDecisions,
-      manualTurns: state.manualTurns,
-    })));
+    assert.match(applicationStateSha256(state), /^[0-9A-F]{64}$/u);
 
     const lifecycle = application.execute({
       kind: "runtime.backup", backupGenerationId: "22222222-2222-4222-8222-222222222222",

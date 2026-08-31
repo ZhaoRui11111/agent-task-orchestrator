@@ -1,8 +1,6 @@
 import {
   bindApplicationDatabase,
   readApplicationState,
-  readVersionFourApplicationState,
-  readVersionThreeApplicationState,
   unbindApplicationDatabase,
   type ApplicationLifecycleAuthorization,
 } from "./application-repository.ts";
@@ -23,17 +21,14 @@ import {
 } from "./database.ts";
 import { persistenceFailure } from "./errors.ts";
 import {
-  currentSchemaVersion,
   inspectSchemaEvidence,
   migrateDatabase,
   type MigrationResult,
 } from "./migrations.ts";
-import { readDomainSnapshot } from "./repository.ts";
 import {
   assertConnectionReceiptHeld,
   assertRuntimeLayout,
   createConnectionReceipt,
-  ensureNoConnectionReceipts,
   hasRestoreIntent,
   listConnectionReceiptNames,
   PRIMARY_RUNTIME_MEMBER_NAMES,
@@ -78,10 +73,7 @@ function inspectBeforeWritableOpen(layout: RuntimeLayout): number | null {
   try {
     const evidence = inspectSchemaEvidence(database);
     verifyDatabaseIntegrity(database);
-    if (evidence.schemaVersion >= 5) readApplicationState(database);
-    else if (evidence.schemaVersion === 4) readVersionFourApplicationState(database);
-    else if (evidence.schemaVersion === 3) readVersionThreeApplicationState(database);
-    else if (evidence.schemaVersion >= 2) readDomainSnapshot(database);
+    readApplicationState(database);
     return evidence.schemaVersion;
   } finally {
     database.close();
@@ -225,7 +217,6 @@ export async function openPersistence(
 ): Promise<PersistenceStore> {
   assertRuntimeLayout(layout);
   const options = parseOpenOptions(optionsInput);
-  const targetSchemaVersion = currentSchemaVersion();
   return withLifecycleLock(layout, "open", async (token) => {
     if (hasRestoreIntent(layout)) {
       throw persistenceFailure("RESTORE_RECOVERY_REQUIRED", "Pending restore intent blocks normal open");
@@ -236,8 +227,6 @@ export async function openPersistence(
       if (receiptNames.length !== 0) {
         throw persistenceFailure("ACTIVE_CONNECTIONS", "Connection receipts block first initialization");
       }
-    } else if (existingVersion < targetSchemaVersion) {
-      ensureNoConnectionReceipts(layout);
     }
 
     assertRuntimeLayout(layout);
@@ -247,17 +236,6 @@ export async function openPersistence(
     try {
       const migration = await migrateDatabase(database, {
         applicationVersion: options.applicationVersion,
-        beforeUpgrade: async () => {
-          ensureNoConnectionReceipts(layout);
-          const generation = await createBackupUnderLock(
-            database,
-            layout,
-            options.applicationVersion,
-            "pre_upgrade",
-            token,
-          );
-          return generation.generationId;
-        },
       });
       verifyDatabaseIntegrity(database);
       readApplicationState(database);

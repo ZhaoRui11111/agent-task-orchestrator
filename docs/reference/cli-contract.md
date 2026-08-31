@@ -130,7 +130,7 @@ reasons, or authorize a reader, schema, migration, or data rewrite.
 
 ## Confirmation and authorization experience
 
-`init`, capability renewal/adoption, grant issue, grant revoke, Project register,
+`init`, capability renewal, grant issue, grant revoke, Project register,
 Project update, Project disable, and restore require the exact current phrase in
 the command table. Restore additionally requires the exact data-loss phrase.
 Phrases are case-sensitive, request-local values bound by trusted local ingress;
@@ -175,7 +175,7 @@ Success objects have these closed shapes and field order:
 - `status`: `initialized`, `schemaVersion`, `projectCount`, `taskCount`,
   `dependencyCount`, `grantCount`, `auditCount`.
 - `init` and `authorization.renew`: `mode`, `expiresAt`, `capabilityCount`,
-  `epochRevision`; mode is `initialized`, `adopted`, or `renewed` as applicable.
+  `epochRevision`; mode is `initialized` or `renewed` as applicable.
 - `authorization.list`: `grants`, `nextCursor`. `authorization.show`,
   `authorization.issue`, and `authorization.revoke`: `grant`.
 - A grant has `grantId`, `revision`, `action`, `scopeKind`, `projectId`,
@@ -262,7 +262,7 @@ package. It does not create a release or support claim. Unknown fields remain
 rejected; changing a field's meaning, requiredness, error meaning, authorization,
 or state effect requires a new API major under the
 [versioning contract](versioning-compatibility-contract.md#public-api-evolution).
-Schema v7 and the package-root claim/Manual execution services do not extend
+The current schema-version-1 package-root claim/Manual execution services do not extend
 this command tree. In particular, the CLI cannot upgrade to, issue, evaluate,
 claim, start, inspect, report, resume, retry, cancel, complete, renew, or take
 over an execution capability. `task.cancel` also cannot bypass an active
@@ -332,7 +332,7 @@ confirmed contiguous vocabulary transition (`4` to `5`, `5` to `6`, or `6` to
 `7`) and never dispatches work. Migration and renewal never upgrade a
 vocabulary.
 
-The product facade reads the current schema-v7 state, validates the complete
+The product facade reads the current schema-version-1 state, validates the complete
 caller CAS tuple, derives backend/thread/input/policy/deadline/observation,
 receipt, and finalization data, then invokes the existing owner. `dispatch.run`
 and `dispatch.resume` invoke only the reconcile-first Manual dispatcher; the

@@ -9,7 +9,6 @@ import { readApplicationStateForOwner } from "../src/persistence/application-rep
 import {
   cleanupPersistenceFixture,
   createPersistenceFixture,
-  createVersionThreeDatabase,
 } from "./persistence-test-helpers.mjs";
 
 const TEST_PRINCIPAL_SHA256 = "A".repeat(64);
@@ -131,33 +130,6 @@ for (const stage of renewalStages) {
         expiresAt: "2026-09-20T12:00:00.000Z",
       }), (error) => expectFailpoint(error, stage));
       assert.deepEqual(readApplicationStateForOwner(store), before);
-    } finally {
-      if (store) await store.close();
-      cleanupPersistenceFixture(fixture);
-    }
-  });
-}
-
-for (const stage of ["request", "identity", "epoch", "grant:runtime.restore", "decision", "audit"]) {
-  test(`legacy adoption failpoint after ${stage} leaves no local identity or epoch`, async () => {
-    const fixture = createPersistenceFixture(`adoption-${stage.replaceAll(/[^a-z]/gu, "-")}`);
-    let store;
-    try {
-      createVersionThreeDatabase(fixture.layout);
-      store = await openPersistence(fixture.layout, { applicationVersion: "atomic-adoption" });
-      const trusted = ingress(`adoption-${stage}`);
-      const before = readApplicationStateForOwner(store);
-      const service = createApplicationServiceWithHooks(store, trusted, {
-        afterStage(current) {
-          if (current === stage) throw new Error(`failpoint:${stage}`);
-        },
-      });
-      assert.throws(() => service.renew({
-        kind: "authorization.capability.renew",
-        expiresAt: "2026-09-20T12:00:00.000Z",
-      }), (error) => expectFailpoint(error, stage));
-      assert.deepEqual(readApplicationStateForOwner(store), before);
-      assert.equal(readApplicationStateForOwner(store).identity, null);
     } finally {
       if (store) await store.close();
       cleanupPersistenceFixture(fixture);

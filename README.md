@@ -10,7 +10,7 @@ The repository contains a governance and architecture-contract baseline, an
 executable TypeScript/Node toolchain and feasibility harness, a pure in-memory
 Domain Core for Project/Task rules, a safe local ProjectRegistry, a finite
 runtime authorization model, one typed Project/Task/dependency application
-service, schema-v7 SQLite persistence, a composable local Phase 1 `ato` product
+service, current schema-version-1 SQLite persistence, a composable local Phase 1 `ato` product
 CLI, a typed reliable Manual execution loop, a reconcile-first Manual
 dispatcher, and an explicit `ato.api/v2` local Manual product surface. The
 application owner remains the sole business command/query owner and atomically
@@ -94,7 +94,7 @@ skeleton nor a command that was not run is evidence of a passing gate.
 ## Reliable Manual execution and product facade
 
 The package exports the provisional typed claim service and reliable Manual
-loop. Schema-v6 migration, bootstrap, and renewal do not create any of the six
+loop. Fresh schema creation, bootstrap, and vocabulary-5 renewal do not create any of the six
 Manual-loop grants. A vocabulary-5 runtime must perform its own fresh,
 identity- and confirmation-bound upgrade to vocabulary 6 before
 `execution.start`, `execution.inspect`, `execution.resume`, `execution.retry`,
@@ -113,7 +113,7 @@ turn state; it does not execute Task content or touch a Project repository.
 
 This service remains absent from `ato.api/v1`. Explicit `ato.api/v2` commands
 reach it only through the typed product facade, which derives the non-public
-turn, intent, receipt, and finalization tuple from current schema-v7 state.
+turn, intent, receipt, and finalization tuple from current schema-version-1 state.
 Neither the facade nor the Manual backend invokes Codex, Git, workspace,
 scheduler, policy, completion-gate, or Task-content effects, and local
 development evidence is not a platform-support claim. The exact rules are owned by the
@@ -123,7 +123,7 @@ development evidence is not a platform-support claim. The exact rules are owned 
 
 ## Reconcile-first Manual dispatcher
 
-Schema-v7 migration, bootstrap, and vocabulary-6 renewal do not create
+Fresh schema creation, bootstrap, and vocabulary-6 renewal do not create
 `dispatch.run`. A runtime must complete its own fresh identity- and
 confirmation-bound vocabulary-6-to-7 upgrade before an explicit Manual trigger
 can create or continue a dispatcher run. Each run has a trusted worker owner,

@@ -1,7 +1,5 @@
 import {
   AUTHORIZATION_ACTIONS,
-  DISPATCH_AUTHORIZATION_ACTIONS,
-  MANUAL_EXECUTION_AUTHORIZATION_ACTIONS,
   PHASE1_AUTHORIZATION_ACTIONS,
   PHASE2A_AUTHORIZATION_ACTIONS,
   PHASE2B_AUTHORIZATION_ACTIONS,
@@ -47,7 +45,7 @@ export interface AuthorizationBootstrap extends ProjectRootIdentity {
   readonly requestId: string;
   readonly createdAt: string;
   readonly expiresAt: string;
-  readonly vocabularyVersion: 3 | 4;
+  readonly vocabularyVersion: 4;
 }
 
 export type ApplicationAction =
@@ -62,7 +60,6 @@ export interface AuthorizationLocalIdentity {
   readonly platform: string;
   readonly runtimeRootKey: string;
   readonly bootstrapRequestId: string;
-  readonly adoptionRequestId: string;
   readonly createdAt: string;
 }
 
@@ -96,9 +93,6 @@ export interface ApplicationLifecycleAuthorization {
   readonly issuedAt: string;
   readonly expiresAt: string;
 }
-
-type ApplicationStateDigestVersion = 1 | 2 | 3 | 4;
-const lifecycleStateDigestVersions = new WeakMap<ApplicationLifecycleAuthorization, ApplicationStateDigestVersion>();
 
 export interface ApplicationRequestRecord {
   readonly requestId: string;
@@ -459,7 +453,6 @@ export interface AuthorizationGrantEpochLinkRecord {
   readonly grantId: string;
   readonly action: AuthorizationAction;
   readonly capabilityEpochId: string;
-  readonly physicalOwner: "legacy" | "v6" | "v7";
 }
 
 export interface DispatcherTriggerRequestRecord {
@@ -787,8 +780,6 @@ const AUDIT_KINDS: ReadonlySet<AuditKind> = new Set([
 ]);
 const AUDIT_RESULTS: ReadonlySet<AuditResult> = new Set(["accepted", "denied"]);
 const SCOPE_KINDS: ReadonlySet<AuthorizationScope["kind"]> = new Set(["runtime", "project"]);
-const LEGACY_AUTHORIZATION_ACTIONS = Object.freeze(PHASE1_AUTHORIZATION_ACTIONS.slice(0, 15));
-
 export function applicationAuditKind(value: AuthorizationAction): AuditKind {
   switch (value) {
     case "authorization.grant.issue": return "grant.issued";
@@ -1014,10 +1005,6 @@ function nonnegative(value: unknown, label: string): number {
   return parsed;
 }
 
-function tableExists(database: SqliteDatabase, name: string): boolean {
-  return database.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name) !== undefined;
-}
-
 function readProjects(database: SqliteDatabase): readonly RegisteredProject[] {
   const rows = database.prepare(
     `SELECT project_id, canonical_root, root_key, platform, root_device, root_inode, root_mode,
@@ -1039,27 +1026,19 @@ function readProjects(database: SqliteDatabase): readonly RegisteredProject[] {
   })));
 }
 
-function readBootstrap(
-  database: SqliteDatabase,
-  schemaShape: ApplicationSchemaShape,
-): AuthorizationBootstrap | null {
-  const rows = database.prepare(schemaShape !== "version-three"
-    ? `SELECT singleton, actor_id, trusted_principal, runtime_root, runtime_root_key,
+function readBootstrap(database: SqliteDatabase): AuthorizationBootstrap | null {
+  const rows = database.prepare(
+    `SELECT singleton, actor_id, trusted_principal, runtime_root, runtime_root_key,
       runtime_platform, runtime_device, runtime_inode, runtime_mode,
-      request_id, created_at, expires_at, vocabulary_version FROM authorization_bootstrap ORDER BY singleton`
-    : `SELECT singleton, actor_id, trusted_principal, runtime_root, runtime_root_key,
-      runtime_platform, runtime_device, runtime_inode, runtime_mode,
-      request_id, created_at, expires_at FROM authorization_bootstrap ORDER BY singleton`
+      request_id, created_at, expires_at, vocabulary_version FROM authorization_bootstrap ORDER BY singleton`,
   ).all();
   if (rows.length === 0) return null;
   if (rows.length !== 1 || integer(rows[0]?.singleton, "authorization_bootstrap.singleton") !== 1) {
     throw persistenceFailure("CORRUPT_ROW", "Authorization bootstrap singleton is invalid");
   }
   const row = rows[0] as Record<string, unknown>;
-  const vocabularyVersion = schemaShape !== "version-three"
-    ? integer(row.vocabulary_version, "authorization_bootstrap.vocabulary_version")
-    : 3;
-  if (vocabularyVersion !== 3 && vocabularyVersion !== 4) {
+  const vocabularyVersion = integer(row.vocabulary_version, "authorization_bootstrap.vocabulary_version");
+  if (vocabularyVersion !== 4) {
     throw persistenceFailure("CORRUPT_ROW", "Authorization bootstrap vocabulary is unsupported");
   }
   return Object.freeze({
@@ -1087,7 +1066,7 @@ function uppercaseSha256(value: unknown, label: string): string {
 function readIdentity(database: SqliteDatabase): AuthorizationLocalIdentity | null {
   const rows = database.prepare(
     `SELECT singleton, identity_version, actor_id, principal_sha256, platform,
-      runtime_root_key, bootstrap_request_id, adoption_request_id, created_at
+      runtime_root_key, bootstrap_request_id, created_at
     FROM authorization_local_identity ORDER BY singleton`,
   ).all();
   if (rows.length === 0) return null;
@@ -1103,24 +1082,15 @@ function readIdentity(database: SqliteDatabase): AuthorizationLocalIdentity | nu
     platform: sqliteText(row.platform, "authorization_local_identity.platform"),
     runtimeRootKey: sqliteText(row.runtime_root_key, "authorization_local_identity.runtime_root_key"),
     bootstrapRequestId: sqliteText(row.bootstrap_request_id, "authorization_local_identity.bootstrap_request_id"),
-    adoptionRequestId: sqliteText(row.adoption_request_id, "authorization_local_identity.adoption_request_id"),
     createdAt: timestamp(row.created_at, "authorization_local_identity.created_at"),
   });
 }
 
 function readEpochs(database: SqliteDatabase): readonly AuthorizationCapabilityEpoch[] {
-  const unionV6 = tableExists(database, "authorization_capability_epochs_v6")
-    ? ` UNION ALL SELECT epoch_id, epoch_revision, actor_id, runtime_root_key, vocabulary_version,
-        action_set_sha256, request_id, created_at, expires_at FROM authorization_capability_epochs_v6`
-    : "";
-  const unionV7 = tableExists(database, "authorization_capability_epochs_v7")
-    ? ` UNION ALL SELECT epoch_id, epoch_revision, actor_id, runtime_root_key, vocabulary_version,
-        action_set_sha256, request_id, created_at, expires_at FROM authorization_capability_epochs_v7`
-    : "";
   return Object.freeze(database.prepare(
     `SELECT epoch_id, epoch_revision, actor_id, runtime_root_key, vocabulary_version,
       action_set_sha256, request_id, created_at, expires_at
-    FROM authorization_capability_epochs${unionV6}${unionV7} ORDER BY epoch_revision`,
+    FROM authorization_capability_epochs ORDER BY epoch_revision`,
   ).all().map((row) => {
     const vocabularyVersion = integer(row.vocabulary_version, "authorization_capability_epochs.vocabulary_version");
     if (vocabularyVersion !== 4 && vocabularyVersion !== 5 && vocabularyVersion !== 6 && vocabularyVersion !== 7) {
@@ -1140,26 +1110,12 @@ function readEpochs(database: SqliteDatabase): readonly AuthorizationCapabilityE
   }));
 }
 
-function readLifecycle(
-  database: SqliteDatabase,
-  schemaShape: Exclude<ApplicationSchemaShape, "version-three">,
-): readonly ApplicationLifecycleAuthorization[] {
+function readLifecycle(database: SqliteDatabase): readonly ApplicationLifecycleAuthorization[] {
   const operations = new Set(["runtime.backup", "runtime.restore"] as const);
-  const digestVersionColumn = schemaShape === "current"
-    ? tableExists(database, "application_lifecycle_digest_v7")
-      ? `COALESCE(
-          (SELECT state_digest_version FROM application_lifecycle_digest_v7 d7 WHERE d7.authorization_id=application_lifecycle_authorizations.authorization_id),
-          (SELECT state_digest_version FROM application_lifecycle_digest_v6 d6 WHERE d6.authorization_id=application_lifecycle_authorizations.authorization_id),
-          state_digest_version
-        ) AS state_digest_version`
-      : tableExists(database, "application_lifecycle_digest_v6")
-        ? "COALESCE((SELECT state_digest_version FROM application_lifecycle_digest_v6 d WHERE d.authorization_id=application_lifecycle_authorizations.authorization_id), state_digest_version) AS state_digest_version"
-        : "state_digest_version"
-    : "1 AS state_digest_version";
   return Object.freeze(database.prepare(
     `SELECT authorization_id, operation, backup_generation_id, actor_id, runtime_root_key,
       grant_id, grant_revision, request_id, decision_id, audit_id, authorized_state_sha256,
-      ${digestVersionColumn}, expected_request_count, expected_decision_count, expected_audit_count,
+      state_digest_version, expected_request_count, expected_decision_count, expected_audit_count,
       issued_at, expires_at
     FROM application_lifecycle_authorizations ORDER BY authorization_id`,
   ).all().map((row) => {
@@ -1167,10 +1123,10 @@ function readLifecycle(
       row.state_digest_version,
       "application_lifecycle_authorizations.state_digest_version",
     );
-    if (digestVersion !== 1 && digestVersion !== 2 && digestVersion !== 3 && digestVersion !== 4) {
+    if (digestVersion !== 4) {
       throw persistenceFailure("CORRUPT_ROW", "Lifecycle state digest version is unsupported");
     }
-    const record: ApplicationLifecycleAuthorization = {
+    return Object.freeze({
       authorizationId: sqliteText(row.authorization_id, "application_lifecycle_authorizations.authorization_id"),
       operation: enumText(row.operation, "application_lifecycle_authorizations.operation", operations),
       backupGenerationId: sqliteText(row.backup_generation_id, "application_lifecycle_authorizations.backup_generation_id"),
@@ -1187,9 +1143,7 @@ function readLifecycle(
       expectedAuditCount: positive(row.expected_audit_count, "application_lifecycle_authorizations.expected_audit_count"),
       issuedAt: timestamp(row.issued_at, "application_lifecycle_authorizations.issued_at"),
       expiresAt: timestamp(row.expires_at, "application_lifecycle_authorizations.expires_at"),
-    };
-    lifecycleStateDigestVersions.set(record, digestVersion);
-    return Object.freeze(record);
+    });
   }));
 }
 
@@ -1254,7 +1208,6 @@ function readExecutionAttempts(database: SqliteDatabase): readonly ExecutionAtte
 }
 
 function readExecutionOperationRequests(database: SqliteDatabase): readonly ExecutionOperationRequestRecord[] {
-  if (!tableExists(database, "execution_operation_requests")) return Object.freeze([]);
   const actions = new Set<ExecutionOperationRequestRecord["action"]>([
     "execution.start", "execution.inspect", "execution.resume", "execution.retry",
     "execution.cancel", "execution.completion.accept",
@@ -1276,7 +1229,6 @@ function readExecutionOperationRequests(database: SqliteDatabase): readonly Exec
 }
 
 function readExecutionAuthorizationDecisions(database: SqliteDatabase): readonly ExecutionAuthorizationDecisionRecord[] {
-  if (!tableExists(database, "execution_authorization_decisions")) return Object.freeze([]);
   const actions = new Set<ExecutionOperationRequestRecord["action"]>([
     "execution.start", "execution.inspect", "execution.resume", "execution.retry",
     "execution.cancel", "execution.completion.accept",
@@ -1303,7 +1255,6 @@ function readExecutionAuthorizationDecisions(database: SqliteDatabase): readonly
 }
 
 function readExecutionOperationAudit(database: SqliteDatabase): readonly ExecutionOperationAuditRecord[] {
-  if (!tableExists(database, "execution_operation_audit")) return Object.freeze([]);
   const events = new Set<ExecutionOperationAuditRecord["eventKind"]>([
     "execution.operation.prepared", "execution.operation.denied", "execution.operation.executing",
     "execution.operation.observed", "execution.operation.verified", "execution.operation.finalized",
@@ -1331,7 +1282,6 @@ function readExecutionOperationAudit(database: SqliteDatabase): readonly Executi
 }
 
 function readExecutionIntents(database: SqliteDatabase): readonly ExecutionOperationIntent[] {
-  if (!tableExists(database, "execution_operation_intents")) return Object.freeze([]);
   const kinds = new Set<ExecutionOperationKind>(["start", "inspect", "resume", "retry", "request_cancel", "manual_report"]);
   const actions = new Set<ExecutionOperationIntent["action"]>([
     "execution.start", "execution.inspect", "execution.resume", "execution.retry", "execution.cancel",
@@ -1442,7 +1392,6 @@ function readExecutionIntents(database: SqliteDatabase): readonly ExecutionOpera
 function readExecutionIntentAuthorizationBindings(
   database: SqliteDatabase,
 ): readonly ExecutionIntentAuthorizationBindingRecord[] {
-  if (!tableExists(database, "execution_intent_authorization_bindings")) return Object.freeze([]);
   const phases = new Set<ExecutionIntentAuthorizationBindingRecord["phase"]>(["prepare", "act", "finalize"]);
   return Object.freeze(database.prepare(
     `SELECT binding_id, intent_id, binding_revision, phase, request_id, decision_id,
@@ -1462,7 +1411,6 @@ function readExecutionIntentAuthorizationBindings(
 }
 
 function readExecutionObservations(database: SqliteDatabase): readonly ExecutionObservationRecord[] {
-  if (!tableExists(database, "execution_observations")) return Object.freeze([]);
   const lifecycles = new Set<ExecutionObservationRecord["lifecycle"]>([
     "unknown", "queued", "active", "waiting", "turn_succeeded", "failed", "cancelled",
   ]);
@@ -1491,7 +1439,6 @@ function readExecutionObservations(database: SqliteDatabase): readonly Execution
 }
 
 function readExecutionReceipts(database: SqliteDatabase): readonly ExecutionVerifiedReceiptRecord[] {
-  if (!tableExists(database, "execution_verified_receipts")) return Object.freeze([]);
   return Object.freeze(database.prepare(
     `SELECT verified_receipt_id, intent_id, adapter_receipt_id, receipt_sha256, lifecycle,
       backend_execution_id, thread_id, observation_number, observed_revision, fencing_token, verified_at
@@ -1512,7 +1459,6 @@ function readExecutionReceipts(database: SqliteDatabase): readonly ExecutionVeri
 }
 
 function readExecutionFinalizations(database: SqliteDatabase): readonly ExecutionFinalizationRecord[] {
-  if (!tableExists(database, "execution_finalizations")) return Object.freeze([]);
   const outcomes = new Set<ExecutionFinalizationRecord["outcome"]>(["accepted", "deferred", "rejected", "waiting", "interrupted"]);
   return Object.freeze(database.prepare(
     `SELECT finalization_id, intent_id, verified_receipt_id, authorization_decision_id, outcome, code,
@@ -1531,7 +1477,6 @@ function readExecutionFinalizations(database: SqliteDatabase): readonly Executio
 }
 
 function readExecutionTerminalStates(database: SqliteDatabase): readonly ExecutionTerminalStateRecord[] {
-  if (!tableExists(database, "execution_terminal_states")) return Object.freeze([]);
   const statuses = new Set<ExecutionTerminalStateRecord["status"]>(["completed", "cancelled"]);
   return Object.freeze(database.prepare(
     `SELECT execution_id, status, attempt_number, fencing_token, verified_receipt_id,
@@ -1553,7 +1498,6 @@ function readExecutionTerminalStates(database: SqliteDatabase): readonly Executi
 }
 
 function readManualTurns(database: SqliteDatabase): readonly ManualBackendTurnRecord[] {
-  if (!tableExists(database, "manual_backend_turns")) return Object.freeze([]);
   const lifecycles = new Set<ManualTurnLifecycle>(["queued", "active", "waiting", "turn_succeeded", "failed", "cancelled"]);
   return Object.freeze(database.prepare(
     `SELECT backend_execution_id, thread_id, start_idempotency_key, project_id,
@@ -1597,7 +1541,6 @@ function readManualTurns(database: SqliteDatabase): readonly ManualBackendTurnRe
 }
 
 function readManualBackendOperations(database: SqliteDatabase): readonly ManualBackendOperationRecord[] {
-  if (!tableExists(database, "manual_backend_operations")) return Object.freeze([]);
   const kinds = new Set<ManualBackendOperationRecord["operationKind"]>(["start", "resume", "retry", "request_cancel", "manual_report"]);
   const reports = new Set<Exclude<ManualBackendOperationRecord["reportOperation"], null>>(["activate", "wait", "succeed", "fail", "confirm_cancelled"]);
   const lifecycles = new Set<ManualTurnLifecycle>(["queued", "active", "waiting", "turn_succeeded", "failed", "cancelled"]);
@@ -1631,7 +1574,6 @@ function readManualBackendOperations(database: SqliteDatabase): readonly ManualB
 }
 
 function readManualCompletionDecisions(database: SqliteDatabase): readonly ManualCompletionDecisionRecord[] {
-  if (!tableExists(database, "manual_completion_decisions")) return Object.freeze([]);
   return Object.freeze(database.prepare(
     `SELECT completion_decision_id, operation_id, idempotency_key, task_id, execution_id,
       attempt_number, fencing_token, verified_receipt_id, finalization_id,
@@ -1658,7 +1600,6 @@ function readManualCompletionDecisions(database: SqliteDatabase): readonly Manua
 }
 
 function readDispatcherTriggerRequests(database: SqliteDatabase): readonly DispatcherTriggerRequestRecord[] {
-  if (!tableExists(database, "dispatcher_trigger_requests")) return Object.freeze([]);
   const results = new Set<DispatcherTriggerRequestRecord["result"]>(["allow", "deny"]);
   return Object.freeze(database.prepare(
     `SELECT request_id, observation_id, idempotency_key, correlation_id, actor_id, action,
@@ -1682,7 +1623,6 @@ function readDispatcherTriggerRequests(database: SqliteDatabase): readonly Dispa
 }
 
 function readDispatcherAuthorizationDecisions(database: SqliteDatabase): readonly DispatcherAuthorizationDecisionRecord[] {
-  if (!tableExists(database, "dispatcher_authorization_decisions")) return Object.freeze([]);
   const results = new Set<DispatcherAuthorizationDecisionRecord["result"]>(["allow", "deny"]);
   return Object.freeze(database.prepare(
     `SELECT decision_id, request_id, actor_id, action, result, reason, policy_result,
@@ -1707,7 +1647,6 @@ function readDispatcherAuthorizationDecisions(database: SqliteDatabase): readonl
 }
 
 function readDispatcherRuns(database: SqliteDatabase): readonly DispatcherRunRecord[] {
-  if (!tableExists(database, "dispatcher_runs")) return Object.freeze([]);
   const statuses = new Set<DispatcherRunStatus>(["starting", "reconciling", "sweeping", "completed", "partial", "failed", "interrupted"]);
   return Object.freeze(database.prepare(
     `SELECT run_id, observation_id, request_id, decision_id, actor_id, owner_id, owner_revision,
@@ -1732,7 +1671,6 @@ function readDispatcherRuns(database: SqliteDatabase): readonly DispatcherRunRec
 }
 
 function readDispatcherAudit(database: SqliteDatabase): readonly DispatcherAuditRecord[] {
-  if (!tableExists(database, "dispatcher_audit")) return Object.freeze([]);
   const events = new Set<DispatcherAuditRecord["eventKind"]>([
     "dispatch.denied", "dispatch.started", "dispatch.reconciling", "dispatch.sealed",
     "dispatch.member.resolved", "dispatch.heartbeat", "dispatch.taken_over", "dispatch.terminal",
@@ -1758,7 +1696,6 @@ function readDispatcherAudit(database: SqliteDatabase): readonly DispatcherAudit
 }
 
 function readDispatcherReconciliationItems(database: SqliteDatabase): readonly DispatcherReconciliationItemRecord[] {
-  if (!tableExists(database, "dispatcher_reconciliation_items")) return Object.freeze([]);
   const resourceKinds = new Set<DispatcherReconciliationItemRecord["resourceKind"]>(["execution_intent", "execution_lease", "dispatcher_run"]);
   const dispositions = new Set<DispatcherReconciliationItemRecord["disposition"]>(["reconciled", "no_effect", "authorization_denied", "ambiguous", "failed"]);
   const codes = new Set<DispatcherReconciliationCode>(DISPATCHER_RECONCILIATION_CODES);
@@ -1778,7 +1715,6 @@ function readDispatcherReconciliationItems(database: SqliteDatabase): readonly D
 }
 
 function readDispatcherReconciliationSummaries(database: SqliteDatabase): readonly DispatcherReconciliationSummaryRecord[] {
-  if (!tableExists(database, "dispatcher_reconciliation_summaries")) return Object.freeze([]);
   return Object.freeze(database.prepare(
     `SELECT run_id, summary_revision, expected_count, reconciled_count, no_effect_count,
       authorization_denied_count, ambiguous_count, failed_count, created_at
@@ -1801,7 +1737,6 @@ function readDispatcherReconciliationSummaries(database: SqliteDatabase): readon
 }
 
 function readDispatcherMemberships(database: SqliteDatabase): readonly DispatcherMembershipRecord[] {
-  if (!tableExists(database, "dispatcher_memberships")) return Object.freeze([]);
   return Object.freeze(database.prepare(
     `SELECT run_id, membership_revision, expected_member_count, sealed_at
     FROM dispatcher_memberships ORDER BY run_id`,
@@ -1814,7 +1749,6 @@ function readDispatcherMemberships(database: SqliteDatabase): readonly Dispatche
 }
 
 function readDispatcherMembers(database: SqliteDatabase): readonly DispatcherMemberRecord[] {
-  if (!tableExists(database, "dispatcher_members")) return Object.freeze([]);
   const lifecycles = new Set<DispatcherMemberRecord["lifecycle"]>(["pending", "terminal"]);
   const outcomes = new Set<DispatcherMemberOutcome>([
     "claimed", "already_claimed", "ineligible_at_cas", "authorization_denied",
@@ -1849,7 +1783,6 @@ function readDispatcherMembers(database: SqliteDatabase): readonly DispatcherMem
 function readDispatcherMemberDenialRequests(
   database: SqliteDatabase,
 ): readonly DispatcherMemberDenialRequestRecord[] {
-  if (!tableExists(database, "dispatcher_member_denial_requests")) return Object.freeze([]);
   return Object.freeze(database.prepare(
     `SELECT request_id, correlation_id, run_id, member_id, actor_id, action,
       target_execution_id, target_revision, result, created_at
@@ -1875,7 +1808,6 @@ function readDispatcherMemberDenialRequests(
 function readDispatcherMemberDenialDecisions(
   database: SqliteDatabase,
 ): readonly DispatcherMemberDenialDecisionRecord[] {
-  if (!tableExists(database, "dispatcher_member_denial_decisions")) return Object.freeze([]);
   return Object.freeze(database.prepare(
     `SELECT decision_id, request_id, actor_id, action, result, reason, policy_result,
       grant_id, grant_revision, project_id, resource_revision, config_revision, created_at
@@ -1906,7 +1838,6 @@ function readDispatcherMemberDenialDecisions(
 function readDispatcherMemberDenialAudit(
   database: SqliteDatabase,
 ): readonly DispatcherMemberDenialAuditRecord[] {
-  if (!tableExists(database, "dispatcher_member_denial_audit")) return Object.freeze([]);
   return Object.freeze(database.prepare(
     `SELECT audit_id, request_id, decision_id, run_id, member_id, event_kind, result,
       actor_id, correlation_id, target_execution_id, target_revision, code, created_at
@@ -1939,7 +1870,6 @@ function readDispatcherMemberDenialAudit(
 }
 
 function readDispatcherRunSummaries(database: SqliteDatabase): readonly DispatcherRunSummaryRecord[] {
-  if (!tableExists(database, "dispatcher_run_summaries")) return Object.freeze([]);
   const statuses = new Set<DispatcherRunSummaryRecord["terminalStatus"]>(["completed", "partial", "failed", "interrupted"]);
   return Object.freeze(database.prepare(
     `SELECT run_id, membership_revision, expected_member_count, claimed_count, already_claimed_count,
@@ -1983,71 +1913,34 @@ function readRequests(database: SqliteDatabase): readonly ApplicationRequestReco
   })));
 }
 
-type AuthorizationGrantPhysicalOwner = "legacy" | "v6" | "v7";
-
-interface DecodedAuthorizationGrant {
-  readonly grant: AuthorizationGrant;
-  readonly physicalOwner: AuthorizationGrantPhysicalOwner;
-}
-
-function readGrants(database: SqliteDatabase): readonly DecodedAuthorizationGrant[] {
-  const unionV6 = tableExists(database, "authorization_grants_v6")
-    ? ` UNION ALL SELECT grant_id, revision, actor_id, action, scope_kind, scope_project_id,
-        scope_resource_revision, scope_config_revision, not_before, expires_at,
-        revoked_at, issuer_grant_id, source_grant_id, 'v6' AS physical_owner
-      FROM authorization_grants_v6`
-    : "";
-  const unionV7 = tableExists(database, "authorization_grants_v7")
-    ? ` UNION ALL SELECT grant_id, revision, actor_id, action, scope_kind, scope_project_id,
-        scope_resource_revision, scope_config_revision, not_before, expires_at,
-        revoked_at, issuer_grant_id, source_grant_id, 'v7' AS physical_owner
-      FROM authorization_grants_v7`
-    : "";
+function readGrants(database: SqliteDatabase): readonly AuthorizationGrant[] {
   const rows = database.prepare(
     `SELECT grant_id, revision, actor_id, action, scope_kind, scope_project_id,
       scope_resource_revision, scope_config_revision, not_before, expires_at,
-      revoked_at, issuer_grant_id, source_grant_id, 'legacy' AS physical_owner
-    FROM authorization_grants${unionV6}${unionV7} ORDER BY grant_id`,
+      revoked_at, issuer_grant_id, source_grant_id
+    FROM authorization_grants ORDER BY grant_id`,
   ).all();
-  const decoded = rows.map((row) => {
-    const physicalOwner = enumText(
-      row.physical_owner,
-      "authorization grant physical owner",
-      new Set<AuthorizationGrantPhysicalOwner>(["legacy", "v6", "v7"]),
-    );
+  return Object.freeze(rows.map((row) => {
     const parsed = parseAuthorizationGrant({
-      grantId: sqliteText(row.grant_id, `${physicalOwner} authorization grant.grant_id`),
-      revision: positive(row.revision, `${physicalOwner} authorization grant.revision`),
-      actorId: sqliteText(row.actor_id, `${physicalOwner} authorization grant.actor_id`),
-      action: grantAction(row.action, `${physicalOwner} authorization grant.action`),
+      grantId: sqliteText(row.grant_id, "authorization_grants.grant_id"),
+      revision: positive(row.revision, "authorization_grants.revision"),
+      actorId: sqliteText(row.actor_id, "authorization_grants.actor_id"),
+      action: grantAction(row.action, "authorization_grants.action"),
       scope: {
-        kind: enumText(row.scope_kind, `${physicalOwner} authorization grant.scope_kind`, SCOPE_KINDS),
-        projectId: sqliteNullableText(row.scope_project_id, `${physicalOwner} authorization grant.scope_project_id`),
-        resourceRevision: nullablePositive(row.scope_resource_revision, `${physicalOwner} authorization grant.scope_resource_revision`),
-        configRevision: nullablePositive(row.scope_config_revision, `${physicalOwner} authorization grant.scope_config_revision`),
+        kind: enumText(row.scope_kind, "authorization_grants.scope_kind", SCOPE_KINDS),
+        projectId: sqliteNullableText(row.scope_project_id, "authorization_grants.scope_project_id"),
+        resourceRevision: nullablePositive(row.scope_resource_revision, "authorization_grants.scope_resource_revision"),
+        configRevision: nullablePositive(row.scope_config_revision, "authorization_grants.scope_config_revision"),
       },
-      notBefore: timestamp(row.not_before, `${physicalOwner} authorization grant.not_before`),
-      expiresAt: timestamp(row.expires_at, `${physicalOwner} authorization grant.expires_at`),
-      revokedAt: row.revoked_at === null ? null : timestamp(row.revoked_at, `${physicalOwner} authorization grant.revoked_at`),
-      issuerGrantId: sqliteNullableText(row.issuer_grant_id, `${physicalOwner} authorization grant.issuer_grant_id`),
-      sourceGrantId: sqliteNullableText(row.source_grant_id, `${physicalOwner} authorization grant.source_grant_id`),
+      notBefore: timestamp(row.not_before, "authorization_grants.not_before"),
+      expiresAt: timestamp(row.expires_at, "authorization_grants.expires_at"),
+      revokedAt: row.revoked_at === null ? null : timestamp(row.revoked_at, "authorization_grants.revoked_at"),
+      issuerGrantId: sqliteNullableText(row.issuer_grant_id, "authorization_grants.issuer_grant_id"),
+      sourceGrantId: sqliteNullableText(row.source_grant_id, "authorization_grants.source_grant_id"),
     });
     if (parsed === null) throw persistenceFailure("CORRUPT_ROW", "Authorization grant has an impossible shape");
-    if (physicalOwner === "v6" && !(MANUAL_EXECUTION_AUTHORIZATION_ACTIONS as readonly string[]).includes(parsed.action)) {
-      throw persistenceFailure("CORRUPT_ROW", "Vocabulary-v6 grant is stored in the wrong physical relation");
-    }
-    if (physicalOwner === "v7" && !(DISPATCH_AUTHORIZATION_ACTIONS as readonly string[]).includes(parsed.action)) {
-      throw persistenceFailure("CORRUPT_ROW", "Vocabulary-v7 grant is stored in the wrong physical relation");
-    }
-    if (physicalOwner === "legacy" && !(PHASE2A_AUTHORIZATION_ACTIONS as readonly string[]).includes(parsed.action)) {
-      throw persistenceFailure("CORRUPT_ROW", "Legacy authorization grant is stored in the wrong physical relation");
-    }
-    return Object.freeze({ grant: parsed, physicalOwner });
-  });
-  if (new Set(decoded.map(({ grant }) => grant.grantId)).size !== decoded.length) {
-    throw persistenceFailure("CORRUPT_ROW", "Authorization grant identifiers are not globally unique");
-  }
-  return Object.freeze(decoded);
+    return parsed;
+  }));
 }
 
 function readDecisions(database: SqliteDatabase): readonly AuthorizationDecisionRecord[] {
@@ -2126,90 +2019,47 @@ function readAudit(database: SqliteDatabase): readonly DecodedApplicationAudit[]
   }));
 }
 
-type ApplicationSchemaShape = "version-three" | "version-four" | "current";
-
-function readApplicationStateUntransactional(
-  database: SqliteDatabase,
-  schemaShape: ApplicationSchemaShape = "current",
-): ApplicationState {
+function readApplicationStateUntransactional(database: SqliteDatabase): ApplicationState {
   const domain = readDomainSnapshotUntransactional(database);
   const projects = readProjects(database);
-  const bootstrap = readBootstrap(database, schemaShape);
-  const identity = schemaShape === "version-three" ? null : readIdentity(database);
-  const decodedGrants = readGrants(database);
-  const grants = Object.freeze(decodedGrants.map(({ grant }) => grant));
-  const grantPhysicalOwnerById = new Map(decodedGrants.map(({ grant, physicalOwner }) => [grant.grantId, physicalOwner]));
-  const epochs = schemaShape === "version-three" ? Object.freeze([]) : readEpochs(database);
+  const bootstrap = readBootstrap(database);
+  const identity = readIdentity(database);
+  const grants = readGrants(database);
+  const epochs = readEpochs(database);
   const requests = readRequests(database);
   const decisions = readDecisions(database);
   const decodedAudit = readAudit(database);
   const audit = Object.freeze(decodedAudit.map((event) => event.record));
-  const lifecycle = schemaShape === "version-three" ? Object.freeze([]) : readLifecycle(database, schemaShape);
-  const executionSequences = schemaShape === "current" ? readExecutionSequences(database) : Object.freeze([]);
-  const executions = schemaShape === "current" ? readExecutionAttempts(database) : Object.freeze([]);
-  const executionOperationRequests = schemaShape === "current" ? readExecutionOperationRequests(database) : Object.freeze([]);
-  const executionAuthorizationDecisions = schemaShape === "current" ? readExecutionAuthorizationDecisions(database) : Object.freeze([]);
-  const executionOperationAudit = schemaShape === "current" ? readExecutionOperationAudit(database) : Object.freeze([]);
-  const executionIntents = schemaShape === "current" ? readExecutionIntents(database) : Object.freeze([]);
-  const executionIntentAuthorizationBindings = schemaShape === "current"
-    ? readExecutionIntentAuthorizationBindings(database) : Object.freeze([]);
-  const executionObservations = schemaShape === "current" ? readExecutionObservations(database) : Object.freeze([]);
-  const executionReceipts = schemaShape === "current" ? readExecutionReceipts(database) : Object.freeze([]);
-  const executionFinalizations = schemaShape === "current" ? readExecutionFinalizations(database) : Object.freeze([]);
-  const executionTerminalStates = schemaShape === "current" ? readExecutionTerminalStates(database) : Object.freeze([]);
-  const manualTurns = schemaShape === "current" ? readManualTurns(database) : Object.freeze([]);
-  const manualBackendOperations = schemaShape === "current" ? readManualBackendOperations(database) : Object.freeze([]);
-  const manualCompletionDecisions = schemaShape === "current" ? readManualCompletionDecisions(database) : Object.freeze([]);
-  const dispatcherTriggerRequests = schemaShape === "current" ? readDispatcherTriggerRequests(database) : Object.freeze([]);
-  const dispatcherAuthorizationDecisions = schemaShape === "current" ? readDispatcherAuthorizationDecisions(database) : Object.freeze([]);
-  const dispatcherRuns = schemaShape === "current" ? readDispatcherRuns(database) : Object.freeze([]);
-  const dispatcherAudit = schemaShape === "current" ? readDispatcherAudit(database) : Object.freeze([]);
-  const dispatcherReconciliationItems = schemaShape === "current" ? readDispatcherReconciliationItems(database) : Object.freeze([]);
-  const dispatcherReconciliationSummaries = schemaShape === "current" ? readDispatcherReconciliationSummaries(database) : Object.freeze([]);
-  const dispatcherMemberships = schemaShape === "current" ? readDispatcherMemberships(database) : Object.freeze([]);
-  const dispatcherMembers = schemaShape === "current" ? readDispatcherMembers(database) : Object.freeze([]);
-  const dispatcherMemberDenialRequests = schemaShape === "current"
-    ? readDispatcherMemberDenialRequests(database) : Object.freeze([]);
-  const dispatcherMemberDenialDecisions = schemaShape === "current"
-    ? readDispatcherMemberDenialDecisions(database) : Object.freeze([]);
-  const dispatcherMemberDenialAudit = schemaShape === "current"
-    ? readDispatcherMemberDenialAudit(database) : Object.freeze([]);
-  const dispatcherRunSummaries = schemaShape === "current" ? readDispatcherRunSummaries(database) : Object.freeze([]);
-  const v6LegacyGrantLinks = schemaShape === "current" && tableExists(database, "authorization_grant_epoch_v6_links");
-  const v7GrantLinks = schemaShape === "current" && tableExists(database, "authorization_grant_epoch_v7_legacy_links");
-  const baseGrantRelationSelect = v7GrantLinks
-    ? `SELECT grant_record.grant_id, grant_record.action,
-        COALESCE(v7_link.capability_epoch_id, v6_link.capability_epoch_id, grant_record.capability_epoch_id) AS capability_epoch_id,
-        grant_record.created_request_id, grant_record.revoked_request_id, 'legacy' AS physical_owner
-      FROM authorization_grants AS grant_record
-      LEFT JOIN authorization_grant_epoch_v6_links AS v6_link
-        ON v6_link.grant_id=grant_record.grant_id AND v6_link.action=grant_record.action
-      LEFT JOIN authorization_grant_epoch_v7_legacy_links AS v7_link
-        ON v7_link.grant_id=grant_record.grant_id AND v7_link.action=grant_record.action`
-    : v6LegacyGrantLinks
-    ? `SELECT grant_record.grant_id, grant_record.action,
-        COALESCE(epoch_link.capability_epoch_id, grant_record.capability_epoch_id) AS capability_epoch_id,
-        grant_record.created_request_id, grant_record.revoked_request_id, 'legacy' AS physical_owner
-      FROM authorization_grants AS grant_record
-      LEFT JOIN authorization_grant_epoch_v6_links AS epoch_link
-        ON epoch_link.grant_id=grant_record.grant_id AND epoch_link.action=grant_record.action`
-    : "SELECT grant_id, action, capability_epoch_id, created_request_id, revoked_request_id, 'legacy' AS physical_owner FROM authorization_grants";
-  const grantRelationUnionV6 = schemaShape === "current" && tableExists(database, "authorization_grants_v6")
-    ? v7GrantLinks
-      ? ` UNION ALL SELECT grant_record.grant_id, grant_record.action,
-          COALESCE(v7_link.capability_epoch_id, grant_record.capability_epoch_id) AS capability_epoch_id,
-          grant_record.created_request_id, grant_record.revoked_request_id, 'v6' AS physical_owner
-        FROM authorization_grants_v6 AS grant_record
-        LEFT JOIN authorization_grant_epoch_v7_v6_links AS v7_link
-          ON v7_link.grant_id=grant_record.grant_id AND v7_link.action=grant_record.action`
-      : " UNION ALL SELECT grant_id, action, capability_epoch_id, created_request_id, revoked_request_id, 'v6' AS physical_owner FROM authorization_grants_v6"
-    : "";
-  const grantRelationUnionV7 = schemaShape === "current" && tableExists(database, "authorization_grants_v7")
-    ? " UNION ALL SELECT grant_id, action, capability_epoch_id, created_request_id, revoked_request_id, 'v7' AS physical_owner FROM authorization_grants_v7"
-    : "";
-  const grantRelationRows = database.prepare(schemaShape !== "version-three"
-    ? `${baseGrantRelationSelect}${grantRelationUnionV6}${grantRelationUnionV7} ORDER BY grant_id`
-    : "SELECT grant_id, action, created_request_id, revoked_request_id, 'legacy' AS physical_owner FROM authorization_grants ORDER BY grant_id"
+  const lifecycle = readLifecycle(database);
+  const executionSequences = readExecutionSequences(database);
+  const executions = readExecutionAttempts(database);
+  const executionOperationRequests = readExecutionOperationRequests(database);
+  const executionAuthorizationDecisions = readExecutionAuthorizationDecisions(database);
+  const executionOperationAudit = readExecutionOperationAudit(database);
+  const executionIntents = readExecutionIntents(database);
+  const executionIntentAuthorizationBindings = readExecutionIntentAuthorizationBindings(database);
+  const executionObservations = readExecutionObservations(database);
+  const executionReceipts = readExecutionReceipts(database);
+  const executionFinalizations = readExecutionFinalizations(database);
+  const executionTerminalStates = readExecutionTerminalStates(database);
+  const manualTurns = readManualTurns(database);
+  const manualBackendOperations = readManualBackendOperations(database);
+  const manualCompletionDecisions = readManualCompletionDecisions(database);
+  const dispatcherTriggerRequests = readDispatcherTriggerRequests(database);
+  const dispatcherAuthorizationDecisions = readDispatcherAuthorizationDecisions(database);
+  const dispatcherRuns = readDispatcherRuns(database);
+  const dispatcherAudit = readDispatcherAudit(database);
+  const dispatcherReconciliationItems = readDispatcherReconciliationItems(database);
+  const dispatcherReconciliationSummaries = readDispatcherReconciliationSummaries(database);
+  const dispatcherMemberships = readDispatcherMemberships(database);
+  const dispatcherMembers = readDispatcherMembers(database);
+  const dispatcherMemberDenialRequests = readDispatcherMemberDenialRequests(database);
+  const dispatcherMemberDenialDecisions = readDispatcherMemberDenialDecisions(database);
+  const dispatcherMemberDenialAudit = readDispatcherMemberDenialAudit(database);
+  const dispatcherRunSummaries = readDispatcherRunSummaries(database);
+  const grantRelationRows = database.prepare(
+    `SELECT grant_id, action, capability_epoch_id, created_request_id, revoked_request_id
+     FROM authorization_grants ORDER BY grant_id`,
   ).all();
   const domainProjectIds = new Set(domain.projects.map((project) => project.id));
   if (projects.some((project) => !domainProjectIds.has(project.projectId) || project.updatedAt < project.createdAt)) {
@@ -2223,16 +2073,9 @@ function readApplicationStateUntransactional(
   const grantRelations = grantRelationRows.map((row) => Object.freeze({
     grantId: sqliteText(row.grant_id, "authorization_grants.grant_id"),
     action: grantAction(row.action, "authorization_grants.action"),
-    capabilityEpochId: schemaShape !== "version-three"
-      ? sqliteNullableText(row.capability_epoch_id, "authorization_grants.capability_epoch_id")
-      : null,
+    capabilityEpochId: sqliteNullableText(row.capability_epoch_id, "authorization_grants.capability_epoch_id"),
     createdRequestId: sqliteText(row.created_request_id, "authorization_grants.created_request_id"),
     revokedRequestId: sqliteNullableText(row.revoked_request_id, "authorization_grants.revoked_request_id"),
-    physicalOwner: enumText(
-      row.physical_owner,
-      "authorization grant relation physical owner",
-      new Set<AuthorizationGrantPhysicalOwner>(["legacy", "v6", "v7"]),
-    ),
   }));
   if (new Set(grantRelations.map((relation) => relation.grantId)).size !== grantRelations.length) {
     throw persistenceFailure("CORRUPT_ROW", "Authorization grant relation identifiers are not globally unique");
@@ -2245,7 +2088,6 @@ function readApplicationStateUntransactional(
       grantId: relation.grantId,
       action: relation.action,
       capabilityEpochId: relation.capabilityEpochId as string,
-      physicalOwner: relation.physicalOwner,
     })));
   if ((bootstrap === null) !== (grants.length === 0)) {
     throw persistenceFailure("CORRUPT_ROW", "Bootstrap and grant existence do not form one initialized authorization state");
@@ -2265,7 +2107,7 @@ function readApplicationStateUntransactional(
     ) {
       throw persistenceFailure("CORRUPT_ROW", "Bootstrap request binding is incomplete");
     }
-    const fixedActions = bootstrap.vocabularyVersion === 3 ? LEGACY_AUTHORIZATION_ACTIONS : PHASE1_AUTHORIZATION_ACTIONS;
+    const fixedActions = PHASE1_AUTHORIZATION_ACTIONS;
     const fixedRelations = grantRelations.filter((relation) => relation.createdRequestId === bootstrap.requestId);
     if (fixedRelations.length !== fixedActions.length) {
       throw persistenceFailure("CORRUPT_ROW", "Bootstrap does not own one fixed grant for every implemented action");
@@ -2295,7 +2137,7 @@ function readApplicationStateUntransactional(
   if (identity === null && epochs.length !== 0) {
     throw persistenceFailure("CORRUPT_ROW", "Capability epochs exist without a local identity");
   }
-  if (bootstrap !== null && bootstrap.vocabularyVersion === 4) {
+  if (bootstrap !== null) {
     if (
       identity === null ||
       identity.actorId !== bootstrap.actorId ||
@@ -2303,23 +2145,9 @@ function readApplicationStateUntransactional(
       identity.platform !== bootstrap.platform ||
       identity.runtimeRootKey !== bootstrap.rootKey ||
       identity.bootstrapRequestId !== bootstrap.requestId ||
-      identity.adoptionRequestId !== bootstrap.requestId ||
       identity.createdAt !== bootstrap.createdAt
     ) {
       throw persistenceFailure("CORRUPT_ROW", "Vocabulary-v4 bootstrap does not bind the immutable local identity");
-    }
-  }
-  if (bootstrap !== null && bootstrap.vocabularyVersion === 3 && identity !== null) {
-    const firstEpoch = epochs[0];
-    if (
-      firstEpoch === undefined ||
-      identity.bootstrapRequestId !== bootstrap.requestId ||
-      identity.adoptionRequestId !== firstEpoch.requestId ||
-      identity.actorId !== firstEpoch.actorId ||
-      identity.runtimeRootKey !== firstEpoch.runtimeRootKey ||
-      identity.createdAt !== firstEpoch.createdAt
-    ) {
-      throw persistenceFailure("CORRUPT_ROW", "Adopted legacy bootstrap does not bind epoch revision one");
     }
   }
   const phase1ActionSetSha256 = sha256(canonicalJson(PHASE1_AUTHORIZATION_ACTIONS));
@@ -2373,22 +2201,6 @@ function readApplicationStateUntransactional(
     ) {
       throw persistenceFailure("CORRUPT_ROW", "Capability epoch grant action inventory is not exact");
     }
-    const expectedLegacyActions = epoch.vocabularyVersion >= 6 ? PHASE2A_AUTHORIZATION_ACTIONS : expectedActions;
-    const expectedV6Actions = epoch.vocabularyVersion >= 6 ? MANUAL_EXECUTION_AUTHORIZATION_ACTIONS : Object.freeze([]);
-    const expectedV7Actions = epoch.vocabularyVersion === 7 ? DISPATCH_AUTHORIZATION_ACTIONS : Object.freeze([]);
-    const legacyActions = epochRelations.filter((relation) => relation.physicalOwner === "legacy").map((relation) => relation.action);
-    const v6Actions = epochRelations.filter((relation) => relation.physicalOwner === "v6").map((relation) => relation.action);
-    const v7Actions = epochRelations.filter((relation) => relation.physicalOwner === "v7").map((relation) => relation.action);
-    if (
-      legacyActions.length !== expectedLegacyActions.length ||
-      expectedLegacyActions.some((expected) => !legacyActions.includes(expected)) ||
-      v6Actions.length !== expectedV6Actions.length ||
-      expectedV6Actions.some((expected) => !v6Actions.includes(expected)) ||
-      v7Actions.length !== expectedV7Actions.length ||
-      expectedV7Actions.some((expected) => !v7Actions.includes(expected))
-    ) {
-      throw persistenceFailure("CORRUPT_ROW", "Capability epoch grants use an invalid physical partition");
-    }
   }
   const bootstrapRequests = requests.filter((request) => request.result === "bootstrap");
   if ((bootstrap === null && bootstrapRequests.length !== 0) || (bootstrap !== null && (bootstrapRequests.length !== 1 || bootstrapRequests[0]?.requestId !== bootstrap.requestId))) {
@@ -2438,7 +2250,6 @@ function readApplicationStateUntransactional(
     if (
       grant === undefined ||
       relation.action !== grant.action ||
-      relation.physicalOwner !== grantPhysicalOwnerById.get(relation.grantId) ||
       createdRequest === undefined ||
       (
         createdRequest.result !== "bootstrap" &&
@@ -2542,9 +2353,7 @@ function readApplicationStateUntransactional(
     const createdCount = grantRelations.filter((relation) => relation.createdRequestId === request.requestId).length;
     const revokedCount = grantRelations.filter((relation) => relation.revokedRequestId === request.requestId).length;
     const expectedCreatedCount = request.result === "bootstrap"
-      ? bootstrap?.vocabularyVersion === 3
-        ? LEGACY_AUTHORIZATION_ACTIONS.length
-        : PHASE1_AUTHORIZATION_ACTIONS.length
+      ? PHASE1_AUTHORIZATION_ACTIONS.length
       : request.result === "renewal" || request.result === "upgrade"
         ? (() => {
             const epoch = epochs.find((candidate) => candidate.requestId === request.requestId);
@@ -3375,10 +3184,7 @@ function readApplicationStateUntransactional(
       authorization.expectedDecisionCount !== authorization.expectedRequestCount - 1 ||
       !(expiresMillis > issuedMillis && expiresMillis - issuedMillis <= 5 * 60 * 1000) ||
       authorization.expiresAt > grant.expiresAt ||
-      (countsAreCurrent && authorization.authorizedStateSha256 !== applicationStateSha256ForVersion(
-        stateWithoutLifecycle,
-        lifecycleStateDigestVersions.get(authorization) ?? 2,
-      ))
+      (countsAreCurrent && authorization.authorizedStateSha256 !== applicationStateSha256(stateWithoutLifecycle))
     ) {
       throw persistenceFailure("CORRUPT_ROW", "Lifecycle authorization lineage is incomplete or inconsistent");
     }
@@ -3390,18 +3196,7 @@ export function readApplicationState(database: SqliteDatabase): ApplicationState
   return runReadSnapshot(database, () => readApplicationStateUntransactional(database));
 }
 
-export function readVersionThreeApplicationState(database: SqliteDatabase): ApplicationState {
-  return runReadSnapshot(database, () => readApplicationStateUntransactional(database, "version-three"));
-}
-
-export function readVersionFourApplicationState(database: SqliteDatabase): ApplicationState {
-  return runReadSnapshot(database, () => readApplicationStateUntransactional(database, "version-four"));
-}
-
-function applicationStateSha256ForVersion(
-  state: ApplicationState,
-  version: ApplicationStateDigestVersion,
-): string {
+export function applicationStateSha256(state: ApplicationState): string {
   const vocabularySevenEpochs = Object.freeze(state.epochs.filter((epoch) => epoch.vocabularyVersion === 7));
   const vocabularySevenEpochIds = new Set(vocabularySevenEpochs.map((epoch) => epoch.epochId));
   const vocabularySevenGrantIds = new Set(state.authorizationGrantEpochLinks
@@ -3409,40 +3204,11 @@ function applicationStateSha256ForVersion(
     .map((link) => link.grantId));
   const preDispatcherEpochs = Object.freeze(state.epochs.filter((epoch) => epoch.vocabularyVersion <= 6));
   const preDispatcherGrants = Object.freeze(state.grants.filter((grant) => !vocabularySevenGrantIds.has(grant.grantId)));
-  const phaseOneProjection = {
+  return sha256(canonicalJson({
     audit: state.audit,
+    authorizationGrantEpochLinks: state.authorizationGrantEpochLinks,
     bootstrap: state.bootstrap,
     decisions: state.decisions,
-    domain: state.domain,
-    epochs: preDispatcherEpochs,
-    grants: preDispatcherGrants,
-    identity: state.identity,
-    registry: state.projects,
-    requests: state.requests,
-  };
-  const phaseTwoAProjection = {
-    ...phaseOneProjection,
-    executionSequences: state.executionSequences,
-    executions: state.executions,
-  };
-  const phaseTwoBProjection = {
-    ...phaseTwoAProjection,
-    executionAuthorizationDecisions: state.executionAuthorizationDecisions,
-    executionFinalizations: state.executionFinalizations,
-    executionTerminalStates: state.executionTerminalStates,
-    executionIntents: state.executionIntents,
-    executionIntentAuthorizationBindings: state.executionIntentAuthorizationBindings,
-    executionObservations: state.executionObservations,
-    executionOperationAudit: state.executionOperationAudit,
-    executionOperationRequests: state.executionOperationRequests,
-    executionReceipts: state.executionReceipts,
-    manualBackendOperations: state.manualBackendOperations,
-    manualCompletionDecisions: state.manualCompletionDecisions,
-    manualTurns: state.manualTurns,
-  };
-  const dispatcherProjection = {
-    ...phaseTwoBProjection,
-    authorizationGrantEpochLinks: state.authorizationGrantEpochLinks,
     dispatcherAuthorizationDecisions: state.dispatcherAuthorizationDecisions,
     dispatcherAudit: state.dispatcherAudit,
     dispatcherMemberDenialAudit: state.dispatcherMemberDenialAudit,
@@ -3455,45 +3221,37 @@ function applicationStateSha256ForVersion(
     dispatcherRuns: state.dispatcherRuns,
     dispatcherRunSummaries: state.dispatcherRunSummaries,
     dispatcherTriggerRequests: state.dispatcherTriggerRequests,
+    domain: state.domain,
+    epochs: preDispatcherEpochs,
+    executionAuthorizationDecisions: state.executionAuthorizationDecisions,
+    executionFinalizations: state.executionFinalizations,
+    executionIntentAuthorizationBindings: state.executionIntentAuthorizationBindings,
+    executionIntents: state.executionIntents,
+    executionObservations: state.executionObservations,
+    executionOperationAudit: state.executionOperationAudit,
+    executionOperationRequests: state.executionOperationRequests,
+    executionReceipts: state.executionReceipts,
+    executionSequences: state.executionSequences,
+    executionTerminalStates: state.executionTerminalStates,
+    executions: state.executions,
+    grants: preDispatcherGrants,
+    identity: state.identity,
+    manualBackendOperations: state.manualBackendOperations,
+    manualCompletionDecisions: state.manualCompletionDecisions,
+    manualTurns: state.manualTurns,
+    registry: state.projects,
+    requests: state.requests,
     vocabularySevenEpochs,
     vocabularySevenGrants: Object.freeze(state.grants.filter((grant) => vocabularySevenGrantIds.has(grant.grantId))),
-  };
-  return sha256(canonicalJson(
-    version === 1 ? phaseOneProjection : version === 2 ? phaseTwoAProjection : version === 3 ? phaseTwoBProjection : dispatcherProjection,
-  ));
-}
-
-export function applicationStateSha256(state: ApplicationState): string {
-  return applicationStateSha256ForVersion(state, 4);
-}
-
-export function versionFourApplicationStateSha256(state: ApplicationState): string {
-  return applicationStateSha256ForVersion(state, 1);
-}
-
-export function versionFiveApplicationStateSha256(state: ApplicationState): string {
-  return applicationStateSha256ForVersion(state, 2);
-}
-
-export function versionSixApplicationStateSha256(state: ApplicationState): string {
-  return applicationStateSha256ForVersion(state, 3);
-}
-
-function lifecycleAuthorizationDigestVersion(
-  authorization: ApplicationLifecycleAuthorization,
-): ApplicationStateDigestVersion {
-  const version = lifecycleStateDigestVersions.get(authorization);
-  if (version === undefined) {
-    throw persistenceFailure("CORRUPT_ROW", "Lifecycle state digest provenance is unavailable");
-  }
-  return version;
+  }));
 }
 
 export function applicationStateSha256ForLifecycleAuthorization(
   state: ApplicationState,
   authorization: ApplicationLifecycleAuthorization,
 ): string {
-  return applicationStateSha256ForVersion(state, lifecycleAuthorizationDigestVersion(authorization));
+  void authorization;
+  return applicationStateSha256(state);
 }
 
 function lifecycleAuthorizationProjection(record: ApplicationLifecycleAuthorization): Readonly<Record<string, unknown>> {
@@ -3592,7 +3350,7 @@ function validateLifecycleAuthorizationState(
 ): Readonly<{
   authorization: ApplicationLifecycleAuthorization;
   stateSha256: string;
-  stateDigestVersion: 1 | 2 | 3 | 4;
+  stateDigestVersion: 4;
 }> {
   if (!isCanonicalUtcTimestamp(now)) throw persistenceFailure("INVALID_INPUT", "Lifecycle validation time is invalid");
   const authorization = state.lifecycle.find((candidate) => candidate.authorizationId === handoff.authorizationId);
@@ -3615,8 +3373,8 @@ function validateLifecycleAuthorizationState(
   ) {
     throw persistenceFailure("AUTHORIZATION_DENIED", "Lifecycle authorization is no longer current");
   }
-  const stateDigestVersion = lifecycleAuthorizationDigestVersion(authorization);
-  const stateSha256 = applicationStateSha256ForVersion(state, stateDigestVersion);
+  const stateDigestVersion = 4 as const;
+  const stateSha256 = applicationStateSha256(state);
   if (
     stateSha256 !== authorization.authorizedStateSha256 ||
     state.requests.length !== authorization.expectedRequestCount ||
@@ -3637,7 +3395,7 @@ export function validateLifecycleAuthorizationForUse(
 ): Readonly<{
   authorization: ApplicationLifecycleAuthorization;
   stateSha256: string;
-  stateDigestVersion: 1 | 2 | 3 | 4;
+  stateDigestVersion: 4;
 }> {
   return validateLifecycleAuthorizationState(readApplicationState(database), handoff, operation, generationId, now);
 }
@@ -3651,7 +3409,7 @@ export function validateLifecycleAuthorizationForUseUntransactional(
 ): Readonly<{
   authorization: ApplicationLifecycleAuthorization;
   stateSha256: string;
-  stateDigestVersion: 1 | 2 | 3 | 4;
+  stateDigestVersion: 4;
 }> {
   return validateLifecycleAuthorizationState(readApplicationStateUntransactional(database), handoff, operation, generationId, now);
 }
@@ -3754,22 +3512,17 @@ export class ApplicationTransaction {
     this.#database.prepare(
       `INSERT INTO authorization_local_identity(
         singleton, identity_version, actor_id, principal_sha256, platform,
-        runtime_root_key, bootstrap_request_id, adoption_request_id, created_at
-      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        runtime_root_key, bootstrap_request_id, created_at
+      ) VALUES (1, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       record.identityVersion, record.actorId, record.principalSha256, record.platform,
-      record.runtimeRootKey, record.bootstrapRequestId, record.adoptionRequestId, record.createdAt,
+      record.runtimeRootKey, record.bootstrapRequestId, record.createdAt,
     );
   }
 
   insertCapabilityEpoch(record: NewCapabilityEpochRecord): void {
-    const table = record.vocabularyVersion === 7
-      ? "authorization_capability_epochs_v7"
-      : record.vocabularyVersion === 6
-        ? "authorization_capability_epochs_v6"
-        : "authorization_capability_epochs";
     this.#database.prepare(
-      `INSERT INTO ${table}(
+      `INSERT INTO authorization_capability_epochs(
         epoch_id, epoch_revision, actor_id, runtime_root_key, vocabulary_version,
         action_set_sha256, request_id, created_at, expires_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -3781,25 +3534,8 @@ export class ApplicationTransaction {
   }
 
   insertGrant(record: NewGrantRecord): void {
-    const v7EpochId = record.capabilityEpochId === undefined || record.capabilityEpochId === null ||
-      !tableExists(this.#database, "authorization_capability_epochs_v7") ||
-      this.#database.prepare("SELECT 1 FROM authorization_capability_epochs_v7 WHERE epoch_id=?").get(record.capabilityEpochId) === undefined
-      ? null
-      : record.capabilityEpochId;
-    const v6EpochId = record.capabilityEpochId === undefined || record.capabilityEpochId === null ||
-      this.#database.prepare("SELECT 1 FROM authorization_capability_epochs_v6 WHERE epoch_id=?").get(record.capabilityEpochId) === undefined
-      ? null
-      : record.capabilityEpochId;
-    const v6Epoch = v6EpochId !== null;
-    const v7Epoch = v7EpochId !== null;
-    const legacyAction = (PHASE2A_AUTHORIZATION_ACTIONS as readonly string[]).includes(record.action);
-    const v6Action = (MANUAL_EXECUTION_AUTHORIZATION_ACTIONS as readonly string[]).includes(record.action);
-    const table = legacyAction ? "authorization_grants" : v6Action ? "authorization_grants_v6" : "authorization_grants_v7";
-    const storedCapabilityEpochId = (v6Epoch && legacyAction) || (v7Epoch && (legacyAction || v6Action))
-      ? null
-      : record.capabilityEpochId ?? null;
     this.#database.prepare(
-      `INSERT INTO ${table}(
+      `INSERT INTO authorization_grants(
         grant_id, revision, actor_id, action, scope_kind, scope_project_id,
         scope_resource_revision, scope_config_revision, not_before, expires_at,
         revoked_at, issuer_grant_id, source_grant_id, capability_epoch_id,
@@ -3809,26 +3545,8 @@ export class ApplicationTransaction {
       record.grantId, record.revision, record.actorId, record.action, record.scope.kind,
       record.scope.projectId, record.scope.resourceRevision, record.scope.configRevision,
       record.notBefore, record.expiresAt, record.revokedAt, record.issuerGrantId, record.sourceGrantId,
-      storedCapabilityEpochId, record.createdRequestId,
+      record.capabilityEpochId ?? null, record.createdRequestId,
     );
-    if (v6Epoch && legacyAction) {
-      this.#database.prepare(
-        `INSERT INTO authorization_grant_epoch_v6_links(grant_id, action, capability_epoch_id)
-         VALUES (?, ?, ?)`,
-      ).run(record.grantId, record.action, v6EpochId);
-    }
-    if (v7Epoch && legacyAction) {
-      this.#database.prepare(
-        `INSERT INTO authorization_grant_epoch_v7_legacy_links(grant_id, action, capability_epoch_id)
-         VALUES (?, ?, ?)`,
-      ).run(record.grantId, record.action, v7EpochId);
-    }
-    if (v7Epoch && v6Action) {
-      this.#database.prepare(
-        `INSERT INTO authorization_grant_epoch_v7_v6_links(grant_id, action, capability_epoch_id)
-         VALUES (?, ?, ?)`,
-      ).run(record.grantId, record.action, v7EpochId);
-    }
   }
 
   insertLifecycleAuthorization(record: NewLifecycleAuthorizationRecord): void {
@@ -3838,7 +3556,7 @@ export class ApplicationTransaction {
         grant_id, grant_revision, request_id, decision_id, audit_id, authorized_state_sha256,
         state_digest_version, expected_request_count, expected_decision_count, expected_audit_count,
         issued_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 2, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 4, ?, ?, ?, ?, ?)`,
     ).run(
       record.authorizationId, record.operation, record.backupGenerationId, record.actorId,
       record.runtimeRootKey, record.grantId, record.grantRevision, record.requestId,
@@ -3846,15 +3564,6 @@ export class ApplicationTransaction {
       record.expectedRequestCount, record.expectedDecisionCount, record.expectedAuditCount,
       record.issuedAt, record.expiresAt,
     );
-    if (tableExists(this.#database, "application_lifecycle_digest_v7")) {
-      this.#database.prepare(
-        "INSERT INTO application_lifecycle_digest_v7(authorization_id, state_digest_version) VALUES (?, 4)",
-      ).run(record.authorizationId);
-    } else if (tableExists(this.#database, "application_lifecycle_digest_v6")) {
-      this.#database.prepare(
-        "INSERT INTO application_lifecycle_digest_v6(authorization_id, state_digest_version) VALUES (?, 3)",
-      ).run(record.authorizationId);
-    }
   }
 
   insertExecutionSequence(record: TaskExecutionSequence): void {
@@ -4497,25 +4206,11 @@ export class ApplicationTransaction {
   }
 
   revokeGrant(grantId: string, expectedRevision: number, revokedAt: string, requestId: string): void {
-    let result = this.#database.prepare(
+    const result = this.#database.prepare(
       `UPDATE authorization_grants
        SET revision=revision+1, revoked_at=?, revoked_request_id=?
        WHERE grant_id=? AND revision=? AND revoked_at IS NULL`,
     ).run(revokedAt, requestId, grantId, expectedRevision);
-    if (changes(result.changes) === 0 && tableExists(this.#database, "authorization_grants_v6")) {
-      result = this.#database.prepare(
-        `UPDATE authorization_grants_v6
-         SET revision=revision+1, revoked_at=?, revoked_request_id=?
-         WHERE grant_id=? AND revision=? AND revoked_at IS NULL`,
-      ).run(revokedAt, requestId, grantId, expectedRevision);
-    }
-    if (changes(result.changes) === 0 && tableExists(this.#database, "authorization_grants_v7")) {
-      result = this.#database.prepare(
-        `UPDATE authorization_grants_v7
-         SET revision=revision+1, revoked_at=?, revoked_request_id=?
-         WHERE grant_id=? AND revision=? AND revoked_at IS NULL`,
-      ).run(revokedAt, requestId, grantId, expectedRevision);
-    }
     if (changes(result.changes) !== 1) throw persistenceFailure("REVISION_CONFLICT", "Grant revocation CAS failed", { grantId });
   }
 

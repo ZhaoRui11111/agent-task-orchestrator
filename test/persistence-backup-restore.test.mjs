@@ -215,8 +215,8 @@ test("manual backup refuses another reader, then publishes an exact authorized g
     const verified = verifyBackupGeneration(fixture.layout, generation.generationId);
     assert.deepEqual(verified, generation);
     assert.equal(verified.manifest.kind, "manual");
-    assert.equal(verified.manifest.sourceSchemaVersion, 7);
-    assert.equal(verified.manifest.sourceHistory.length, 7);
+    assert.equal(verified.manifest.sourceSchemaVersion, 1);
+    assert.equal(verified.manifest.sourceHistory.length, 1);
     const directory = path.join(fixture.layout.backupGenerationsRoot, generation.generationId);
     assert.deepEqual(readdirSync(directory).sort(), ["manifest.json", "state.sqlite3"]);
     const database = new DatabaseSync(path.join(directory, "state.sqlite3"), { readOnly: true });

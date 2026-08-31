@@ -46,13 +46,7 @@ test("every shipped migration has one explicit canonical checkout line ending", 
   assert.deepEqual(
     gitAttributes.split("\n").filter((line) => line.startsWith("migrations/")),
     [
-      "migrations/0001-persistence-metadata.sql text eol=crlf",
-      "migrations/0002-phase1-task-storage.sql text eol=crlf",
-      "migrations/0003-phase1-application.sql text eol=crlf",
-      "migrations/0004-phase1-cli.sql text eol=lf",
-      "migrations/0005-phase2-execution-claim.sql text eol=lf",
-      "migrations/0006-phase2-manual-execution.sql text eol=lf",
-      "migrations/0007-phase2-dispatcher.sql text eol=lf",
+      "migrations/0001-current-baseline.sql text eol=lf",
     ],
   );
 });

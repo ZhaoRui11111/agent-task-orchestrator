@@ -26,12 +26,10 @@ import {
   lifecycleAuthorizationSha256,
   parseApplicationLifecycleAuthorization,
   readApplicationState,
-  readVersionFourApplicationState,
   validateLifecycleAuthorizationForUse,
   validateLifecycleAuthorizationForUseUntransactional,
   type ApplicationLifecycleAuthorization,
 } from "./application-repository.ts";
-import { readDomainSnapshot } from "./repository.ts";
 import {
   assertOwnedRuntimeDirectory,
   assertRuntimeLayout,
@@ -372,8 +370,7 @@ function parseBackupManifest(value: unknown): BackupManifest {
   } as const;
   if (record.schemaVersion === 1) return Object.freeze({ schemaVersion: 1 as const, ...common });
   const applicationProvenance = record.provenanceKind === "application" &&
-    record.kind === "manual" && record.sourceSchemaVersion >= 4 &&
-    record.sourceSchemaVersion <= currentSchemaVersion() &&
+    record.kind === "manual" && record.sourceSchemaVersion === currentSchemaVersion() &&
     isNonemptyString(record.lifecycleAuthorizationId) &&
     isSha256(record.lifecycleAuthorizationSha256) && isSha256(record.sourceApplicationStateSha256);
   const preUpgradeProvenance = record.provenanceKind === "pre_upgrade_internal" &&
@@ -456,9 +453,7 @@ function verifyStandaloneDatabase(
   try {
     evidence = inspectSchemaEvidence(database);
     verifyDatabaseIntegrity(database);
-    if (evidence.schemaVersion >= 5) readApplicationState(database);
-    else if (evidence.schemaVersion === 4) readVersionFourApplicationState(database);
-    else if (evidence.schemaVersion >= 2) readDomainSnapshot(database);
+    readApplicationState(database);
   } finally {
     database.close();
   }
@@ -553,9 +548,7 @@ function verifyBackupGenerationWithHooks(
     if (manifest.schemaVersion === 2 && manifest.provenanceKind === "application") {
       const provenanceDatabase = openReadOnlyDatabase(databasePath);
       try {
-        const state = evidence.schemaVersion === 4
-          ? readVersionFourApplicationState(provenanceDatabase)
-          : readApplicationState(provenanceDatabase);
+        const state = readApplicationState(provenanceDatabase);
         const authorization = state.lifecycle.find(
           (candidate) => candidate.authorizationId === manifest.lifecycleAuthorizationId,
         );

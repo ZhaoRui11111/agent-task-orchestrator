@@ -7,9 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { parseCliArguments } from "../src/cli-api.ts";
-import { openPersistence } from "../src/index.ts";
-import { prepareLocalRuntime, trustedApplicationDataRoot } from "../src/persistence/local-ingress.ts";
-import { createVersionThreeDatabase } from "./persistence-test-helpers.mjs";
+import { trustedApplicationDataRoot } from "../src/persistence/local-ingress.ts";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceCli = path.join(repoRoot, "src", "cli.ts");
@@ -309,15 +307,22 @@ test("HOME and USERPROFILE cannot redirect the trusted application-data root", (
   }
 });
 
-test("pre-adoption restore authorization hides absent and corrupt generation state", async () => {
-  const runtimeRoot = createTrustedRuntime("cli-preadoption-security-");
-  const { layout } = prepareLocalRuntime(runtimeRoot, repoRoot, []);
-  let store;
+test("denied restore authorization hides absent and corrupt generation state", () => {
+  const runtimeRoot = createTrustedRuntime("cli-restore-denial-security-");
   try {
-    createVersionThreeDatabase(layout, "cli-preadoption-v3");
-    store = await openPersistence(layout, { applicationVersion: "cli-preadoption-v4" });
-    await store.close();
-    store = undefined;
+    const initialized = invoke(runtimeRoot, [
+      "--format", "json", "init", "--expires-at", future(20 * 24 * 60 * 60 * 1000),
+      "--confirm", "INITIALIZE LOCAL RUNTIME",
+    ]);
+    assert.equal(initialized.status, 0);
+    const grants = invoke(runtimeRoot, ["--format", "json", "authorization", "list", "--limit", "100"]);
+    const restoreGrant = grants.body.result.grants.find((grant) => grant.action === "runtime.restore");
+    assert.ok(restoreGrant);
+    const revoked = invoke(runtimeRoot, [
+      "--format", "json", "authorization", "revoke", "--grant-id", restoreGrant.grantId,
+      "--expected-grant-revision", "1", "--confirm", "REVOKE LOCAL GRANT",
+    ]);
+    assert.equal(revoked.status, 0);
 
     const absentGenerationId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
     const absent = invoke(runtimeRoot, [
@@ -329,7 +334,7 @@ test("pre-adoption restore authorization hides absent and corrupt generation sta
     assert.equal(absent.body.error.code, "AUTHORIZATION_DENIED");
 
     const corruptGenerationId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
-    const corruptGeneration = path.join(layout.backupGenerationsRoot, corruptGenerationId);
+    const corruptGeneration = path.join(runtimeRoot, "backups", "generations", corruptGenerationId);
     mkdirSync(corruptGeneration);
     writeFileSync(path.join(corruptGeneration, "manifest.json"), "{}\n", { flag: "wx" });
     const corrupt = invoke(runtimeRoot, [
@@ -340,7 +345,6 @@ test("pre-adoption restore authorization hides absent and corrupt generation sta
     assert.equal(corrupt.status, 4);
     assert.equal(corrupt.body.error.code, "AUTHORIZATION_DENIED");
   } finally {
-    if (store) await store.close();
     cleanupTrustedRuntime(runtimeRoot);
   }
 });

@@ -69,39 +69,37 @@ async function readState(runtimeRoot) {
   }
 }
 
-function createSchemaPrefix(runtimeRoot, version) {
+function createCurrentSchema(runtimeRoot) {
   const selection = prepareLocalRuntime(runtimeRoot, repoRoot);
   const registry = loadMigrationRegistry();
-  assert.equal(version >= 1 && version <= registry.length, true);
-  const prefix = registry.slice(0, version);
+  assert.equal(registry.length, 1);
+  const baseline = registry[0];
+  assert.ok(baseline);
   const database = new DatabaseSync(selection.layout.databasePath);
   try {
     database.exec("PRAGMA foreign_keys=ON");
     database.exec("PRAGMA journal_mode=WAL");
     database.exec("BEGIN IMMEDIATE");
-    database.exec("PRAGMA defer_foreign_keys=ON");
-    for (const migration of prefix) database.exec(migration.sql);
+    database.exec(baseline.sql);
     const appliedAt = "2026-01-01T00:00:00.000Z";
-    for (const migration of prefix) {
-      database.prepare(
-        "INSERT INTO migration_history(version, migration_id, checksum_sha256, applied_at, application_version) VALUES (?, ?, ?, ?, ?)",
-      ).run(migration.version, migration.id, migration.checksumSha256, appliedAt, `cli-prefix-v${version}`);
-    }
     database.prepare(
-      "INSERT INTO schema_metadata(singleton, schema_version, domain_initialized, registry_identity, schema_fingerprint, updated_at) VALUES (1, ?, 0, ?, ?, ?)",
-    ).run(version, migrationRegistryIdentity(registry, version), liveSchemaFingerprint(database), appliedAt);
-    database.exec(`PRAGMA user_version=${version}`);
+      "INSERT INTO migration_history(version, migration_id, checksum_sha256, applied_at, application_version) VALUES (1, ?, ?, ?, 'cli-current-baseline')",
+    ).run(baseline.id, baseline.checksumSha256, appliedAt);
+    database.prepare(
+      "INSERT INTO schema_metadata(singleton, schema_version, domain_initialized, registry_identity, schema_fingerprint, updated_at) VALUES (1, 1, 0, ?, ?, ?)",
+    ).run(migrationRegistryIdentity(registry), liveSchemaFingerprint(database), appliedAt);
+    database.exec("PRAGMA user_version=1");
     database.exec("COMMIT");
   } finally {
     database.close();
   }
-  return Object.freeze(prefix.map(({ version: migrationVersion, id, checksumSha256 }) => Object.freeze({
-    version: migrationVersion,
-    migration_id: id,
-    checksum_sha256: checksumSha256,
+  return Object.freeze([Object.freeze({
+    version: 1,
+    migration_id: baseline.id,
+    checksum_sha256: baseline.checksumSha256,
     applied_at: "2026-01-01T00:00:00.000Z",
-    application_version: `cli-prefix-v${version}`,
-  })));
+    application_version: "cli-current-baseline",
+  })]);
 }
 
 function schemaSnapshot(runtimeRoot) {
@@ -308,17 +306,17 @@ test("source ato.api/v2 closes the real local Manual dispatch-to-completion loop
   }
 });
 
-test("source ato.api/v2 migrates every shipped prefix and completes one restart-safe Manual workflow", async (context) => {
-  for (const version of [1, 2, 3, 4, 5, 6, 7]) {
-    await context.test(`schema-v${version}`, async () => {
-      const generation = mkdtempSync(path.join(tmpdir(), `ato-cli-prefix-v${version}-`));
+test("source ato.api/v2 opens the exact current baseline and completes one restart-safe Manual workflow", async (context) => {
+  for (const schemaVersion of [1]) {
+    await context.test("current-baseline", async () => {
+      const generation = mkdtempSync(path.join(tmpdir(), "ato-cli-current-baseline-"));
       const trustedRoot = trustedApplicationDataRoot();
       mkdirSync(trustedRoot, { recursive: true });
-      const runtimeRoot = path.join(trustedRoot, `cli-prefix-v${version}-${randomUUID()}`);
+      const runtimeRoot = path.join(trustedRoot, `cli-current-baseline-${randomUUID()}`);
       const projectRoot = path.join(generation, "project");
       mkdirSync(projectRoot);
       try {
-        const historicalRows = createSchemaPrefix(runtimeRoot, version);
+        const baselineRows = createCurrentSchema(runtimeRoot);
         const expiry = future(30);
         const initialized = invoke(runtimeRoot, [
           "init", "--expires-at", expiry, "--confirm", "INITIALIZE LOCAL RUNTIME",
@@ -331,7 +329,7 @@ test("source ato.api/v2 migrates every shipped prefix and completes one restart-
         ]).status, 0);
         assert.equal(invoke(runtimeRoot, [
           "task", "create", "--project-id", "phase2-project", "--expected-project-resource-revision", "1",
-          "--task-id", "phase2-task", "--body", `PREFIX_${version}_PRIVATE_BODY`,
+          "--task-id", "phase2-task", "--body", `CURRENT_${schemaVersion}_PRIVATE_BODY`,
         ]).status, 0);
         assert.equal(invoke(runtimeRoot, [
           "task", "mark-ready", "--project-id", "phase2-project", "--expected-project-resource-revision", "1",
@@ -350,25 +348,25 @@ test("source ato.api/v2 migrates every shipped prefix and completes one restart-
           assert.equal(upgraded.body.result.capabilityCount, expected);
         }
         const dispatch = invoke(runtimeRoot, [
-          "dispatch", "run", "--idempotency-key", `prefix-${version}-dispatch`,
+          "dispatch", "run", "--idempotency-key", `current-${schemaVersion}-dispatch`,
           "--lease-duration-seconds", "300",
         ]);
         assert.equal(dispatch.status, 0, dispatch.raw);
         let state = await readState(runtimeRoot);
         assert.equal(invoke(runtimeRoot, [
-          "execution", "inspect", ...common(state, `prefix-${version}-inspect`),
+          "execution", "inspect", ...common(state, `current-${schemaVersion}-inspect`),
         ]).status, 0);
         state = await readState(runtimeRoot);
         const reported = invoke(runtimeRoot, [
-          "manual", "outcome-report", ...common(state, `prefix-${version}-report`),
-          "--report-id", `prefix-${version}-report`, "--outcome", "succeed", "--code", "manual-success",
+          "manual", "outcome-report", ...common(state, `current-${schemaVersion}-report`),
+          "--report-id", `current-${schemaVersion}-report`, "--outcome", "succeed", "--code", "manual-success",
           "--confirm", "RECORD MANUAL OUTCOME",
         ]);
         assert.equal(reported.status, 0, reported.raw);
         assert.equal(reported.body.result.taskState, "running");
         state = await readState(runtimeRoot);
         const completionArgs = [
-          "execution", "accept-manual-completion", ...common(state, `prefix-${version}-completion`),
+          "execution", "accept-manual-completion", ...common(state, `current-${schemaVersion}-completion`),
           "--confirm", "ACCEPT MANUAL COMPLETION",
         ];
         const completed = invoke(runtimeRoot, completionArgs);
@@ -381,10 +379,10 @@ test("source ato.api/v2 migrates every shipped prefix and completes one restart-
         assert.equal(state.domain.tasks[0].state, "completed");
         assert.equal(state.manualCompletionDecisions.length, 1);
         const schema = schemaSnapshot(runtimeRoot);
-        assert.equal(schema.userVersion, 7);
-        assert.equal(schema.metadata.schema_version, 7);
-        assert.equal(schema.history.length, 7);
-        assert.deepEqual(schema.history.slice(0, version), historicalRows);
+        assert.equal(schema.userVersion, 1);
+        assert.equal(schema.metadata.schema_version, 1);
+        assert.equal(schema.history.length, 1);
+        assert.deepEqual(schema.history, baselineRows);
         assert.equal(schema.schemaEightObjects, 0);
       } finally {
         cleanupTrustedRuntime(runtimeRoot);

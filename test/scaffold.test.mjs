@@ -65,7 +65,7 @@ test("package metadata exposes only the normal export and console boundary", () 
   );
   assert.match(
     productionBoundaryFailures(
-      inventory.filter((item) => item !== EXPECTED_MIGRATION_FILES[1]),
+      inventory.filter((item) => item !== EXPECTED_MIGRATION_FILES[0]),
       (relative) => readFileSync(path.join(repoRoot, relative), "utf8"),
     ).join("\n"),
     /migration inventory drifted/u,

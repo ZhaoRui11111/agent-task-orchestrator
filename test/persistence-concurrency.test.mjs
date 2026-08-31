@@ -32,7 +32,6 @@ import {
 import {
   cleanupPersistenceFixture,
   createPersistenceFixture,
-  createVersionOneDatabase,
   emptySnapshot,
   expectPersistenceError,
 } from "./persistence-test-helpers.mjs";
@@ -417,11 +416,10 @@ test("corrupt connection receipt content remains an active-state blocker", async
   }
 });
 
-test("a crash-stale connection receipt blocks migration until its exact owner releases it", async () => {
+test("a crash-stale connection receipt blocks first initialization until its exact owner releases it", async () => {
   const fixture = createPersistenceFixture("concurrency-upgrade-receipt");
   let receipt;
   try {
-    createVersionOneDatabase(fixture.layout);
     receipt = await withLifecycleLock(fixture.layout, "test-receipt", (token) =>
       createConnectionReceipt(fixture.layout, "stale", token),
     );

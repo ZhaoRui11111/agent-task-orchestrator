@@ -134,7 +134,7 @@ export interface CapabilityUpgradeCommand {
 }
 
 export interface CapabilityEpochResult {
-  readonly mode: "initialized" | "adopted" | "renewed" | "upgraded";
+  readonly mode: "initialized" | "renewed" | "upgraded";
   readonly expiresAt: string;
   readonly capabilityCount: number;
   readonly epochRevision: number;
@@ -601,7 +601,7 @@ function actionsForVocabulary(version: 4 | 5 | 6 | 7): readonly AuthorizationAct
 }
 
 interface RenewalAssessment {
-  readonly mode: "adopted" | "renewed";
+  readonly mode: "renewed";
   readonly nextEpochRevision: number;
   readonly vocabularyVersion: 4 | 5 | 6 | 7;
 }
@@ -614,17 +614,6 @@ function assessRenewal(
   const bootstrap = state.bootstrap;
   if (bootstrap === null) return "not_initialized";
   if (!sameRootIdentity(bootstrap, root)) return "authorization_denied";
-  if (bootstrap.vocabularyVersion === 3 && state.identity === null) {
-    const legacyOrigin = state.grants.filter((grant) =>
-      grant.actorId === bootstrap.actorId &&
-      grant.issuerGrantId === null &&
-      grant.sourceGrantId === null &&
-      grant.notBefore === bootstrap.createdAt &&
-      grant.expiresAt === bootstrap.expiresAt
-    );
-    if (legacyOrigin.some((grant) => grant.revokedAt !== null && grant.expiresAt > identity.now)) return "not_due";
-    return Object.freeze({ mode: "adopted", nextEpochRevision: 1, vocabularyVersion: 4 as const });
-  }
   const localIdentity = state.identity;
   if (localIdentity === null || !sameLocalIdentity(state, identity, root)) return "authorization_denied";
   const latestEpoch = state.epochs.at(-1);
@@ -670,8 +659,7 @@ function assessCapabilityUpgrade(
   }
   const latestEpoch = state.epochs.at(-1);
   const currentVocabulary = latestEpoch?.vocabularyVersion ?? bootstrap.vocabularyVersion;
-  if ((currentVocabulary !== 4 && currentVocabulary !== 5 && currentVocabulary !== 6) ||
-      (bootstrap.vocabularyVersion === 3 && latestEpoch === undefined)) {
+  if (currentVocabulary !== 4 && currentVocabulary !== 5 && currentVocabulary !== 6) {
     return "not_eligible";
   }
   const originCreatedAt = latestEpoch?.createdAt ?? bootstrap.createdAt;
@@ -1140,7 +1128,6 @@ function createApplicationServiceInternal(
         platform: runtimeIdentity.platform,
         runtimeRootKey: runtimeIdentity.rootKey,
         bootstrapRequestId: identity.requestId,
-        adoptionRequestId: identity.requestId,
         createdAt: identity.now,
       }));
       hooks.afterStage?.("identity");
@@ -1394,21 +1381,6 @@ function createApplicationServiceInternal(
       const target: BoundTarget = Object.freeze({ kind: "runtime", id: "runtime", revision: null, project: null });
       transaction.insertRequest(requestRecord(identity, "authorization.capability.renew", target, "renewal"));
       hooks.afterStage?.("request");
-      if (assessment.mode === "adopted") {
-        const bootstrap = state.bootstrap;
-        if (bootstrap === null) throw new TypeError("Legacy bootstrap is absent during adoption");
-        transaction.insertLocalIdentity(Object.freeze({
-          identityVersion: 1 as const,
-          actorId: identity.actor.actorId,
-          principalSha256: identity.actor.principal,
-          platform: runtimeIdentity.platform,
-          runtimeRootKey: runtimeIdentity.rootKey,
-          bootstrapRequestId: bootstrap.requestId,
-          adoptionRequestId: identity.requestId,
-          createdAt: identity.now,
-        }));
-        hooks.afterStage?.("identity");
-      }
       transaction.insertCapabilityEpoch(Object.freeze({
         epochId,
         epochRevision: assessment.nextEpochRevision,
@@ -1487,9 +1459,6 @@ function createApplicationServiceInternal(
     const preflightState = readApplicationStateForOwner(store);
     if (preflightState.bootstrap === null) {
       return failed("BOOTSTRAP_REQUIRED", "Trusted authorization bootstrap has not been completed", identity);
-    }
-    if (preflightState.bootstrap.vocabularyVersion === 3 && preflightState.identity === null) {
-      return failed("AUTHORIZATION_DENIED", "Legacy authorization must be adopted before this operation", identity);
     }
     const preflightTarget = targetForCommand(command, preflightState);
     if ("ok" in preflightTarget) {

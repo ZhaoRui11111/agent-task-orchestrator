@@ -4,7 +4,7 @@
 
 This file is the sole normative owner of data classification, prompt and secret
 handling, log-content redaction, retention, diagnostic disclosure, and default
-no telemetry. The schema-v7 application owners implement sanitized append-only
+no telemetry. The current schema-version-1 application owners implement sanitized append-only
 Phase 1, claim, reliable Manual-loop, and explicit-Manual dispatcher
 audit/evidence subsets, and the local product CLI/read-only doctor implement
 the closed display subset described below. No runtime logger, secret provider,

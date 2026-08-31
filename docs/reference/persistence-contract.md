@@ -8,54 +8,46 @@ transaction policy, authoritative Domain/application storage ingress,
 migration identity, backup publication, restore recovery, and
 incompatible/corrupt-state handling.
 
-The current implementation stores exact Project/Task Domain snapshots plus the
-Phase 1 ProjectRegistry, local identity, capability epochs, runtime grants,
+The current implementation stores the complete local explicit-Manual Phase 2
+model in one schema-version-1 baseline: exact Project/Task Domain snapshots,
+ProjectRegistry, local identity, vocabulary-4-through-7 epochs and grants,
 application requests, authorization decisions, lifecycle authorizations,
-sanitized audit, execution attempts/sequences, the schema-v6 reliable
-Manual-loop records, and the schema-v7 reconcile-first Manual dispatcher
-records. It
-exposes lifecycle operations, read-only doctor, and the typed application
-transaction owner; it does not authorize a mutation or select or invoke a
-Domain command. The local product facade and versioned CLI call these owners;
-the CLI never opens SQLite directly, while the facade performs only typed
-current-state reads needed to derive an existing owner command. Persistence
-implements the local claim/lease/fence,
-authorization vocabulary lineage, operation request/decision/audit,
-intent/observation/verified-receipt/finalization, execution terminal, Manual
-journal, Manual completion, dispatcher trigger/decision/audit, run ownership,
-reconciliation, sealed membership/member outcome, and terminal summary records
-described below. It stores no workspace, scheduler registration/delivery, gate,
-or MCP record. Those later records receive physical schema only in the ExecPlan
-that implements their behavior.
+sanitized audit, execution attempts/sequences, reliable Manual-loop evidence
+and journal records, and reconcile-first Manual dispatcher records. Lifecycle
+authorization stores and verifies only application-state digest version 4.
+
+Persistence exposes lifecycle operations, read-only doctor, and the typed
+application transaction owner; it does not authorize a mutation or select or
+invoke a Domain command. The local product facade and versioned CLI call these
+owners. The CLI never opens SQLite directly, while the facade performs only
+typed current-state reads needed to derive an existing owner command. The
+schema stores no workspace, scheduler registration/delivery, gate, or MCP
+record. A future implementation receives physical allocation only through its
+own approved schema change.
 
 Domain values are owned by the [domain contract](domain-contract.md). Manual
 effect and future external-effect semantics remain owned by the
 [reliability protocol](reliability-protocol.md). This contract owns storage,
 not permission or the meaning of an external result.
 
-## Staged schema allocation
+## Current schema allocation
 
-SQLite schema allocation is additive and phase-scoped. A migration may add
-only records required by its approved implementation phase. A planned field or
-table in another contract is not a reservation, and migration `0001` is not a
-synonym for the eventual complete product schema.
-
-The repository ships exactly these immutable migrations:
+The repository ships exactly one immutable migration:
 
 | Version and file | Current physical allocation |
 | --- | --- |
-| `1`, `0001-persistence-metadata.sql` | `schema_metadata` and `migration_history` only |
-| `2`, `0002-phase1-task-storage.sql` | `projects`, `tasks`, `task_dependencies`, and their indexes only |
-| `3`, `0003-phase1-application.sql` | `project_registry`, `application_requests`, `authorization_bootstrap`, `authorization_grants`, `authorization_decisions`, `application_audit`, their indexes, and append-only/revoke-only triggers only |
-| `4`, `0004-phase1-cli.sql` | Schema-v4 local identity, capability epochs, lifecycle authorization handoffs, expanded finite application vocabulary/audit shapes, provenance-aware grants, indexes, and immutable/revoke-only triggers only |
-| `5`, `0005-phase2-execution-claim.sql` | Closed-check expansion for non-grantable capability upgrade and four execution actions, plus `task_execution_sequences`, `execution_attempts`, their indexes, foreign keys, and immutable/CAS transition triggers only |
-| `6`, `0006-phase2-manual-execution.sql` | Vocabulary-6 epoch/grant and lifecycle-digest lineage, bounded execution operation request/decision/audit, intent/observation/verified-receipt/finalization/terminal records, durable Manual turn/operation journal, Manual completion decisions, indexes, foreign keys, and exact immutable/CAS triggers only |
-| `7`, `0007-phase2-dispatcher.sql` | Vocabulary-7 epoch/grant/link and lifecycle-digest lineage, bounded explicit-Manual dispatcher trigger/decision/audit, run ownership/heartbeat, reconciliation item/summary, immutable membership/member outcome, no-execution member start-denial lineage, run summary records, indexes, foreign keys, and exact immutable/CAS triggers only |
+| `1`, `0001-current-baseline.sql` | The complete implemented local explicit-Manual Phase 2 storage model described in this contract |
 
-Later plans append migrations for their own approved records. Schema v7 does
-not pre-allocate workspace, scheduling registration/delivery, gates,
-ProjectPolicy, CompletionBackend, or MCP records; those are not current
-persistence capabilities.
+This baseline is for a genuinely fresh runtime only. It is not a forward path
+from an earlier prototype database and does not preserve any previous migration
+prefix, checksum, physical authorization partition, grant-link relation,
+historical application-state projection, or lifecycle digest version. Schema
+version and authorization vocabulary are independent: the database remains
+schema version 1 while separately confirmed capability transitions advance
+vocabulary 4 to 5, 5 to 6, and 6 to 7.
+
+The baseline does not pre-allocate workspace, scheduling
+registration/delivery, gates, ProjectPolicy, CompletionBackend, or MCP records.
 
 ### Migration metadata
 
@@ -65,17 +57,17 @@ persistence capabilities.
 - `domain_initialized`: constrained `0`/`1` marker owned by the one-time
   Domain snapshot initializer, so an intentionally empty initialized snapshot
   is distinguishable from an uninitialized store;
-- `registry_identity`: uppercase SHA-256 of the ordered applied registry
-  prefix;
+- `registry_identity`: uppercase SHA-256 of the sole current registry
+  descriptor;
 - `schema_fingerprint`: uppercase SHA-256 of the canonical live
-  `sqlite_schema` inventory for that prefix; and
+  `sqlite_schema` inventory for that baseline; and
 - `updated_at`: the non-empty UTC timestamp written by the migration owner.
 
 `migration_history` is keyed by positive `version`, has a unique non-empty
 `migration_id`, and stores `checksum_sha256`, canonical UTC `applied_at`, and
 the non-empty `application_version`. The metadata `updated_at` must equal the
-last applied history timestamp. History contains exactly one contiguous row per
-applied registry member. It is not inferred from table shape.
+applied history timestamp. History contains exactly the one version-1
+`current-baseline` row. It is not inferred from table shape.
 
 ### Phase 1 Domain Core storage
 
@@ -119,14 +111,13 @@ to Projects, parents, and superseded Tasks are also deferred so one atomic
 snapshot mutation can insert a valid multi-row graph before commit. Indexes
 cover Project, parent, supersession, and reverse-dependency lookup.
 
-All schema-v2 tables use SQLite `STRICT` mode. There is no durable title,
-execution, workspace, scheduler, adapter, lease, fence, gate, or external
-intent/receipt field in that prefix.
+The Domain tables use SQLite `STRICT` mode. There is no durable title,
+workspace, scheduler, gate, or external adapter field.
 
-### Phase 1 application storage
+### Application, authorization, and execution storage
 
-Schema version `3` adds only records required by the implemented local
-Project/Task/dependency application owner:
+The current baseline directly allocates the records required by the implemented
+local Project/Task/dependency application owner:
 
 - `project_registry` binds one opaque Project ID to a unique canonical local
   root key, platform/device/inode/mode identity, positive config and resource
@@ -135,45 +126,32 @@ Project/Task/dependency application owner:
 - `application_requests` binds each fresh request/correlation/actor/action to
   one exact runtime, Project, Task, or grant target and `bootstrap|allow|deny`
   result.
-- singleton `authorization_bootstrap` binds the trusted actor/principal and
-  immutable runtime-root identity/expiry to its request.
+- singleton `authorization_bootstrap` binds the trusted actor/principal,
+  immutable runtime-root identity/expiry, and initial vocabulary 4 to its
+  request.
+- `authorization_local_identity` stores the immutable versioned
+  actor/principal digest and runtime-root binding created by bootstrap.
+- `authorization_capability_epochs` stores one immutable contiguous
+  vocabulary-4-through-7 renewal/upgrade lineage bound to the exact action-set
+  digest.
 - `authorization_grants` stores the exact finite action, runtime or
   revision-bound Project scope, lifetime, administrative/source provenance,
-  and single irreversible CAS revocation.
+  direct nullable `capability_epoch_id`, and single irreversible CAS
+  revocation. Every vocabulary uses this one relation.
 - `authorization_decisions` records the exact result/reason, policy result,
   nullable grant revision, and nullable Project revision for one request.
 - `application_audit` stores one allowlisted event/result/reason with fixed
   sanitized JSON metadata; it does not store Task bodies, Project paths,
   prompts, tool output, Agent text, or secrets.
+- `application_lifecycle_authorizations` stores immutable short-lived
+  backup/restore handoffs bound to authorization evidence and exactly
+  `state_digest_version = 4` of the complete current application state.
 
-Schema version `4` rebuilds only the five schema-v3 tables whose closed checks
-or provenance shape must expand. It preserves all schema-v3 rows and adds:
+Every application relation is `STRICT`. Requests, bootstrap, identity, epochs,
+decisions, lifecycle authorizations, and audit are append-only; grants are
+insert-only except for one revision-incrementing revocation.
 
-- `authorization_local_identity`, the immutable versioned actor/principal digest
-  and runtime-root binding used by local ingress;
-- `authorization_capability_epochs`, an immutable contiguous renewal/adoption
-  lineage bound to the exact vocabulary digest; and
-- `application_lifecycle_authorizations`, immutable short-lived backup/restore
-  handoffs bound to authorization evidence and the application-state digest.
-
-The rebuilt request, bootstrap, grant, decision, and audit tables add only the
-finite Phase 1 CLI actions, capability-renewal record shape, epoch provenance,
-and lifecycle event/target shapes. Every schema-v3/v4 application table is
-`STRICT`. Requests, bootstrap, identity, epochs, decisions, lifecycle
-authorizations, and audit are append-only; grants are insert-only except for one
-revision-incrementing revocation. There are still no execution, intent/effect,
-workspace, scheduler, claim/lease/fence, gate, completion, adapter, MCP, or
-dispatcher tables.
-
-Schema version `5` rebuilds only the closed-check application relations that
-must admit the non-grantable upgrade action and four grantable execution
-actions. Bidirectional row-set assertions preserve every prior request,
-bootstrap, grant, decision, audit, and lifecycle-authorization row. Existing
-lifecycle rows receive internal `state_digest_version = 1`, which continues the
-exact schema-v4 application-state projection; schema-v5 lifecycle writers use
-version `2`, whose projection additionally binds execution sequences and
-attempts. The version is persistence provenance and does not alter the closed
-public handoff or its digest. Schema version `5` then adds only:
+Execution claim storage includes:
 
 - `task_execution_sequences`, one row per ever-claimed Task with its exact last
   attempt number, current fencing token, and positive CAS revision; and
@@ -188,24 +166,15 @@ A partial unique index permits at most one `active` attempt for a Task. Deferred
 self-foreign keys allow one atomic supersede-and-insert transaction. Sequence
 advance must be exact `+1`; attempt updates are limited to a current-owner
 lease-renewal CAS or an expired active-attempt supersession CAS. Attempts and
-sequences cannot be deleted. The migration creates neither capability epoch nor
-grant nor execution row, so upgrade authority is never a migration side effect.
-Every prior vocabulary-3/4 row and every version-1 lifecycle digest remains
-strictly readable. Doctor, pre-migration decode, manual-backup verification and
-post-migration decode select the exact recorded projection; they never
-reinterpret a historical digest with the version-2 execution fields.
+sequences cannot be deleted. Baseline creation inserts no capability epoch,
+grant, execution row, or authority. Bootstrap creates only the fixed nineteen
+vocabulary-4 grants. A separately confirmed contiguous upgrade is the only
+path that appends vocabulary 5, 6, or 7 origin grants.
 
-Schema version `6` leaves migrations 0001-0005 and their records unchanged. It
-adds an immutable vocabulary-6 epoch, a vocabulary-6 grant relation for the six
-new Manual actions, and an immutable epoch-link relation for the twenty-three
-already-representable actions whose grants remain in `authorization_grants` so
-existing application decision and lifecycle foreign keys remain exact. Migration,
-bootstrap, and renewal create no new authority. A successful, separately
-confirmed vocabulary-5-to-6 upgrade alone appends one epoch and exactly
-twenty-nine current origin grants. `application_lifecycle_digest_v6` records
-digest provenance version `3`; lifecycle digest versions 1 and 2 retain their
-exact historical projections, while version 3 additionally binds every
-schema-v6 operation/journal/completion relation.
+Reliable Manual-loop storage uses the same epoch/grant relations and the sole
+current digest-version-4 application projection. A confirmed vocabulary-5-to-6
+upgrade appends one epoch and exactly twenty-nine current origin grants; there
+is no physical vocabulary partition, grant-link relation, or digest fallback.
 
 The operation relations separate immutable request/decision/audit,
 authorization-bound semantic intent, immutable prepare/act/finalize
@@ -227,21 +196,13 @@ revisions, timestamps, hashes, and redacted references; no Task body, prompt,
 path, environment, credential, raw adapter payload/error, SQL, or stack is
 allocated.
 
-The migration itself inserts no vocabulary-6 epoch/grant, lifecycle digest,
+The baseline itself inserts no epoch/grant, lifecycle authorization,
 execution operation, Manual turn, receipt, finalization, terminal, or completion
-row. Its final row-set assertion proves that zero-allocation property and that
-foreign-key validation is empty.
-
-Schema version `7` leaves migrations 0001-0006 and every historical projection
-unchanged. It adds the vocabulary-7 epoch and one physical v7 grant relation,
-separate immutable links to the twenty-three legacy and six v6 grants, and
-`application_lifecycle_digest_v7` as the sole provenance owner for digest
-version `4`. A separately confirmed vocabulary-6-to-7 upgrade or later
-vocabulary-7 renewal appends exactly thirty fresh origin grants with physical
-ownership `23 legacy + 6 v6 + 1 v7`; migration, bootstrap, and an older
-vocabulary renewal add no `dispatch.run` authority. Digest versions 1, 2, and 3
-retain their byte-semantic projections. Version 4 is exactly version 3 plus
-all vocabulary-7 lineage and every dispatcher record.
+row. Fresh schema creation does not bootstrap application state. A separately
+confirmed vocabulary-6-to-7 upgrade or later vocabulary-7 renewal appends one
+epoch and exactly thirty fresh origin grants in the same current relations;
+baseline creation, bootstrap, and older-vocabulary renewal add no
+`dispatch.run` authority.
 
 The dispatcher relations separate bounded trigger observation, authorization
 decision/audit, owned run and heartbeat lease, complete per-resource
@@ -260,21 +221,19 @@ start-denied member lacks that triple. The run/member update triggers require
 exact owner, revision, status, and membership transitions and reject every
 old-owner or stale-row write.
 
-Migration `0007` itself inserts no vocabulary-7 epoch/grant/link, lifecycle
-digest, dispatcher trigger, run, reconciliation, member, member-denial, or
-summary row. Its terminal assertions preserve the complete pre-migration row
-inventory and prove foreign-key validity.
+Fresh baseline creation inserts no dispatcher trigger, run, reconciliation,
+member, member-denial, or summary row.
 
 ## Writer and reader closure
 
 | Records | Only writer | Readers |
 | --- | --- | --- |
-| `schema_metadata.schema_version`, registry identity/fingerprint, `updated_at`, and `migration_history` | `src/persistence/migrations.ts` | startup compatibility, backup/restore verification, and current read-only doctor |
-| `schema_metadata.domain_initialized` one-time `0` to `1` transition | `src/persistence/repository.ts` inside the initial snapshot transaction | startup compatibility, repository decoder, backup/restore verification |
+| `schema_metadata.schema_version`, registry identity/fingerprint, `updated_at`, and `migration_history` | `src/persistence/migrations.ts` | current startup validation, backup/restore verification, and read-only doctor |
+| `schema_metadata.domain_initialized` one-time `0` to `1` transition | `src/persistence/repository.ts` inside the initial snapshot transaction | current startup validation, repository decoder, backup/restore verification |
 | `projects`, `tasks`, `task_dependencies` | `src/persistence/repository.ts`, invoked only through the internal Phase 1 application transaction after initialization | the same repository decoder, combined application decoder, backup verification, and doctor |
 | `project_registry` | `src/persistence/application-repository.ts` in the accepted application transaction | the combined decoder and application service |
-| `authorization_bootstrap`, `authorization_local_identity`, vocabulary-4/5 `authorization_capability_epochs`/`authorization_grants`, vocabulary-6 `authorization_capability_epochs_v6`/`authorization_grants_v6` and links, and vocabulary-7 `authorization_capability_epochs_v7`/`authorization_grants_v7` plus legacy/v6 links | `src/persistence/application-repository.ts` in bootstrap, adoption/renewal/upgrade, or authorized grant transactions | the combined decoder and application authorization owner |
-| `application_requests`, `authorization_decisions`, `application_audit`, `application_lifecycle_authorizations`, `application_lifecycle_digest_v6`, `application_lifecycle_digest_v7` | `src/persistence/application-repository.ts` in the same decision/operation transaction | the combined decoder, application result mapping, lifecycle verifier, backup verification, and doctor |
+| `authorization_bootstrap`, `authorization_local_identity`, and all vocabulary-4-through-7 `authorization_capability_epochs`/`authorization_grants` | `src/persistence/application-repository.ts` in bootstrap, renewal/upgrade, or authorized grant transactions | the combined decoder and application authorization owner |
+| `application_requests`, `authorization_decisions`, `application_audit`, `application_lifecycle_authorizations` | `src/persistence/application-repository.ts` in the same decision/operation transaction | the combined decoder, application result mapping, digest-version-4 lifecycle verifier, backup verification, and doctor |
 | `task_execution_sequences`, `execution_attempts` | `src/persistence/application-repository.ts` only inside the typed execution application transaction | the combined decoder, execution application owner, backup verification, and doctor |
 | `execution_operation_requests`, `execution_authorization_decisions`, `execution_operation_audit`, `execution_operation_intents`, `execution_intent_authorization_bindings`, `execution_observations`, `execution_verified_receipts`, `execution_finalizations`, `execution_terminal_states`, `manual_completion_decisions` | `src/persistence/application-repository.ts` only inside reliable-loop transactions after the application owner selects and authorizes the exact operation | the combined decoder, reliable execution owner, backup verification, and doctor |
 | `manual_backend_turns`, `manual_backend_operations` | `src/persistence/manual-backend-repository.ts` through the injected production Manual backend/control after a matching committed core intent | the same journal, combined decoder, reliable execution owner, backup verification, and doctor |
@@ -400,7 +359,7 @@ not claim success while an active reader still needs WAL frames.
 
 The Domain repository decoder reads all Projects, Tasks, and dependency edges,
 checks SQLite storage classes, and invokes `createDomainSnapshot`. The current
-schema-v7 application decoder then reads every registry, bootstrap, local
+schema-version-1 application decoder then reads every registry, bootstrap, local
 identity, capability epoch/grant lineage, application and execution request,
 decision/audit/lifecycle record, execution sequence/attempt, operation stage,
 Manual journal, terminal fact, completion decision, and dispatcher record. It checks exact storage
@@ -413,25 +372,14 @@ chains, exact intent-stage and durable retry evidence, independent inspect
 authorization, Manual turn/operation lineage, unique confirmation consumption,
 terminal Task/execution/receipt/finalization/completion consistency, plus exact
 dispatcher trigger/run ownership, reconciliation completeness, sealed-member,
-claim/intent, and terminal-summary lineage. It also
-retains exact legacy schema-v6, schema-v5, schema-v4, and schema-v3 decoders needed for
-upgrade and read-only doctor
-classification. Those readers consume the exact released physical shapes and
-apply their complete historical cross-record validation without manufacturing
-new vocabulary, identity, lifecycle, or execution rows.
+claim/intent, and terminal-summary lineage. It has no historical schema reader,
+union reader, fallback projection, or compatibility decoder.
 
-For schema version `6`, the combined authorization decoder preserves each
-grant's physical relation instead of erasing it during union. Grant identifiers
-and grant-relation identifiers are globally unique across the legacy and v6
-relations. Every vocabulary-6 epoch has the exact twenty-nine-action inventory:
-the twenty-three already-representable actions are legacy grants with immutable
-epoch links, and the six Manual actions are v6 grants. Missing, substituted,
-wrong-relation, duplicate-ID, or cross-relation-collision state is corruption.
-
-For schema version `7`, grant identifiers remain globally unique across all
-three physical relations. Every vocabulary-7 epoch has the exact thirty-action
-inventory: twenty-three linked legacy grants, six linked v6 grants, and one v7
-`dispatch.run` grant. The decoder also requires each dispatcher request,
+Grant identifiers are globally unique in the one current grant relation. Each
+capability epoch has the exact inventory for its recorded vocabulary: nineteen,
+twenty-three, twenty-nine, or thirty direct grants for vocabulary 4, 5, 6, or
+7 respectively. Missing, substituted, duplicate-action, wrong-epoch, or
+noncontiguous state is corruption. The decoder also requires each dispatcher request,
 decision, audit, run, reconciliation summary, membership/member, bound
 execution/intent, and run summary to form one exact lineage. Unknown enum/code,
 wrong owner/revision, noncontiguous or substituted membership, incomplete
@@ -458,9 +406,9 @@ snapshot/revisions, applies the trusted Domain or Project mutation and applicabl
 registry/grant/epoch/lifecycle changes, appends the request/decision/audit
 records, then decodes terminal combined state before commit.
 
-Accepted schema-v7 bootstrap commits request, immutable bootstrap and local
+Accepted current bootstrap commits request, immutable bootstrap and local
 identity records, all nineteen initial grants, and audit atomically. Accepted
-adoption/upgrade/renewal commits its identity/epoch/grant lineage and
+upgrade or renewal commits its epoch/grant lineage and
 request/decision/audit unit atomically. Accepted application mutation, bounded
 query, or lifecycle authorization commits request, allow decision, audit, and
 every applicable snapshot, registry, dependency, grant, or handoff change
@@ -508,22 +456,12 @@ authorization, Domain eligibility, reliable receipt truth, or completion.
 
 ## Migration identity and atomicity
 
-Migration files use immutable names `NNNN-short-name.sql`. `NNNN` is the
-strictly increasing four-digit version, `migration_id` is the registry's
-non-empty semantic ID, and `checksum_sha256` is uppercase SHA-256 of the
-registry-declared canonical UTF-8 representation. It is not derived from the
-checkout transport or Git's normalized storage representation. Each registry
-entry freezes both that checksum and one canonical line ending:
+The sole migration is `0001-current-baseline.sql`, registry ID
+`current-baseline`. Its immutable identity is:
 
 | Version | Canonical line ending | Canonical `checksum_sha256` |
 | --- | --- | --- |
-| `1` | CRLF | `E31C5A3D24E4DB99620635A9CE83F752978C5FD2AF7A15C84CE13BEECAC9C34F` |
-| `2` | CRLF | `0FC2DEECBC8ABBA31F9E5063A870706320F66C5AEE882E4A05DA0CADCF9CEC7E` |
-| `3` | CRLF | `58D428B10198B7483ECB6CED2F88D8DA81A97B052CF650ED4CD012D7183F0702` |
-| `4` | LF | `3446455B4A49C2339EC22E6B99FFF5DD43908D0BEB45EFCE099A79D732CF6557` |
-| `5` | LF | `27AB1730F5A56A2127479C02570068E6BA1CA3DB565147FB0325AAA412CD5C81` |
-| `6` | LF | `3D27258B3C9FB4B11B56B989CA2F341CB4DC68C96168D864D3763D93A4799153` |
-| `7` | LF | `7AB43795AE91C9825E6851393C690144246AFCD14D00C916D978AA708F387987` |
+| `1` | LF | `EF756403D6D03EF73208326B0234991CBC4189372121474E6AD97C11BA70F6BD` |
 
 The sole lazily loaded registry accepts a migration source only when it is the
 complete exact logical content transported with uniformly LF or uniformly
@@ -535,44 +473,39 @@ checksum, and publishes that canonical SQL to every consumer. Source, tests,
 build, and the packed `migrations/` inventory all use this registry; there is
 no fallback identity.
 
-The registry length is also the sole current schema-target projection.
+The registry length is also the sole current schema-target projection: `1`.
 Application status reports the migration evidence carried by its open store,
 and Doctor reports the `SchemaEvidence` it actually inspected after comparing
-it with that target. Explicit released database-reader thresholds and the
-independent schema versions of manifests, intents, receipts, locks, connection
-receipts, and other persisted JSON are compatibility identities, not aliases
-for the mutable current target.
+it with that target. The independent schema versions of manifests, intents,
+receipts, locks, connection receipts, and other persisted JSON are their own
+format identities, not aliases for the database schema.
 
-`.gitattributes` records one explicit historical checkout line ending for each
-shipped migration. That checkout policy is a reproducibility guard, not an
-identity owner. A future migration must add its own reviewed registry identity
+`.gitattributes` records the explicit LF checkout line ending for the baseline.
+That checkout policy is a reproducibility guard, not an identity owner. A
+future migration must add its own reviewed registry identity
 and matching per-file attribute; no wildcard assigns identities to future
 files.
 
-Before writable open, an existing database is inspected read-only. The runner
-rejects an absent/incomplete metadata owner, unknown or newer version,
-non-contiguous/missing/reordered history, ID or checksum mismatch, registry
-identity mismatch, live schema-fingerprint mismatch, failed integrity/FK
-check, or bad Domain/combined application decode. A schema-v3 application prefix
-must pass the shared complete schema-v3 decoder before any writable open,
-pre-upgrade backup, migration statement, or database-byte change. It never
-initializes a replacement over an existing empty, corrupt, or incompatible
-database.
+Before writable open, any existing primary is inspected read-only. The runner
+accepts only schema version 1 with exact `user_version`, the one metadata row,
+the one current-baseline history row, exact ID/checksum/registry identity/live
+fingerprint, integrity/FK success, and complete current Domain/application
+decode. It rejects a zero-length file, absent or incomplete metadata, any other
+schema version, extra/missing/reordered history, identity or checksum drift,
+schema drift, failed integrity/FK checks, or corrupt typed state before opening
+SQLite writable or creating a backup.
 
-Fresh version `0` initialization applies the registry without a pre-upgrade
-backup because no prior database state exists. An existing recognized earlier
-prefix must have zero connection receipts and a verified pre-upgrade backup
-before the next migration starts. Each migration's SQL, history insert,
-metadata/fingerprint update, `user_version`, integrity checks, and declared
-postcondition establish one SQLite transaction. Failure or interruption leaves
-that migration wholly absent or wholly committed; restart begins at the first
-absent registry member.
+Only an absent primary reserved and created by the current runtime owner may
+receive the baseline. Baseline SQL, history insert, metadata/fingerprint,
+`user_version`, integrity checks, and postcondition form one SQLite transaction.
+Failure leaves every baseline object absent. There is no prefix upgrade,
+pre-upgrade backup hook, schema-shape inference, metadata repair, or historical
+database reader. Existing unknown bytes are never replaced or rewritten.
 
-Released migration Git blobs, registry-declared canonical representations,
-IDs, and checksums are never edited, reordered, or skipped. Existing history
-is never rewritten or repaired to accommodate an unknown checksum or registry
-identity. Later plans append new files and must test every shipped earlier
-prefix they claim to upgrade.
+The baseline Git blob, registry-declared canonical representation, ID, and
+checksum are immutable. A future schema change must declare and test every
+source identity for which it claims compatibility; no current pre-baseline
+database has such a claim.
 
 ## Backup generations
 
@@ -599,7 +532,9 @@ Schema `2` additionally binds one exact provenance form:
 Manifest schema `1` remains readable only as immutable historical verification
 evidence. A pre-upgrade generation, schema-1 generation, non-manual generation,
 or manual generation without current schema-2 application provenance is not a
-product restore source.
+product restore source. These V1/V2 parser forms remain operational pending the
+separately scoped backup-format convergence; current startup has no upgrade
+path and never creates a pre-upgrade generation.
 
 Verification rejects any extra/missing/reparse member, changed byte, malformed
 manifest, incompatible history/schema, integrity/FK failure, or current-schema
@@ -629,7 +564,7 @@ confirmed product CLI command. The CLI must first obtain current
 is inferred by persistence from content. Backup inventory and the selected
 generation's existence or validity are deliberately deferred until after that
 application-owned authorization handoff, so absent or corrupt generation
-material cannot become an oracle for revoked, expired, missing, or pre-adoption
+material cannot become an oracle for revoked, expired, or missing
 authority. The persistence request requires the
 store to be closed, zero connection receipts, a restorable schema-2
 application-authorized manual generation, the exact typed lifecycle handoff,
@@ -684,7 +619,7 @@ The closed result is exactly `health`, nullable `initialized`, nullable
 `backupInventory` is `not_checked|empty|valid|invalid`; `restoreState` is
 `not_checked|none|pending|ambiguous`. Health is one of:
 
-- `healthy`, `not_initialized`, or `upgrade_required` for safe readable state;
+- `healthy` or `not_initialized` for safe readable current state;
 - `partial_runtime`, `runtime_active`, `restore_pending`, or
   `restore_ambiguous` for lifecycle/topology state; or
 - `runtime_unsafe`, `schema_newer`, `migration_invalid`, `state_corrupt`, or
@@ -696,9 +631,13 @@ precedes pending restore, which precedes active lock/receipt state. Only an
 inactive runtime is opened read-only for schema/history/integrity and exact
 typed-state checks. Newer schema, invalid migration identity, and corrupt state
 remain their specific findings; an invalid backup/stage overrides only an
-otherwise readable healthy, not-initialized, or upgrade-required result. The
+otherwise readable healthy or not-initialized result. The
 product CLI serializes only this closed result and discards raw paths, SQLite
 errors, rows, pages, and internal identities.
+
+`upgrade_required` remains a closed public doctor enum value during the current
+API-major lifecycle, but the current-only classifier has no database state that
+emits it: every noncurrent database is `migration_invalid` or `schema_newer`.
 
 ## Corruption, incompatible versions, and non-claims
 
@@ -709,7 +648,7 @@ external effect, or initialize a replacement at the same path. A database
 newer than the binary is refused. In-place downgrade does not exist; only the
 separately acknowledged verified-backup mechanism can publish older data.
 
-The current repository proves a local schema-v7 persistence/application
+The current repository proves a local schema-version-1 persistence/application
 foundation, durable claims/leases/fences, reliable Manual-loop records, and
 explicit-Manual dispatcher records, plus versioned local product CLI backup,
 separately confirmed restore, and read-only doctor surfaces on the observed
