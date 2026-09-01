@@ -76,15 +76,16 @@ The final inventory check occurs after staging and before the terminal commit.
 A clean unstaged check cannot substitute for that staged-inventory result.
 
 The optional maintainer doc-gardener reads the strict repository-local
-`.doc-gardener.json`. Its additive exclusions are exactly `.worktrees/**`,
-`node_modules/**`, `dist/**`, and `.pnpm-store/**`; its only explicit document
-role classifies `docs/plans/completed/**/*.md` and
-`docs/plans/evidence/**/*.md` as historical evidence. It ignores no Markdown,
-leaves every unmatched document live-derived, and does not replace the
-repository documentation gate or create a public dependency on a private
-skill. A maintainer report must expose effective policy identity, roles,
-selection/coverage, issues, review candidates, and unverified gaps; exit zero
-alone is not semantic freshness proof.
+`.doc-gardener.json`. Its additive exclusions are exactly `.local/**`,
+`.worktrees/**`, `node_modules/**`, `dist/**`, and `.pnpm-store/**`; its only
+explicit document role classifies `docs/plans/completed/**/*.md` and
+`docs/plans/evidence/**/*.md` as historical evidence. It adds no ignore rule
+for tracked repository documentation, leaves every unmatched tracked document
+live-derived, and does not replace the repository documentation gate or create
+a public dependency on a private skill. A maintainer report must expose
+effective policy identity, roles, selection/coverage, issues, review
+candidates, and unverified gaps; exit zero alone is not semantic freshness
+proof.
 
 ## Current enforcement status
 

@@ -52,9 +52,10 @@ test("every shipped migration has one explicit canonical checkout line ending", 
   );
 });
 
-test("repository doc-gardener policy excludes only generated trees and classifies only immutable plan history", () => {
+test("repository doc-gardener policy excludes only private local and generated trees and classifies only immutable plan history", () => {
   assert.deepEqual(docGardenerPolicy, {
     ignore_globs_add: [
+      ".local/**",
       ".worktrees/**",
       "node_modules/**",
       "dist/**",

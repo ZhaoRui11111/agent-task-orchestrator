@@ -1,5 +1,6 @@
 {
   "ignore_globs_add": [
+    ".local/**",
     ".worktrees/**",
     "node_modules/**",
     "dist/**",

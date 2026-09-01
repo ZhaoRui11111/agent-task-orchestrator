@@ -25,7 +25,7 @@ test("source console entry exposes the versioned CLI through the operational pac
   );
 });
 
-test("package metadata exposes only the normal export and console boundary", () => {
+test("package metadata and tracked inventory expose only the normal package boundary", () => {
   const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
   assert.equal(packageJson.private, true);
   assert.equal(packageJson.type, "module");

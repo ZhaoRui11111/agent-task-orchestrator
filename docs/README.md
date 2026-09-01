@@ -52,9 +52,10 @@ Documentation has explicit roles so that current contracts, plans, and historica
 
 - [Repository-local doc-gardener policy](../.doc-gardener.json)
 
-That optional maintainer policy excludes only generated/worktree trees and
-classifies completed plans/evidence as historical. It supplements rather than
-replaces the public `pnpm docs:check` gate.
+That optional maintainer policy excludes only private `.local` state and
+generated/worktree trees, and classifies completed plans/evidence as
+historical. It supplements rather than replaces the public `pnpm docs:check`
+gate.
 
 Plans describe proposed, active, or completed development work. They do not become current product capability without matching implementation, tests, and current documentation.
 

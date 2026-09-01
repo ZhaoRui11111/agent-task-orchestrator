@@ -94,10 +94,10 @@ pnpm verify:offline
 skeleton nor a command that was not run is evidence of a passing gate.
 
 The repository-local [doc-gardener policy](.doc-gardener.json) is an optional
-maintainer scan policy: it prunes only `.worktrees`, `node_modules`, `dist`, and
-`.pnpm-store`, and treats completed plans/evidence as historical. It does not
-replace `pnpm docs:check` or make the public toolchain depend on a private
-Codex skill.
+maintainer scan policy: it prunes only `.local`, `.worktrees`, `node_modules`,
+`dist`, and `.pnpm-store`, and treats completed plans/evidence as historical.
+It does not replace `pnpm docs:check` or make the public toolchain depend on a
+private Codex skill.
 
 ## Reliable Manual execution and product facade
 
