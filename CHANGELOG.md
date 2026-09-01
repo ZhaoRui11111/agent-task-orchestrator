@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Reset the unreleased backup manifest, restore intent, restore receipt, and
+  restore-intent manifest binding to independent current schema version 1
+  formats. Their exact authorization-bound field sets and recovery protocol are
+  unchanged; version 2, unknown versions, and malformed shapes now have only a
+  generic fail-closed path. Removed the hand-maintained package-root
+  `ScaffoldStatus`/`getScaffoldStatus` registry, and added a repository-local
+  maintainer documentation policy that prunes only generated/worktree trees and
+  classifies completed plans/evidence as historical without weakening the
+  public documentation gate.
 - Rebuilt the unreleased authorization state baseline around cumulative base,
   claim, Manual, and current action sets at vocabulary versions 1 through 4.
   Bootstrap, separately confirmed contiguous upgrades, renewal, epoch/grant

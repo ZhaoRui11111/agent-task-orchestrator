@@ -92,8 +92,10 @@ The architecture separates:
 - `persistence`: the implemented SQLite runtime-root, connection, single
   current-baseline migration, combined schema-version-1 repository, transaction, lifecycle handoff,
   execution attempt/sequence, Manual-loop and dispatcher record storage,
-  backup, restore, read-only doctor, and typed-corruption owner; later records
-  are added only by their implementing phase.
+  backup, restore, read-only doctor, and typed-corruption owner. Backup
+  manifest, restore intent, and restore receipt each have an independent exact
+  current JSON format at schema version 1; those format identities are not the
+  database schema. Later records are added only by their implementing phase.
 - `dispatcher`: the implemented explicit-Manual reconcile-first
   run, ownership/takeover, finite fan-out, and recovery coordinator. It calls
   application and reliable owners rather than duplicating their decisions.
@@ -112,6 +114,10 @@ The architecture separates:
   `cli-api-parser`, `cli-api-presentation`, and `cli-api-runtime` modules split
   types, pure parsing, rendering/mapping, and effects without splitting this
   interface ownership.
+
+The package root is an explicit re-export facade for these implemented
+operational owners. It does not duplicate their truth in a hand-maintained
+scaffold or capability-status registry.
 
 Only the boundaries explicitly described above are implemented. In particular,
 the Manual adapter mutates only its persistence-owned local journal through a

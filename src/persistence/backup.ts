@@ -69,10 +69,13 @@ import {
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const BACKUP_DATABASE_FILE = "state.sqlite3" as const;
 const BACKUP_MANIFEST_FILE = "manifest.json" as const;
+const BACKUP_MANIFEST_SCHEMA_VERSION = 1 as const;
+const RESTORE_INTENT_SCHEMA_VERSION = 1 as const;
+const RESTORE_RECEIPT_SCHEMA_VERSION = 1 as const;
 export type BackupKind = "manual";
 
 export interface BackupManifest {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: typeof BACKUP_MANIFEST_SCHEMA_VERSION;
   readonly generationId: string;
   readonly kind: "manual";
   readonly databaseFile: "state.sqlite3";
@@ -119,7 +122,7 @@ export interface RestoreRequest {
 }
 
 export interface RestoreReceipt {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: typeof RESTORE_RECEIPT_SCHEMA_VERSION;
   readonly restoreId: string;
   readonly backupGenerationId: string;
   readonly restoredAt: string;
@@ -138,7 +141,7 @@ export interface RestoreReceipt {
 }
 
 interface RestoreIntent {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: typeof RESTORE_INTENT_SCHEMA_VERSION;
   readonly restoreId: string;
   readonly backupGenerationId: string;
   readonly backupManifestSha256: string;
@@ -148,7 +151,7 @@ interface RestoreIntent {
   readonly retainedDirectoryIdentity: DirectoryIdentity;
   readonly targetSchemaVersion: number;
   readonly createdAt: string;
-  readonly backupManifestSchemaVersion: 2;
+  readonly backupManifestSchemaVersion: typeof BACKUP_MANIFEST_SCHEMA_VERSION;
   readonly backupAuthorizationId: string;
   readonly backupAuthorizationSha256: string;
   readonly restoreAuthorizationId: string;
@@ -275,7 +278,7 @@ function parseBackupManifest(value: unknown): BackupManifest {
   );
   assertUuid(record.generationId, "Backup generationId");
   if (
-    record.schemaVersion !== 2 ||
+    record.schemaVersion !== BACKUP_MANIFEST_SCHEMA_VERSION ||
     record.kind !== "manual" ||
     record.databaseFile !== BACKUP_DATABASE_FILE ||
     typeof record.databaseLength !== "number" ||
@@ -297,7 +300,7 @@ function parseBackupManifest(value: unknown): BackupManifest {
     throw persistenceFailure("BACKUP_INVALID", "Backup manifest contains an invalid field");
   }
   return Object.freeze({
-    schemaVersion: 2 as const,
+    schemaVersion: BACKUP_MANIFEST_SCHEMA_VERSION,
     generationId: record.generationId,
     kind: "manual" as const,
     databaseFile: BACKUP_DATABASE_FILE,
@@ -766,7 +769,7 @@ export async function createBackupUnderLock(
     clonedDatabase.close();
   }
   const manifest: BackupManifest = Object.freeze({
-    schemaVersion: 2,
+    schemaVersion: BACKUP_MANIFEST_SCHEMA_VERSION,
     generationId,
     kind: "manual",
     databaseFile: BACKUP_DATABASE_FILE,
@@ -1016,7 +1019,7 @@ function parseRestoreIntent(value: unknown): RestoreIntent {
   assertUuid(record.restoreId, "Restore intent restoreId");
   assertUuid(record.backupGenerationId, "Restore intent backupGenerationId");
   if (
-    record.schemaVersion !== 2 ||
+    record.schemaVersion !== RESTORE_INTENT_SCHEMA_VERSION ||
     !isSha256(record.backupManifestSha256) ||
     !isNonemptyString(record.applicationVersion) ||
     !isCanonicalUtcTimestamp(record.createdAt) ||
@@ -1031,7 +1034,7 @@ function parseRestoreIntent(value: unknown): RestoreIntent {
     throw persistenceFailure("RESTORE_BLOCKED", "Restore stage identity has an invalid member name");
   }
   if (
-    record.backupManifestSchemaVersion !== 2 ||
+    record.backupManifestSchemaVersion !== BACKUP_MANIFEST_SCHEMA_VERSION ||
     !isNonemptyString(record.backupAuthorizationId) ||
     !isSha256(record.backupAuthorizationSha256) ||
     !isNonemptyString(record.restoreAuthorizationId) ||
@@ -1041,7 +1044,7 @@ function parseRestoreIntent(value: unknown): RestoreIntent {
     throw persistenceFailure("RESTORE_BLOCKED", "Restore intent authorization binding is invalid");
   }
   return Object.freeze({
-    schemaVersion: 2 as const,
+    schemaVersion: RESTORE_INTENT_SCHEMA_VERSION,
     restoreId: record.restoreId,
     backupGenerationId: record.backupGenerationId,
     backupManifestSha256: record.backupManifestSha256,
@@ -1054,7 +1057,7 @@ function parseRestoreIntent(value: unknown): RestoreIntent {
     ),
     targetSchemaVersion: record.targetSchemaVersion,
     createdAt: record.createdAt,
-    backupManifestSchemaVersion: 2 as const,
+    backupManifestSchemaVersion: BACKUP_MANIFEST_SCHEMA_VERSION,
     backupAuthorizationId: record.backupAuthorizationId,
     backupAuthorizationSha256: record.backupAuthorizationSha256,
     restoreAuthorizationId: record.restoreAuthorizationId,
@@ -1089,7 +1092,7 @@ function parseRestoreReceipt(value: unknown): RestoreReceipt {
   assertUuid(record.restoreId, "Restore receipt restoreId");
   assertUuid(record.backupGenerationId, "Restore receipt backupGenerationId");
   if (
-    record.schemaVersion !== 2 ||
+    record.schemaVersion !== RESTORE_RECEIPT_SCHEMA_VERSION ||
     !isNonemptyString(record.applicationVersion) ||
     !isCanonicalUtcTimestamp(record.restoredAt) ||
     !isSha256(record.previousIdentitySha256) ||
@@ -1112,7 +1115,7 @@ function parseRestoreReceipt(value: unknown): RestoreReceipt {
     throw persistenceFailure("RESTORE_BLOCKED", "Restore receipt authorization binding is invalid");
   }
   return Object.freeze({
-    schemaVersion: 2 as const,
+    schemaVersion: RESTORE_RECEIPT_SCHEMA_VERSION,
     restoreId: record.restoreId,
     backupGenerationId: record.backupGenerationId,
     restoredAt: record.restoredAt,
@@ -1537,7 +1540,7 @@ async function continueRestore(
   validateRetainedRestoreAuthorization(layout, intent);
   validatePublishedBackupAuthorization(layout, intent);
   const receipt: RestoreReceipt = Object.freeze({
-    schemaVersion: 2,
+    schemaVersion: RESTORE_RECEIPT_SCHEMA_VERSION,
     restoreId: intent.restoreId,
     backupGenerationId: intent.backupGenerationId,
     restoredAt: new Date().toISOString(),
@@ -1665,7 +1668,7 @@ async function restoreBackupWithHooks(
     );
     const terminalPrimary = capturePrimaryIdentity(layout);
     const intent: RestoreIntent = Object.freeze({
-      schemaVersion: 2,
+      schemaVersion: RESTORE_INTENT_SCHEMA_VERSION,
       restoreId,
       backupGenerationId: generation.generationId,
       backupManifestSha256: sha256(canonicalJson(generation.manifest)),
@@ -1675,7 +1678,7 @@ async function restoreBackupWithHooks(
       retainedDirectoryIdentity: retainedDirectory.identity,
       targetSchemaVersion: stage.evidence.schemaVersion,
       createdAt: intentCreatedAt,
-      backupManifestSchemaVersion: 2,
+      backupManifestSchemaVersion: BACKUP_MANIFEST_SCHEMA_VERSION,
       backupAuthorizationId: manifest.lifecycleAuthorizationId,
       backupAuthorizationSha256: manifest.lifecycleAuthorizationSha256,
       restoreAuthorizationId: request.authorization.authorizationId,

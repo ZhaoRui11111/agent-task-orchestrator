@@ -56,7 +56,6 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "evaluateAuthorization",
   "evaluateTaskEligibility",
   "evaluateWaitingContinuation",
-  "getScaffoldStatus",
   "inspectExistingRuntimeLayout",
   "inspectPrimaryIdentity",
   "inspectProjectRoot",
@@ -121,23 +120,6 @@ function baseInput() {
 test("the package exposes the local explicit-Manual Phase 2 product surface", () => {
   assert.deepEqual(Object.keys(packageSurface).sort(), [...EXPECTED_RUNTIME_EXPORTS].sort());
   assert.strictEqual(applicationFacade.isCanonicalCancellationReason, packageSurface.isCanonicalCancellationReason);
-  assert.deepEqual(packageSurface.getScaffoldStatus(), {
-    packageName: "agent-task-orchestrator",
-    phase: "phase2-local-manual-product",
-    domainCoreImplemented: true,
-    persistenceFoundationImplemented: true,
-    projectRegistryImplemented: true,
-    runtimeAuthorizationImplemented: true,
-    applicationServiceImplemented: true,
-    localProductCliImplemented: true,
-    backupRestoreDoctorImplemented: true,
-    durableExecutionClaimFoundationImplemented: true,
-    reliableManualExecutionLoopImplemented: true,
-    reconcileFirstManualDispatcherImplemented: true,
-    productRuntimeImplemented: true,
-    executionRuntimeImplemented: true,
-    supportedAdapters: ["manual-local"],
-  });
   assert.deepEqual(packageSurface.TASK_STATES, [
     "idea",
     "ready",

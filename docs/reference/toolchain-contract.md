@@ -109,22 +109,24 @@ into a disposable consumer without registry access, typecheck the public
   execution claim, the local Manual start/inspect/outcome/finalization/
   completion library loop after restart, the typed product facade's Manual
   dispatch-to-completion restart path, and a fresh persistence backup; verify
-  the exported reconcile-first dispatcher/product surfaces and status; and
+  the exported reconcile-first dispatcher/product operational surfaces; and
   invoke the console entry. The console portion compares source, built, and
   packed-installed CLI behavior for omitted and explicit current `ato.api/v1`
   JSON/human responses, retired-major refusal, invalid input, public exits, and
   absence of read-only doctor side effects. Packed declarations must contain one
-  product API major, one public error table/type, and one
-  `localProductCliImplemented` status field.
+  product API major, one public error table/type, the current schema-1
+  backup/restore declarations, and no synthetic scaffold/capability-status
+  registry.
 
-The package-root library export exposes a truthful capability status, the pure
-TypeScript Domain Core including its canonical cancellation-reason predicate,
+The package-root library export is the explicit operational facade. It exposes
+the pure TypeScript Domain Core including its canonical cancellation-reason predicate,
 ProjectRegistry identity owner, finite authorization
 owner, typed Phase 1 and claim application services, the pure execution port
   kit, production local Manual backend/control, reliable execution loop,
 reconcile-first Manual dispatcher, typed local product facade, current schema-version-1
 persistence foundation, local lifecycle surfaces, and versioned product CLI
-API. The packed inventory includes the
+API; it does not maintain a parallel hand-synchronized capability-status
+registry. The packed inventory includes the
 single immutable SQL file under `migrations/`. The source and compiled migration
 registry consume either a uniform LF or CRLF transport of that file and
 reconstruct the same frozen canonical bytes before checksum

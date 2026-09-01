@@ -493,7 +493,14 @@ export async function resolve(specifier, context, nextResolve) {
   invariant(backupDeclarations.includes("export interface BackupManifest"), "current backup manifest declaration is absent");
   invariant(backupDeclarations.includes("export interface RestoreReceipt"), "current restore receipt declaration is absent");
   invariant(
-    !/BackupManifestV[12]|RestoreIntentV[12]|RestoreReceiptV[12]|pre_upgrade|pre_upgrade_internal/u.test(
+    backupDeclarations.includes("declare const BACKUP_MANIFEST_SCHEMA_VERSION: 1;") &&
+      backupDeclarations.includes("declare const RESTORE_RECEIPT_SCHEMA_VERSION: 1;") &&
+      backupDeclarations.includes("readonly schemaVersion: typeof BACKUP_MANIFEST_SCHEMA_VERSION;") &&
+      backupDeclarations.includes("readonly schemaVersion: typeof RESTORE_RECEIPT_SCHEMA_VERSION;"),
+    "current schema-1 backup or restore declaration drifted",
+  );
+  invariant(
+    !/BackupManifestV[12]|RestoreIntentV[12]|RestoreReceiptV[12]|pre_upgrade|pre_upgrade_internal|SCHEMA_VERSION: 2|readonly schemaVersion: 2/u.test(
       backupDeclarations,
     ),
     "packed declarations retain an obsolete backup or restore format surface",
@@ -523,10 +530,11 @@ export async function resolve(specifier, context, nextResolve) {
     ),
     "packed declarations retain an obsolete product API surface",
   );
-  invariant(indexDeclarations.includes("readonly localProductCliImplemented: true;"), "single product CLI status is absent");
   invariant(
-    !/localPhase[12]ProductCliImplemented/u.test(indexDeclarations),
-    "packed declarations retain phase-specific product CLI status",
+    !/ScaffoldStatus|getScaffoldStatus|localProductCliImplemented|localPhase[12]ProductCliImplemented/u.test(
+      indexDeclarations,
+    ),
+    "packed declarations retain a synthetic capability-status surface",
   );
 
   pnpm(["pack", "--pack-destination", generation], repoRoot);
@@ -555,7 +563,6 @@ export async function resolve(specifier, context, nextResolve) {
   createProductRuntime,
   createReliableExecutionService,
   currentSchemaVersion,
-  getScaffoldStatus,
   inspectProjectRoot,
   type ApplicationIngress,
   type ExecutionClaimCommand,
@@ -583,7 +590,6 @@ const restoreReceipt = null as unknown as RestoreReceipt;
 void backupManifest;
 void restoreReceipt;
 void currentSchemaVersion();
-void getScaffoldStatus();
 void AUTHORIZATION_ACTIONS;
 void createApplicationService;
 void createExecutionApplicationService;
@@ -787,7 +793,6 @@ void productRuntime;
         const verified = m.verifyBackupGeneration(layout, backup.generationId);
         await store.close();
         console.log(JSON.stringify({
-          status: m.getScaffoldStatus(),
           states: m.TASK_STATES,
           snapshot: project.value.projectId === "project" && task.value.id === "task",
           claim: inspected.value.fencingToken === 1 && inspected.value.taskRevision === 3,
@@ -813,30 +818,14 @@ void productRuntime;
   invariant(importResult.status === 0, `package export failed: ${importResult.stderr}`);
   const imported = JSON.parse(importResult.stdout.trim());
   invariant(
-    imported.status.phase === "phase2-local-manual-product" &&
-      imported.status.domainCoreImplemented === true &&
-      imported.status.persistenceFoundationImplemented === true &&
-      imported.status.projectRegistryImplemented === true &&
-      imported.status.runtimeAuthorizationImplemented === true &&
-      imported.status.applicationServiceImplemented === true &&
-      imported.status.localProductCliImplemented === true &&
-      !Object.hasOwn(imported.status, "localPhase1ProductCliImplemented") &&
-      !Object.hasOwn(imported.status, "localPhase2ProductCliImplemented") &&
-      imported.status.backupRestoreDoctorImplemented === true &&
-      imported.status.durableExecutionClaimFoundationImplemented === true &&
-      imported.status.reliableManualExecutionLoopImplemented === true &&
-      imported.status.reconcileFirstManualDispatcherImplemented === true &&
-      imported.status.productRuntimeImplemented === true &&
-      imported.status.executionRuntimeImplemented === true &&
-      JSON.stringify(imported.status.supportedAdapters) === JSON.stringify(["manual-local"]) &&
-      JSON.stringify(imported.states) === JSON.stringify(["idea", "ready", "running", "waiting", "completed", "cancelled"]) &&
+    JSON.stringify(imported.states) === JSON.stringify(["idea", "ready", "running", "waiting", "completed", "cancelled"]) &&
       imported.snapshot === true &&
       imported.claim === true &&
       imported.manual === true &&
       imported.dispatcherExport === true &&
       imported.schema === 1 &&
       imported.backup === true,
-    "package export Domain Core, persistence registry, or capability status drifted",
+    "package operational export surface drifted",
   );
 
   const cliEnvironment = {};

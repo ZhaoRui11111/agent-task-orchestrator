@@ -1,0 +1,14 @@
+{
+  "ignore_globs_add": [
+    ".worktrees/**",
+    "node_modules/**",
+    "dist/**",
+    ".pnpm-store/**"
+  ],
+  "document_role_globs": {
+    "historical_evidence": [
+      "docs/plans/completed/**/*.md",
+      "docs/plans/evidence/**/*.md"
+    ]
+  }
+}

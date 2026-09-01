@@ -3,7 +3,6 @@ import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { getScaffoldStatus } from "../src/index.ts";
 import {
   EXPECTED_MIGRATION_FILES,
   EXPECTED_PRODUCTION_SOURCE_FILES,
@@ -12,29 +11,7 @@ import {
   repoRoot,
 } from "../scripts/repo-utils.mjs";
 
-test("package status exposes only the local explicit-Manual Phase 2 product runtime", () => {
-  assert.deepEqual(getScaffoldStatus(), {
-    packageName: "agent-task-orchestrator",
-    phase: "phase2-local-manual-product",
-    domainCoreImplemented: true,
-    persistenceFoundationImplemented: true,
-    projectRegistryImplemented: true,
-    runtimeAuthorizationImplemented: true,
-    applicationServiceImplemented: true,
-    localProductCliImplemented: true,
-    backupRestoreDoctorImplemented: true,
-    durableExecutionClaimFoundationImplemented: true,
-    reliableManualExecutionLoopImplemented: true,
-    reconcileFirstManualDispatcherImplemented: true,
-    productRuntimeImplemented: true,
-    executionRuntimeImplemented: true,
-    supportedAdapters: ["manual-local"],
-  });
-  assert.equal(Object.isFrozen(getScaffoldStatus()), true);
-  assert.equal(Object.isFrozen(getScaffoldStatus().supportedAdapters), true);
-});
-
-test("source console entry exposes the versioned CLI instead of the legacy status dump", () => {
+test("source console entry exposes the versioned CLI through the operational package surface", () => {
   const result = spawnSync(process.execPath, [path.join(repoRoot, "src", "cli.ts")], {
     cwd: repoRoot,
     encoding: "utf8",

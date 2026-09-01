@@ -48,6 +48,14 @@ Documentation has explicit roles so that current contracts, plans, and historica
 
 - [Plan lifecycle](plans/README.md)
 
+## Maintainer documentation scan
+
+- [Repository-local doc-gardener policy](../.doc-gardener.json)
+
+That optional maintainer policy excludes only generated/worktree trees and
+classifies completed plans/evidence as historical. It supplements rather than
+replaces the public `pnpm docs:check` gate.
+
 Plans describe proposed, active, or completed development work. They do not become current product capability without matching implementation, tests, and current documentation.
 
 Current references distinguish the implemented sole-`ato.api/v1` explicit

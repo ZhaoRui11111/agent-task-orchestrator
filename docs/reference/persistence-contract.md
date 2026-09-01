@@ -533,7 +533,7 @@ main file. The owner allocates an unguessable private stage and publishes the
 whole two-member directory by same-parent rename only after all checks pass.
 The published inventory is exactly `state.sqlite3` and `manifest.json`.
 
-Every accepted generation uses the one current manifest schema version `2` and
+Every accepted generation uses the one current manifest schema version `1` and
 one exact field set. It binds:
 
 - generation ID and the required `manual` kind;
@@ -544,11 +544,12 @@ one exact field set. It binds:
 - required `application` provenance, the non-null `runtime.backup` lifecycle
   authorization ID and digest, and the exact source application-state digest.
 
-There is no manifest-schema-1 reader, `pre_upgrade` kind,
+There is no noncurrent manifest reader, `pre_upgrade` kind,
 `pre_upgrade_internal` provenance, nullable-authorization writer, or historical
-generation success path. A schema-1, pre-upgrade, missing-field, extra-field,
-substituted-provenance, or otherwise malformed manifest is invalid immutable
-input. Verification and doctor do not rewrite, adopt, delete, or repair it.
+generation success path. A schema-2, unknown-version, missing-field,
+extra-field, substituted-provenance, noncanonical, or otherwise malformed
+manifest is invalid immutable input. Verification and doctor do not rewrite,
+adopt, delete, or repair it.
 
 Verification rejects any extra/missing/reparse member, changed byte, malformed
 manifest, incompatible history/schema, integrity/FK failure, or current-schema
@@ -580,7 +581,7 @@ generation's existence or validity are deliberately deferred until after that
 application-owned authorization handoff, so absent or corrupt generation
 material cannot become an oracle for revoked, expired, or missing
 authority. The persistence request requires the
-store to be closed, zero connection receipts, a restorable schema-2
+store to be closed, zero connection receipts, a restorable manifest-schema-1
 application-authorized manual generation, the exact typed lifecycle handoff,
 `acknowledgeDataLoss: true`, a non-empty application version, and an exact
 expected-current raw primary file-set identity. The raw identity
@@ -590,7 +591,7 @@ protected mutation.
 
 The owner clones and verifies the selected generation into an exclusively
 reserved restore stage, creates a private retained generation, and writes the
-one exact current identity-bound schema-2 restore intent before moving primary bytes. The intent
+one exact current identity-bound schema-1 restore intent before moving primary bytes. The intent
 binds the retained directory identity as well as the backup manifest and backup
 authorization digests, current restore authorization and authorized-state
 digest, expected primary set, and stage. It then:
@@ -600,7 +601,7 @@ digest, expected primary set, and stage. It then:
 2. publishes the verified staged database at `state.sqlite3`;
 3. performs schema, integrity, history, and typed readback on the published
    target;
-4. writes the one exact current immutable schema-2 restore receipt binding the backup and both
+4. writes the one exact current immutable schema-1 restore receipt binding the backup and both
    authorization lineages, prior identity, target checksum/schema, retained
    generation identity, application version, and time;
    and
@@ -616,12 +617,13 @@ duplicated, mixed, substituted, or unknown topology remains
 `RESTORE_BLOCKED` for current doctor classification and a later explicit user
 decision.
 
-There is no restore-intent-schema-1 or restore-receipt-schema-1 reader and no
-version-selected optional field set. Both current artifacts always carry the
-complete backup and restore authorization lineage. A retired, missing-field,
-extra-field, noncanonical, or substituted intent or receipt blocks explicit
-recovery and remains untouched; doctor reports the associated topology as
-ambiguous without performing a recovery write.
+There is no noncurrent restore-intent or restore-receipt reader and no
+version-selected optional field set. Both current artifacts use schema version
+`1` and always carry the complete backup and restore authorization lineage. A
+schema-2, unknown-version, missing-field, extra-field, noncanonical, or
+substituted intent or receipt blocks explicit recovery and remains untouched;
+doctor reports the associated topology as ambiguous without performing a
+recovery write.
 
 The current failpoint evidence covers process interruption at these logical
 boundaries. It is not a power-loss durability, hardware recovery, backup

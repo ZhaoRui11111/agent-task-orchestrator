@@ -268,7 +268,7 @@ test("manual backup refuses another reader, then publishes an exact authorized g
     const generation = await createAuthorizedTestBackup(first);
     const verified = verifyBackupGeneration(fixture.layout, generation.generationId);
     assert.deepEqual(verified, generation);
-    assert.equal(verified.manifest.schemaVersion, 2);
+    assert.equal(verified.manifest.schemaVersion, 1);
     assert.equal(verified.manifest.kind, "manual");
     assert.equal(verified.manifest.provenanceKind, "application");
     assert.equal(typeof verified.manifest.lifecycleAuthorizationId, "string");
@@ -941,9 +941,16 @@ test("backup verification refuses missing, changed, extra, newer, or wrong-appli
   }
 });
 
-test("schema-one and pre-upgrade backup artifacts are immutable invalid input", async () => {
-  for (const provenance of ["schema-one", "pre-upgrade"]) {
-    const fixture = createPersistenceFixture(`backup-history-${provenance}`);
+test("unsupported-version and malformed backup manifests are immutable invalid input", async () => {
+  for (const corruption of [
+    "unsupported-version",
+    "unknown-version",
+    "missing-field",
+    "extra-field",
+    "noncanonical",
+    "substituted-provenance",
+  ]) {
+    const fixture = createPersistenceFixture(`backup-invalid-${corruption}`);
     let store;
     try {
       store = await openPersistence(fixture.layout, { applicationVersion: "history" });
@@ -963,20 +970,15 @@ test("schema-one and pre-upgrade backup artifacts are immutable invalid input", 
         "manifest.json",
       );
       const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-      if (provenance === "schema-one") {
-        manifest.schemaVersion = 1;
-        delete manifest.provenanceKind;
-        delete manifest.lifecycleAuthorizationId;
-        delete manifest.lifecycleAuthorizationSha256;
-        delete manifest.sourceApplicationStateSha256;
-      } else {
-        manifest.kind = "pre_upgrade";
-        manifest.provenanceKind = "pre_upgrade_internal";
-        manifest.lifecycleAuthorizationId = null;
-        manifest.lifecycleAuthorizationSha256 = null;
-        manifest.sourceApplicationStateSha256 = null;
-      }
-      writeFileSync(manifestPath, canonicalJson(manifest));
+      if (corruption === "unsupported-version") manifest.schemaVersion = 2;
+      if (corruption === "unknown-version") manifest.schemaVersion = 99;
+      if (corruption === "missing-field") delete manifest.lifecycleAuthorizationId;
+      if (corruption === "extra-field") manifest.unsupported = true;
+      if (corruption === "substituted-provenance") manifest.provenanceKind = "unknown";
+      writeFileSync(
+        manifestPath,
+        corruption === "noncanonical" ? `${JSON.stringify(manifest, null, 2)}\n` : canonicalJson(manifest),
+      );
       const generationDirectory = path.dirname(manifestPath);
       const generationBefore = runtimeInventory(generationDirectory);
       const primaryBefore = readRegularFile(fixture.layout.databasePath);
@@ -1387,8 +1389,15 @@ test("interruption after publication or receipt resumes without fabricating roll
   }
 });
 
-test("current restore intent is exact and retired or malformed intents remain blocked evidence", async () => {
-  for (const corruption of ["schema-one", "missing-field", "extra-field", "noncanonical"]) {
+test("current restore intent is exact and unsupported-version or malformed intents remain blocked evidence", async () => {
+  for (const corruption of [
+    "unsupported-version",
+    "unknown-version",
+    "unsupported-manifest-version",
+    "missing-field",
+    "extra-field",
+    "noncanonical",
+  ]) {
     const fixture = createPersistenceFixture(`restore-intent-${corruption}`);
     let store;
     try {
@@ -1415,18 +1424,16 @@ test("current restore intent is exact and retired or malformed intents remain bl
       );
       const currentIntentBytes = readFileSync(fixture.layout.restoreIntentPath, "utf8");
       const intent = JSON.parse(currentIntentBytes);
-      assert.equal(intent.schemaVersion, 2);
-      assert.equal(intent.backupManifestSchemaVersion, 2);
+      assert.equal(intent.schemaVersion, 1);
+      assert.equal(intent.backupManifestSchemaVersion, 1);
       assert.deepEqual(Object.keys(intent).sort(), CURRENT_RESTORE_INTENT_FIELDS);
       assert.equal(currentIntentBytes, canonicalJson(intent));
-      if (corruption === "schema-one") {
-        intent.schemaVersion = 1;
-        delete intent.backupAuthorizationId;
-        delete intent.backupAuthorizationSha256;
-        delete intent.backupManifestSchemaVersion;
-        delete intent.restoreAuthorizationId;
-        delete intent.restoreAuthorizationSha256;
-        delete intent.restoreAuthorizedStateSha256;
+      if (corruption === "unsupported-version") {
+        intent.schemaVersion = 2;
+      } else if (corruption === "unknown-version") {
+        intent.schemaVersion = 99;
+      } else if (corruption === "unsupported-manifest-version") {
+        intent.backupManifestSchemaVersion = 2;
       } else if (corruption === "missing-field") {
         delete intent.restoreAuthorizationId;
       } else if (corruption === "extra-field") {
@@ -1451,8 +1458,14 @@ test("current restore intent is exact and retired or malformed intents remain bl
   }
 });
 
-test("current restore receipt is exact and retired or malformed receipts remain blocked evidence", async () => {
-  for (const corruption of ["schema-one", "missing-field", "extra-field", "noncanonical"]) {
+test("current restore receipt is exact and unsupported-version or malformed receipts remain blocked evidence", async () => {
+  for (const corruption of [
+    "unsupported-version",
+    "unknown-version",
+    "missing-field",
+    "extra-field",
+    "noncanonical",
+  ]) {
     const fixture = createPersistenceFixture(`restore-receipt-${corruption}`);
     let store;
     try {
@@ -1486,17 +1499,13 @@ test("current restore receipt is exact and retired or malformed receipts remain 
       const receiptPath = path.join(fixture.layout.restoreReceiptsRoot, `${restoreId}.json`);
       const currentReceiptBytes = readFileSync(receiptPath, "utf8");
       const receipt = JSON.parse(currentReceiptBytes);
-      assert.equal(receipt.schemaVersion, 2);
+      assert.equal(receipt.schemaVersion, 1);
       assert.deepEqual(Object.keys(receipt).sort(), CURRENT_RESTORE_RECEIPT_FIELDS);
       assert.equal(currentReceiptBytes, canonicalJson(receipt));
-      if (corruption === "schema-one") {
-        receipt.schemaVersion = 1;
-        delete receipt.backupAuthorizationId;
-        delete receipt.backupAuthorizationSha256;
-        delete receipt.backupManifestSha256;
-        delete receipt.restoreAuthorizationId;
-        delete receipt.restoreAuthorizationSha256;
-        delete receipt.restoreAuthorizedStateSha256;
+      if (corruption === "unsupported-version") {
+        receipt.schemaVersion = 2;
+      } else if (corruption === "unknown-version") {
+        receipt.schemaVersion = 99;
       } else if (corruption === "missing-field") {
         delete receipt.restoreAuthorizationId;
       } else if (corruption === "extra-field") {

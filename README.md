@@ -13,6 +13,8 @@ runtime authorization model, one typed Project/Task/dependency application
 service, current schema-version-1 SQLite persistence, a composable local Phase 1 `ato` product
 CLI, a typed reliable Manual execution loop, a reconcile-first Manual
 dispatcher, and a sole current `ato.api/v1` local Manual product surface. The
+three backup/restore JSON artifacts each use an independent exact current
+schema version `1`; that number does not couple them to the database schema.
 application owner remains the sole business command/query owner and atomically
 coordinates Domain snapshots, registry/grant changes, authorization decisions,
 execution attempts, leases/fences, durable operation evidence, and sanitized audit. The CLI provides initialization,
@@ -91,10 +93,18 @@ pnpm verify:offline
 `pnpm dependency:audit` is a separate network-dependent query. Neither the CI
 skeleton nor a command that was not run is evidence of a passing gate.
 
+The repository-local [doc-gardener policy](.doc-gardener.json) is an optional
+maintainer scan policy: it prunes only `.worktrees`, `node_modules`, `dist`, and
+`.pnpm-store`, and treats completed plans/evidence as historical. It does not
+replace `pnpm docs:check` or make the public toolchain depend on a private
+Codex skill.
+
 ## Reliable Manual execution and product facade
 
-The package exports the provisional typed claim service and reliable Manual
-loop. Fresh schema creation, bootstrap, and vocabulary-version-2 renewal do not create any of the six
+The package root exports the implemented typed operational owners directly; it
+does not expose a second hand-maintained capability-status registry. The
+package exports the provisional typed claim service and reliable Manual loop.
+Fresh schema creation, bootstrap, and vocabulary-version-2 renewal do not create any of the six
 Manual-loop grants. A version-2 claim-capable runtime must perform its own fresh,
 identity- and confirmation-bound upgrade to version 3 before
 `execution.start`, `execution.inspect`, `execution.resume`, `execution.retry`,

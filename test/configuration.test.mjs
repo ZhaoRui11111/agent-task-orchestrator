@@ -7,6 +7,7 @@ import { packagePolicyFailures, repoRoot } from "../scripts/repo-utils.mjs";
 const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const npmrc = readFileSync(path.join(repoRoot, ".npmrc"), "utf8");
 const gitAttributes = readFileSync(path.join(repoRoot, ".gitattributes"), "utf8");
+const docGardenerPolicy = JSON.parse(readFileSync(path.join(repoRoot, ".doc-gardener.json"), "utf8"));
 
 test("package commands and pnpm configuration are exact and fail closed", () => {
   assert.deepEqual(packagePolicyFailures(packageJson, npmrc), []);
@@ -49,4 +50,22 @@ test("every shipped migration has one explicit canonical checkout line ending", 
       "migrations/0001-current-baseline.sql text eol=lf",
     ],
   );
+});
+
+test("repository doc-gardener policy excludes only generated trees and classifies only immutable plan history", () => {
+  assert.deepEqual(docGardenerPolicy, {
+    ignore_globs_add: [
+      ".worktrees/**",
+      "node_modules/**",
+      "dist/**",
+      ".pnpm-store/**",
+    ],
+    document_role_globs: {
+      historical_evidence: [
+        "docs/plans/completed/**/*.md",
+        "docs/plans/evidence/**/*.md",
+      ],
+    },
+  });
+  assert.equal(JSON.stringify(packageJson.scripts).includes("doc_gardener"), false);
 });
