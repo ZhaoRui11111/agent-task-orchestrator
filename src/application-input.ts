@@ -4,6 +4,7 @@ import {
   isHighRiskAction,
   type AuthorizationScope,
 } from "./authorization.ts";
+import { isCanonicalCancellationReason } from "./domain.ts";
 import {
   inspectTrustedRuntimeRoot,
   ProjectRegistryError,
@@ -26,6 +27,8 @@ import type {
   TrustedActorAssertion,
   UnknownRecord,
 } from "./application-model.ts";
+
+export { isCanonicalCancellationReason };
 
 function exactRecord(value: unknown, keys: readonly string[]): Readonly<UnknownRecord> | null {
   try {
@@ -58,35 +61,6 @@ function domainIdentifier(value: unknown): value is string {
 
 function nonempty(value: unknown, maximum = 16_384): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= maximum && !value.includes("\0");
-}
-
-const FORBIDDEN_CANCELLATION_REASON_TEXT = /[\p{Cc}\p{Cf}]/u;
-
-function wellFormedText(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
-      index += 1;
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return false;
-    }
-  }
-  return true;
-}
-
-export function isCanonicalCancellationReason(value: unknown): value is string {
-  if (
-    typeof value !== "string" ||
-    !wellFormedText(value) ||
-    FORBIDDEN_CANCELLATION_REASON_TEXT.test(value) ||
-    value.normalize("NFC") !== value
-  ) {
-    return false;
-  }
-  const encodedBytes = new TextEncoder().encode(value).byteLength;
-  return encodedBytes >= 1 && encodedBytes <= 4096;
 }
 
 function revision(value: unknown): value is number {

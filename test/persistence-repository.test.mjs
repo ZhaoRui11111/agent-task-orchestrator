@@ -239,6 +239,41 @@ test("repository persists an ordinary Domain Core body mutation at exactly one n
 
 const corruptionCases = [
   {
+    name: "empty cancellation reason",
+    expectedCancellationReason: "",
+    mutate(database) {
+      database.prepare("UPDATE tasks SET cancellation_reason='' WHERE task_id='cancelled'").run();
+    },
+  },
+  {
+    name: "oversized cancellation reason",
+    expectedCancellationReason: "é".repeat(2048) + "x",
+    mutate(database) {
+      database.prepare("UPDATE tasks SET cancellation_reason=? WHERE task_id='cancelled'").run("é".repeat(2048) + "x");
+    },
+  },
+  {
+    name: "control cancellation reason",
+    expectedCancellationReason: "control\u001freason",
+    mutate(database) {
+      database.prepare("UPDATE tasks SET cancellation_reason=? WHERE task_id='cancelled'").run("control\u001freason");
+    },
+  },
+  {
+    name: "format cancellation reason",
+    expectedCancellationReason: "format\u200dreason",
+    mutate(database) {
+      database.prepare("UPDATE tasks SET cancellation_reason=? WHERE task_id='cancelled'").run("format\u200dreason");
+    },
+  },
+  {
+    name: "non-NFC cancellation reason",
+    expectedCancellationReason: "e\u0301",
+    mutate(database) {
+      database.prepare("UPDATE tasks SET cancellation_reason=? WHERE task_id='cancelled'").run("e\u0301");
+    },
+  },
+  {
     name: "unknown enum",
     mutate(database) {
       database.exec("PRAGMA ignore_check_constraints=ON");
@@ -276,6 +311,17 @@ for (const corruption of corruptionCases) {
         openPersistence(fixture.layout, { applicationVersion: "decode" }),
         (error) => expectPersistenceError(error, "CORRUPT_ROW"),
       );
+      if ("expectedCancellationReason" in corruption) {
+        const evidenceDatabase = new DatabaseSync(fixture.layout.databasePath);
+        try {
+          const evidence = evidenceDatabase
+            .prepare("SELECT cancellation_reason FROM tasks WHERE task_id='cancelled'")
+            .get();
+          assert.equal(evidence.cancellation_reason, corruption.expectedCancellationReason);
+        } finally {
+          evidenceDatabase.close();
+        }
+      }
     } finally {
       if (store) await store.close();
       cleanupPersistenceFixture(fixture);

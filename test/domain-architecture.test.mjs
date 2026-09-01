@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import * as applicationFacade from "../src/application.ts";
 import * as packageSurface from "../src/index.ts";
 import { repoRoot } from "../scripts/repo-utils.mjs";
 
@@ -62,6 +63,7 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "inspectRuntimeDoctor",
   "inspectTrustedRuntimeRoot",
   "isAuthorizationAction",
+  "isCanonicalCancellationReason",
   "isHighRiskAction",
   "loadLocalRuntime",
   "openPersistence",
@@ -116,6 +118,7 @@ function baseInput() {
 
 test("the package exposes the local explicit-Manual Phase 2 product surface", () => {
   assert.deepEqual(Object.keys(packageSurface).sort(), [...EXPECTED_RUNTIME_EXPORTS].sort());
+  assert.strictEqual(applicationFacade.isCanonicalCancellationReason, packageSurface.isCanonicalCancellationReason);
   assert.deepEqual(packageSurface.getScaffoldStatus(), {
     packageName: "agent-task-orchestrator",
     phase: "phase2-local-manual-product",

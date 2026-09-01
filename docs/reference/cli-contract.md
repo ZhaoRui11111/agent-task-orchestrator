@@ -119,8 +119,9 @@ There is no alias for a command or option. In particular there is no Task
   numeric text is `CLI_INVALID_INPUT`.
 - Task body is 1 through 16,384 UTF-8 bytes. Cancellation reason is one exact
   well-formed NFC string containing no Unicode `Cc` or `Cf` code point and
-  encoding to 1 through 4,096 UTF-8 bytes; the typed Application owner enforces
-  this same predicate again rather than measuring JavaScript UTF-16 code units.
+  encoding to 1 through 4,096 UTF-8 bytes; CLI parsing and the typed Application
+  owner consume the same Domain-owned predicate rather than measuring
+  JavaScript UTF-16 code units.
   Project root is an absolute traversal-free path of at most 1,024 UTF-8 bytes
   before persistence identity checks.
 - `ACTION` is one exact member of the current finite thirty-action vocabulary owned by the
@@ -132,9 +133,9 @@ Parsing and all of these bounds complete before runtime selection, creation, or
 open. Actor, principal, request identity, lifecycle authorization, current time,
 and confirmation result have no caller-supplied field.
 
-The cancellation-reason predicate governs newly submitted commands only. It
-does not redefine the persisted Domain snapshot invariant, normalize historical
-reasons, or authorize a reader, schema, migration, or data rewrite.
+The cancellation-reason predicate is also the current Domain snapshot
+invariant. It does not authorize normalization, schema migration, repair, or a
+data rewrite; a persisted current Task that violates it is typed corruption.
 
 ## Confirmation and authorization experience
 

@@ -271,13 +271,14 @@ replay it. Missing, false, or throwing confirmation denies the operation.
 
 The application owner first parses the complete typed command envelope before
 using any trusted ingress provider or reading Application state. For
-`task.cancel`, it applies the exact CLI-owned cancellation-reason predicate: a
+`task.cancel`, it applies the exact Domain-owned cancellation-reason predicate: a
 well-formed NFC string with no Unicode `Cc`/`Cf` code point and 1 through 4,096
 encoded UTF-8 bytes. Malformed typed input returns `INVALID_INPUT` with null
 request and correlation identities and creates no request, decision, audit,
-Domain, registry, grant, or persistence mutation. This is a new-command ingress
-rule only: the Domain/persistence snapshot reader keeps its historical non-empty
-reason rule and neither normalizes, rewrites, nor rejects an existing reason.
+Domain, registry, grant, or persistence mutation. The same pure predicate is
+authoritative for Domain transitions and complete snapshot reconstruction;
+persistence therefore refuses a current stored Task whose cancellation reason
+violates it as typed corruption, without normalizing or rewriting data.
 
 For every accepted typed command or exact inspection query, the application
 owner keeps trusted interaction and filesystem inspection outside the SQLite

@@ -101,9 +101,13 @@ Identifiers are opaque non-empty `TEXT`, revisions are positive safe SQLite
 `INTEGER` values, booleans are `0` or `1`, and the known state and cancellation
 enums are constrained. Waiting fields are present only for `waiting` Tasks;
 completion fields only for `completed` Tasks; cancellation fields only for
-`cancelled` Tasks. The repository reconstructs the complete graph through the
-Domain Core, which remains authoritative for cross-row invariants such as
-same-Project parents and acyclic relationships.
+`cancelled` Tasks. A cancellation reason is a well-formed NFC string with no
+Unicode `Cc`/`Cf` code point and 1 through 4,096 encoded UTF-8 bytes, as decided
+by the Domain Core's sole exported predicate. The repository reconstructs the
+complete graph through the Domain Core, which remains authoritative for this
+text invariant and cross-row invariants such as same-Project parents and
+acyclic relationships. A current stored reason that violates the predicate is
+`CORRUPT_ROW`; the reader does not normalize, rewrite, migrate, or repair it.
 
 `task_dependencies` is keyed by (`task_id`, `dependency_id`), rejects a
 self-edge, and has deferred foreign keys to both Tasks. Foreign keys from Tasks

@@ -9,6 +9,7 @@ import {
   createTask,
   evaluateTaskEligibility,
   evaluateWaitingContinuation,
+  isCanonicalCancellationReason,
   registerProject,
   removeTaskDependency,
   setTaskParent,
@@ -812,6 +813,64 @@ test("waiting cancellation verifies a referenced execution and needs no receipt 
     }),
     "INVALID_INPUT",
   );
+});
+
+test("one canonical cancellation-reason predicate governs snapshots and both Domain transitions", () => {
+  const minimum = "x";
+  const maximum = "é".repeat(2048);
+  assert.equal(new TextEncoder().encode(minimum).byteLength, 1);
+  assert.equal(new TextEncoder().encode(maximum).byteLength, 4096);
+  assert.equal(isCanonicalCancellationReason(minimum), true);
+  assert.equal(isCanonicalCancellationReason(maximum), true);
+  assert.equal(isCanonicalCancellationReason("operator declined"), true);
+
+  const invalidReasons = [
+    "",
+    `${maximum}x`,
+    "control\u001freason",
+    "format\u200dreason",
+    "e\u0301",
+    "surrogate\ud800reason",
+  ];
+  const idea = snapshot([taskValue("idea")]);
+  const running = snapshot([taskValue("running")]);
+  const runningTask = getTask(running);
+
+  for (const reason of invalidReasons) {
+    assert.equal(isCanonicalCancellationReason(reason), false, JSON.stringify(reason));
+    expectFailure(
+      createDomainSnapshot({
+        projects: [project()],
+        tasks: [taskValue("cancelled", { cancellationReason: reason })],
+      }),
+      "INVALID_SNAPSHOT",
+    );
+    expectFailure(
+      transitionTask(idea, {
+        taskId: "task",
+        event: "cancel",
+        targetState: "cancelled",
+        payload: { reason, executionDisposition: null, dependentWaiting: [] },
+      }),
+      "INVALID_INPUT",
+    );
+    expectFailure(
+      transitionTask(running, {
+        taskId: "task",
+        event: "interruption_verified",
+        targetState: "cancelled",
+        payload: {
+          reason,
+          verification: executionDisposition(runningTask),
+          dependentWaiting: [],
+        },
+      }),
+      "INVALID_INPUT",
+    );
+  }
+
+  assert.equal(getTask(idea).state, "idea");
+  assert.equal(getTask(running).state, "running");
 });
 
 test("structured invalid inputs and boundary revisions fail without mutation", () => {

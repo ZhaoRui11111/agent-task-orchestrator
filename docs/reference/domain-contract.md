@@ -84,6 +84,17 @@ execution disposition bound to the verified receipt, Task revision and
 execution ID; it does not reuse the running-only `interruption_verified` event
 or leave the verified cancellation unfinalizable.
 
+### Cancellation reason invariant
+
+Every cancellation fact has one exact reason accepted by the exported pure
+`isCanonicalCancellationReason` predicate. The value MUST be a well-formed
+Unicode string in NFC, contain no code point in Unicode general category `Cc`
+or `Cf`, and encode to 1 through 4,096 UTF-8 bytes inclusive. This single
+predicate governs `cancel`, `interruption_verified`, and complete Domain
+snapshot reconstruction. Invalid transition input returns `INVALID_INPUT`; an
+invalid complete snapshot returns `INVALID_SNAPSHOT`. The Domain Core neither
+normalizes nor rewrites a reason and defines no historical compatibility rule.
+
 ### Terminal immutability
 
 `completed` and `cancelled` are terminal. Their state, Project binding, parent,

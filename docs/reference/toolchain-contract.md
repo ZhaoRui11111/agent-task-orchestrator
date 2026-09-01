@@ -118,7 +118,8 @@ into a disposable consumer without registry access, typecheck the public
   `localProductCliImplemented` status field.
 
 The package-root library export exposes a truthful capability status, the pure
-TypeScript Domain Core, ProjectRegistry identity owner, finite authorization
+TypeScript Domain Core including its canonical cancellation-reason predicate,
+ProjectRegistry identity owner, finite authorization
 owner, typed Phase 1 and claim application services, the pure execution port
   kit, production local Manual backend/control, reliable execution loop,
 reconcile-first Manual dispatcher, typed local product facade, current schema-version-1

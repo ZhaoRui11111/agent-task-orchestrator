@@ -375,6 +375,35 @@ function isIdentifier(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+const FORBIDDEN_CANCELLATION_REASON_TEXT = /[\p{Cc}\p{Cf}]/u;
+
+function wellFormedText(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function isCanonicalCancellationReason(value: unknown): value is string {
+  if (
+    typeof value !== "string" ||
+    !wellFormedText(value) ||
+    FORBIDDEN_CANCELLATION_REASON_TEXT.test(value) ||
+    value.normalize("NFC") !== value
+  ) {
+    return false;
+  }
+  const encodedBytes = new TextEncoder().encode(value).byteLength;
+  return encodedBytes >= 1 && encodedBytes <= 4096;
+}
+
 function isNullableIdentifier(value: unknown): value is string | null {
   return value === null || isIdentifier(value);
 }
@@ -556,7 +585,7 @@ function parseCancellation(value: unknown, path: string): Parsed<CancellationFac
   }
   if (
     (record.event !== "cancel" && record.event !== "interruption_verified") ||
-    !isIdentifier(record.reason) ||
+    !isCanonicalCancellationReason(record.reason) ||
     !isNullableIdentifier(record.verificationId) ||
     !isPositiveInteger(record.acceptedTaskRevision)
   ) {
@@ -1784,8 +1813,8 @@ function transitionTaskUnchecked(
     case "cancel": {
       const payload = transitionPayload(command.value.payload, ["reason", "executionDisposition", "dependentWaiting"]);
       if (!payload.ok) return failure(payload.error);
-      if (!isIdentifier(payload.value.reason)) {
-        return failure(domainError("INVALID_INPUT", "Cancellation reason must be nonempty", { taskId: task.id }));
+      if (!isCanonicalCancellationReason(payload.value.reason)) {
+        return failure(domainError("INVALID_INPUT", "Cancellation reason is invalid", { taskId: task.id }));
       }
       const dependents = parseDependentWaiting(payload.value.dependentWaiting);
       if (!dependents.ok) return failure(dependents.error);
@@ -1820,8 +1849,8 @@ function transitionTaskUnchecked(
     case "interruption_verified": {
       const payload = transitionPayload(command.value.payload, ["reason", "verification", "dependentWaiting"]);
       if (!payload.ok) return failure(payload.error);
-      if (!isIdentifier(payload.value.reason)) {
-        return failure(domainError("INVALID_INPUT", "Cancellation reason must be nonempty", { taskId: task.id }));
+      if (!isCanonicalCancellationReason(payload.value.reason)) {
+        return failure(domainError("INVALID_INPUT", "Cancellation reason is invalid", { taskId: task.id }));
       }
       const verification = parseExecutionDisposition(payload.value.verification, task);
       if (!verification.ok) return failure(verification.error);

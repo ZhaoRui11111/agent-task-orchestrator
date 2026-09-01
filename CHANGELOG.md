@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Unified cancellation-reason validation behind one exported pure Domain
+  predicate: CLI and typed Application ingress, Domain cancellation transitions,
+  complete snapshots, and persistence readback now enforce the same well-formed
+  NFC, no-`Cc`/`Cf`, 1-through-4,096-UTF-8-byte invariant. Invalid current
+  stored reasons are typed corruption; no historical compatibility, migration,
+  normalization, or rewrite path remains.
 - Decomposed the Application and CLI API combination files into exact acyclic
   model/input/policy/Domain/service and model/parser/presentation/runtime
   module families behind their stable explicit facades. The service and CLI

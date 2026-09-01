@@ -86,6 +86,8 @@ The architecture separates:
   backend. The physical `application-model`, `application-input`,
   `application-policy`, `application-domain`, and `application-service`
   modules preserve that one semantic owner behind the stable facade.
+  `application-input` consumes the Domain Core's exported pure canonical
+  cancellation-reason predicate instead of defining a second text invariant.
 - `persistence`: the implemented SQLite runtime-root, connection, single
   current-baseline migration, combined schema-version-1 repository, transaction, lifecycle handoff,
   execution attempt/sequence, Manual-loop and dispatcher record storage,
