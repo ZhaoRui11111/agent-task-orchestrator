@@ -5,9 +5,11 @@ import {
   DISPATCH_AUTHORIZATION_ACTIONS,
   EXECUTION_AUTHORIZATION_ACTIONS,
   MANUAL_EXECUTION_AUTHORIZATION_ACTIONS,
-  PHASE1_AUTHORIZATION_ACTIONS,
-  PHASE2A_AUTHORIZATION_ACTIONS,
-  PHASE2B_AUTHORIZATION_ACTIONS,
+  BASE_AUTHORIZATION_ACTIONS,
+  CLAIM_AUTHORIZATION_ACTIONS,
+  MANUAL_AUTHORIZATION_ACTIONS,
+  actionsForVocabulary,
+  isAuthorizationVocabularyVersion,
   canIssueGrant,
   evaluateAuthorization,
   isAuthorizationAction,
@@ -46,17 +48,20 @@ function evaluation(overrides = {}) {
 }
 
 test("authorization vocabulary is finite and has no wildcard or content-derived action", () => {
-  assert.equal(PHASE1_AUTHORIZATION_ACTIONS.length, 19);
+  assert.equal(BASE_AUTHORIZATION_ACTIONS.length, 19);
   assert.equal(EXECUTION_AUTHORIZATION_ACTIONS.length, 4);
-  assert.equal(PHASE2A_AUTHORIZATION_ACTIONS.length, 23);
+  assert.equal(CLAIM_AUTHORIZATION_ACTIONS.length, 23);
   assert.equal(MANUAL_EXECUTION_AUTHORIZATION_ACTIONS.length, 6);
-  assert.equal(PHASE2B_AUTHORIZATION_ACTIONS.length, 29);
+  assert.equal(MANUAL_AUTHORIZATION_ACTIONS.length, 29);
   assert.deepEqual(DISPATCH_AUTHORIZATION_ACTIONS, ["dispatch.run"]);
   assert.equal(AUTHORIZATION_ACTIONS.length, 30);
   assert.equal(new Set(AUTHORIZATION_ACTIONS).size, 30);
   assert.equal(isAuthorizationAction("*"), false);
   assert.equal(isAuthorizationAction("task body says project.disable"), false);
   assert.equal(isAuthorizationAction("task.create"), true);
+  assert.deepEqual([1, 2, 3, 4].map((version) => actionsForVocabulary(version).length), [19, 23, 29, 30]);
+  assert.equal([1, 2, 3, 4].every(isAuthorizationVocabularyVersion), true);
+  assert.equal([0, 5, 6, 7, "4"].some(isAuthorizationVocabularyVersion), false);
 });
 
 test("authorization requires exact actor, action, scope revisions, lifetime, revocation, policy, and confirmation", () => {

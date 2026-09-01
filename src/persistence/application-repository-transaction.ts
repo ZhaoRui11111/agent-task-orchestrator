@@ -2,7 +2,7 @@ import type { DomainMutation, DomainSnapshot, ProjectDomainMutation } from "../d
 import { runWriteTransaction } from "./database.ts";
 import type { SqliteDatabase } from "./database.ts";
 import { normalizeSqliteFailure, persistenceFailure } from "./errors.ts";
-import { applicationStateSha256 } from "./application-repository-digest.ts";
+import { APPLICATION_STATE_DIGEST_VERSION, applicationStateSha256 } from "./application-repository-digest.ts";
 import type {
   RegisteredProject,
   AuthorizationBootstrap,
@@ -205,11 +205,11 @@ export class ApplicationTransaction {
         grant_id, grant_revision, request_id, decision_id, audit_id, authorized_state_sha256,
         state_digest_version, expected_request_count, expected_decision_count, expected_audit_count,
         issued_at, expires_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 4, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       record.authorizationId, record.operation, record.backupGenerationId, record.actorId,
       record.runtimeRootKey, record.grantId, record.grantRevision, record.requestId,
-      record.decisionId, record.auditId, record.authorizedStateSha256,
+      record.decisionId, record.auditId, record.authorizedStateSha256, APPLICATION_STATE_DIGEST_VERSION,
       record.expectedRequestCount, record.expectedDecisionCount, record.expectedAuditCount,
       record.issuedAt, record.expiresAt,
     );

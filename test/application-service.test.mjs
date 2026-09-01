@@ -5,8 +5,8 @@ import path from "node:path";
 import test from "node:test";
 import {
   AUTHORIZATION_ACTIONS,
-  PHASE2A_AUTHORIZATION_ACTIONS,
-  PHASE2B_AUTHORIZATION_ACTIONS,
+  CLAIM_AUTHORIZATION_ACTIONS,
+  MANUAL_AUTHORIZATION_ACTIONS,
   createApplicationService,
   currentSchemaVersion,
   inspectPrimaryIdentity,
@@ -221,7 +221,7 @@ test("trusted bootstrap and authorized Project/Task commands share one durable a
     assert.equal(state.decisions.length, 3);
     assert.equal(state.audit.length, 4);
     assert.equal(state.audit.some((event) => JSON.stringify(event).includes("grant me everything")), false);
-    assert.equal(state.bootstrap.vocabularyVersion, 4);
+    assert.equal(state.bootstrap.vocabularyVersion, 1);
     assert.equal(state.identity.actorId, "local-actor");
     assert.equal(state.identity.principalSha256, TEST_PRINCIPAL_SHA256);
     assert.equal(state.identity.bootstrapRequestId, state.bootstrap.requestId);
@@ -355,7 +355,7 @@ test("fresh bootstrap advances through each confirmed capability vocabulary exac
     });
     assert.equal(initialized.ok, true);
     let state = readApplicationStateForOwner(store);
-    assert.equal(state.bootstrap.vocabularyVersion, 4);
+    assert.equal(state.bootstrap.vocabularyVersion, 1);
     assert.equal(state.identity.actorId, "owner");
     assert.equal(state.identity.principalSha256, TEST_PRINCIPAL_SHA256);
     assert.equal(state.identity.bootstrapRequestId, state.bootstrap.requestId);
@@ -369,15 +369,15 @@ test("fresh bootstrap advances through each confirmed capability vocabulary exac
     assert.equal(upgraded.ok, true);
     assert.equal(upgraded.value.mode, "upgraded");
     assert.equal(upgraded.value.epochRevision, 1);
-    assert.equal(upgraded.value.capabilityCount, PHASE2A_AUTHORIZATION_ACTIONS.length);
+    assert.equal(upgraded.value.capabilityCount, CLAIM_AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
-    assert.equal(state.bootstrap.vocabularyVersion, 4);
+    assert.equal(state.bootstrap.vocabularyVersion, 1);
     assert.equal(state.bootstrap.actorId, "owner");
     assert.equal(state.epochs.length, 1);
-    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 5);
-    assert.equal(state.grants.length, 19 + PHASE2A_AUTHORIZATION_ACTIONS.length);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 2);
+    assert.equal(state.grants.length, 19 + CLAIM_AUTHORIZATION_ACTIONS.length);
     assert.equal(
-      PHASE2A_AUTHORIZATION_ACTIONS.every((action) => state.grants.some(
+      CLAIM_AUTHORIZATION_ACTIONS.every((action) => state.grants.some(
         (grant) => grant.actorId === "owner" && grant.action === action && grant.revokedAt === null,
       )),
       true,
@@ -389,11 +389,11 @@ test("fresh bootstrap advances through each confirmed capability vocabulary exac
     assert.equal(manualUpgraded.ok, true);
     assert.equal(manualUpgraded.value.mode, "upgraded");
     assert.equal(manualUpgraded.value.epochRevision, 2);
-    assert.equal(manualUpgraded.value.capabilityCount, PHASE2B_AUTHORIZATION_ACTIONS.length);
+    assert.equal(manualUpgraded.value.capabilityCount, MANUAL_AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
     assert.equal(state.epochs.length, 2);
-    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 6);
-    assert.equal(state.grants.length, 19 + PHASE2A_AUTHORIZATION_ACTIONS.length + PHASE2B_AUTHORIZATION_ACTIONS.length);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 3);
+    assert.equal(state.grants.length, 19 + CLAIM_AUTHORIZATION_ACTIONS.length + MANUAL_AUTHORIZATION_ACTIONS.length);
     assert.equal(state.grants.some(
       (grant) => grant.actorId === "owner" && grant.action === "execution.completion.accept" && grant.revokedAt === null,
     ), true);
@@ -405,7 +405,7 @@ test("fresh bootstrap advances through each confirmed capability vocabulary exac
     assert.equal(dispatcherUpgraded.value.epochRevision, 3);
     assert.equal(dispatcherUpgraded.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
-    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 7);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 4);
     assert.equal(state.grants.some(
       (grant) => grant.actorId === "owner" && grant.action === "dispatch.run" && grant.revokedAt === null,
     ), true);
@@ -418,7 +418,7 @@ test("fresh bootstrap advances through each confirmed capability vocabulary exac
     store = await openPersistence(fixture.layout, { applicationVersion: "fresh-upgrades-restart" });
     state = readApplicationStateForOwner(store);
     assert.equal(state.identity.actorId, "owner");
-    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 7);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 4);
     assert.equal(state.grants.some(
       (grant) => grant.actorId === "owner" && grant.action === "execution.claim" && grant.revokedAt === null,
     ), true);

@@ -699,13 +699,13 @@ void productRuntime;
         trustedMilliseconds = Date.parse(issuedAt) + 1000;
         const claimUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
         if (!claimUpgrade.ok || claimUpgrade.value.epochRevision !== 1 ||
-            claimUpgrade.value.capabilityCount !== m.PHASE2A_AUTHORIZATION_ACTIONS.length) {
+            claimUpgrade.value.capabilityCount !== m.CLAIM_AUTHORIZATION_ACTIONS.length) {
           throw new Error("package claim capability upgrade was rejected");
         }
         trustedMilliseconds = Date.parse(issuedAt) + 2000;
         const manualUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
         if (!manualUpgrade.ok || manualUpgrade.value.epochRevision !== 2 ||
-            manualUpgrade.value.capabilityCount !== m.PHASE2B_AUTHORIZATION_ACTIONS.length) {
+            manualUpgrade.value.capabilityCount !== m.MANUAL_AUTHORIZATION_ACTIONS.length) {
           throw new Error("package Manual capability upgrade was rejected");
         }
         trustedMilliseconds = Date.parse(issuedAt) + 3000;

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { PHASE1_AUTHORIZATION_ACTIONS } from "./authorization.ts";
+import { BASE_AUTHORIZATION_ACTIONS } from "./authorization.ts";
 import {
   createApplicationService,
   type ApplicationResult,
@@ -175,7 +175,7 @@ export async function runCli(args: readonly string[], options: CliRunOptions): P
         return successResult(command.format, command.id, Object.freeze({
           mode: "initialized",
           expiresAt: option(command, "expires-at"),
-          capabilityCount: PHASE1_AUTHORIZATION_ACTIONS.length,
+          capabilityCount: BASE_AUTHORIZATION_ACTIONS.length,
           epochRevision: 0,
         }));
       }

@@ -62,7 +62,7 @@ async function prepareRuntime(prefix, taskCount = 1) {
     const result = application.upgrade({ kind: "authorization.capability.upgrade", expiresAt: EXPIRY });
     assert.equal(result.ok, true, JSON.stringify(result));
   }
-  assert.equal(readApplicationStateForOwner(store).epochs.at(-1).vocabularyVersion, 7);
+  assert.equal(readApplicationStateForOwner(store).epochs.at(-1).vocabularyVersion, 4);
   return { fixture, trusted, store };
 }
 

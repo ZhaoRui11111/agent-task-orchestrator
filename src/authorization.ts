@@ -1,4 +1,4 @@
-export const PHASE1_AUTHORIZATION_ACTIONS = Object.freeze([
+export const BASE_AUTHORIZATION_ACTIONS = Object.freeze([
   "authorization.grant.issue",
   "authorization.grant.inspect",
   "authorization.grant.revoke",
@@ -27,8 +27,8 @@ export const EXECUTION_AUTHORIZATION_ACTIONS = Object.freeze([
   "execution.lease.takeover",
 ] as const);
 
-export const PHASE2A_AUTHORIZATION_ACTIONS = Object.freeze([
-  ...PHASE1_AUTHORIZATION_ACTIONS,
+export const CLAIM_AUTHORIZATION_ACTIONS = Object.freeze([
+  ...BASE_AUTHORIZATION_ACTIONS,
   ...EXECUTION_AUTHORIZATION_ACTIONS,
 ] as const);
 
@@ -41,8 +41,8 @@ export const MANUAL_EXECUTION_AUTHORIZATION_ACTIONS = Object.freeze([
   "execution.completion.accept",
 ] as const);
 
-export const PHASE2B_AUTHORIZATION_ACTIONS = Object.freeze([
-  ...PHASE2A_AUTHORIZATION_ACTIONS,
+export const MANUAL_AUTHORIZATION_ACTIONS = Object.freeze([
+  ...CLAIM_AUTHORIZATION_ACTIONS,
   ...MANUAL_EXECUTION_AUTHORIZATION_ACTIONS,
 ] as const);
 
@@ -51,7 +51,7 @@ export const DISPATCH_AUTHORIZATION_ACTIONS = Object.freeze([
 ] as const);
 
 export const AUTHORIZATION_ACTIONS = Object.freeze([
-  ...PHASE2B_AUTHORIZATION_ACTIONS,
+  ...MANUAL_AUTHORIZATION_ACTIONS,
   ...DISPATCH_AUTHORIZATION_ACTIONS,
 ] as const);
 
@@ -66,6 +66,21 @@ export const HIGH_RISK_ACTIONS = Object.freeze([
 ] as const);
 
 export type AuthorizationAction = (typeof AUTHORIZATION_ACTIONS)[number];
+export type AuthorizationVocabularyVersion = 1 | 2 | 3 | 4;
+
+export function isAuthorizationVocabularyVersion(value: unknown): value is AuthorizationVocabularyVersion {
+  return value === 1 || value === 2 || value === 3 || value === 4;
+}
+
+export function actionsForVocabulary(version: AuthorizationVocabularyVersion): readonly AuthorizationAction[] {
+  return version === 1
+    ? BASE_AUTHORIZATION_ACTIONS
+    : version === 2
+      ? CLAIM_AUTHORIZATION_ACTIONS
+      : version === 3
+        ? MANUAL_AUTHORIZATION_ACTIONS
+        : AUTHORIZATION_ACTIONS;
+}
 export type AuthorizationPolicyResult = "allow" | "deny" | "read_not_applicable";
 export type AuthorizationReason =
   | "allowed"

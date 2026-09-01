@@ -3,6 +3,7 @@ import type {
   AuthorizationGrant,
   AuthorizationPolicyResult,
   AuthorizationReason,
+  AuthorizationVocabularyVersion,
 } from "../authorization.ts";
 import type { DomainSnapshot } from "../domain.ts";
 import type { ProjectRootIdentity } from "../project-registry.ts";
@@ -21,7 +22,7 @@ export interface AuthorizationBootstrap extends ProjectRootIdentity {
   readonly requestId: string;
   readonly createdAt: string;
   readonly expiresAt: string;
-  readonly vocabularyVersion: 4;
+  readonly vocabularyVersion: 1;
 }
 
 export type ApplicationAction =
@@ -44,7 +45,7 @@ export interface AuthorizationCapabilityEpoch {
   readonly epochRevision: number;
   readonly actorId: string;
   readonly runtimeRootKey: string;
-  readonly vocabularyVersion: 4 | 5 | 6 | 7;
+  readonly vocabularyVersion: AuthorizationVocabularyVersion;
   readonly actionSetSha256: string;
   readonly requestId: string;
   readonly createdAt: string;
@@ -425,12 +426,6 @@ export interface ManualCompletionDecisionRecord {
   readonly createdAt: string;
 }
 
-export interface AuthorizationGrantEpochLinkRecord {
-  readonly grantId: string;
-  readonly action: AuthorizationAction;
-  readonly capabilityEpochId: string;
-}
-
 export interface DispatcherTriggerRequestRecord {
   readonly requestId: string;
   readonly observationId: string;
@@ -640,7 +635,6 @@ export interface ApplicationState {
   readonly identity: AuthorizationLocalIdentity | null;
   readonly grants: readonly AuthorizationGrant[];
   readonly epochs: readonly AuthorizationCapabilityEpoch[];
-  readonly authorizationGrantEpochLinks: readonly AuthorizationGrantEpochLinkRecord[];
   readonly requests: readonly ApplicationRequestRecord[];
   readonly decisions: readonly AuthorizationDecisionRecord[];
   readonly audit: readonly ApplicationAuditRecord[];

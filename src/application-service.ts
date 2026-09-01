@@ -1,5 +1,6 @@
 import {
-  PHASE1_AUTHORIZATION_ACTIONS,
+  BASE_AUTHORIZATION_ACTIONS,
+  actionsForVocabulary,
   isHighRiskAction,
 } from "./authorization.ts";
 import type {
@@ -51,10 +52,9 @@ import {
 } from "./application-input.ts";
 import {
   CURRENT_CAPABILITY_ACTION_SET_SHA256,
-  PHASE1_CAPABILITY_ACTION_SET_SHA256,
-  PHASE2A_CAPABILITY_ACTION_SET_SHA256,
-  PHASE2B_CAPABILITY_ACTION_SET_SHA256,
-  actionsForVocabulary,
+  BASE_CAPABILITY_ACTION_SET_SHA256,
+  CLAIM_CAPABILITY_ACTION_SET_SHA256,
+  MANUAL_CAPABILITY_ACTION_SET_SHA256,
   assessCapabilityUpgrade,
   assessRenewal,
   auditRecord,
@@ -102,7 +102,7 @@ function createApplicationServiceInternal(
     }
     const grantIds: string[] = [];
     try {
-      for (const action of PHASE1_AUTHORIZATION_ACTIONS) {
+      for (const action of BASE_AUTHORIZATION_ACTIONS) {
         const grantId = ingress.nextId("grant");
         if (!operationalIdentifier(grantId) || grantIds.includes(grantId)) {
           return failed("INVALID_INPUT", `Trusted grant identity is invalid or repeated for ${action}`, identity);
@@ -127,7 +127,7 @@ function createApplicationServiceInternal(
         requestId: identity.requestId,
         createdAt: identity.now,
         expiresAt: command.expiresAt,
-        vocabularyVersion: 4 as const,
+        vocabularyVersion: 1 as const,
       }));
       hooks.afterStage?.("bootstrap");
       transaction.insertLocalIdentity(Object.freeze({
@@ -140,7 +140,7 @@ function createApplicationServiceInternal(
         createdAt: identity.now,
       }));
       hooks.afterStage?.("identity");
-      for (const [index, action] of PHASE1_AUTHORIZATION_ACTIONS.entries()) {
+      for (const [index, action] of BASE_AUTHORIZATION_ACTIONS.entries()) {
         const grantId = grantIds[index];
         if (grantId === undefined) throw new TypeError("Trusted bootstrap grant identity is absent");
         transaction.insertGrant(Object.freeze({
@@ -252,10 +252,10 @@ function createApplicationServiceInternal(
         actorId: identity.actor.actorId,
         runtimeRootKey: runtimeIdentity.rootKey,
         vocabularyVersion: assessment.targetVocabularyVersion,
-        actionSetSha256: assessment.targetVocabularyVersion === 5
-          ? PHASE2A_CAPABILITY_ACTION_SET_SHA256
-          : assessment.targetVocabularyVersion === 6
-            ? PHASE2B_CAPABILITY_ACTION_SET_SHA256
+        actionSetSha256: assessment.targetVocabularyVersion === 2
+          ? CLAIM_CAPABILITY_ACTION_SET_SHA256
+          : assessment.targetVocabularyVersion === 3
+            ? MANUAL_CAPABILITY_ACTION_SET_SHA256
             : CURRENT_CAPABILITY_ACTION_SET_SHA256,
         requestId: identity.requestId,
         createdAt: identity.now,
@@ -395,12 +395,12 @@ function createApplicationServiceInternal(
         actorId: identity.actor.actorId,
         runtimeRootKey: runtimeIdentity.rootKey,
         vocabularyVersion: assessment.vocabularyVersion,
-        actionSetSha256: assessment.vocabularyVersion === 4
-          ? PHASE1_CAPABILITY_ACTION_SET_SHA256
-          : assessment.vocabularyVersion === 5
-            ? PHASE2A_CAPABILITY_ACTION_SET_SHA256
-            : assessment.vocabularyVersion === 6
-              ? PHASE2B_CAPABILITY_ACTION_SET_SHA256
+        actionSetSha256: assessment.vocabularyVersion === 1
+          ? BASE_CAPABILITY_ACTION_SET_SHA256
+          : assessment.vocabularyVersion === 2
+            ? CLAIM_CAPABILITY_ACTION_SET_SHA256
+            : assessment.vocabularyVersion === 3
+              ? MANUAL_CAPABILITY_ACTION_SET_SHA256
               : CURRENT_CAPABILITY_ACTION_SET_SHA256,
         requestId: identity.requestId,
         createdAt: identity.now,

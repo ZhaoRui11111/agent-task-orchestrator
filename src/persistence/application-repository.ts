@@ -32,7 +32,6 @@ export type {
   ManualBackendTurnRecord,
   ManualBackendOperationRecord,
   ManualCompletionDecisionRecord,
-  AuthorizationGrantEpochLinkRecord,
   DispatcherTriggerRequestRecord,
   DispatcherAuthorizationDecisionRecord,
   DispatcherRunStatus,
@@ -58,8 +57,9 @@ export type {
   NewExecutionAttemptRecord,
 } from "./application-repository-model.ts";
 export {
+  APPLICATION_STATE_DIGEST_VERSION,
+  applicationStateProjection,
   applicationStateSha256,
-  applicationStateSha256ForLifecycleAuthorization,
   lifecycleAuthorizationSha256,
   parseApplicationLifecycleAuthorization,
 } from "./application-repository-digest.ts";

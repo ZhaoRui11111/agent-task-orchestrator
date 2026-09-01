@@ -340,8 +340,8 @@ aliases, implicit fields, alternate confirmation phrases, or extension maps.
 The current OS/runtime ingress alone supplies actor, principal, runtime-root
 identity, Manual dispatcher owner, and execution lease owner. Command text
 cannot supply them. `authorization.upgrade` performs exactly one eligible,
-confirmed contiguous vocabulary transition (`4` to `5`, `5` to `6`, or `6` to
-`7`) and never dispatches work. Migration and renewal never upgrade a
+confirmed contiguous vocabulary transition (`1` to `2`, `2` to `3`, or `3` to
+`4`) and never dispatches work. Migration and renewal never upgrade a
 vocabulary.
 
 The product facade reads the current schema-version-1 state, validates the complete

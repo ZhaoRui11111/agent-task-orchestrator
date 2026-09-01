@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
@@ -322,6 +323,132 @@ for (const corruption of corruptionCases) {
           evidenceDatabase.close();
         }
       }
+    } finally {
+      if (store) await store.close();
+      cleanupPersistenceFixture(fixture);
+    }
+  });
+}
+
+const durableAuthorizationFormatCorruptions = Object.freeze([
+  Object.freeze({
+    name: "unsupported bootstrap vocabulary",
+    setup: "bootstrap",
+    value: 4,
+    trigger: "authorization_bootstrap_no_update",
+    update: "UPDATE authorization_bootstrap SET vocabulary_version=?",
+    select: "SELECT vocabulary_version AS value FROM authorization_bootstrap",
+  }),
+  Object.freeze({
+    name: "unsupported epoch vocabulary",
+    setup: "epoch",
+    value: 5,
+    trigger: "authorization_capability_epochs_no_update",
+    update: "UPDATE authorization_capability_epochs SET vocabulary_version=?",
+    select: "SELECT vocabulary_version AS value FROM authorization_capability_epochs",
+  }),
+  Object.freeze({
+    name: "unknown epoch vocabulary",
+    setup: "epoch",
+    value: 99,
+    trigger: "authorization_capability_epochs_no_update",
+    update: "UPDATE authorization_capability_epochs SET vocabulary_version=?",
+    select: "SELECT vocabulary_version AS value FROM authorization_capability_epochs",
+  }),
+  Object.freeze({
+    name: "unsupported lifecycle digest version",
+    setup: "lifecycle",
+    value: 4,
+    trigger: "application_lifecycle_authorizations_no_update",
+    update: "UPDATE application_lifecycle_authorizations SET state_digest_version=?",
+    select: "SELECT state_digest_version AS value FROM application_lifecycle_authorizations",
+  }),
+  Object.freeze({
+    name: "unknown lifecycle digest version",
+    setup: "lifecycle",
+    value: 99,
+    trigger: "application_lifecycle_authorizations_no_update",
+    update: "UPDATE application_lifecycle_authorizations SET state_digest_version=?",
+    select: "SELECT state_digest_version AS value FROM application_lifecycle_authorizations",
+  }),
+]);
+
+const ISOLATED_APPLICATION_DECODER = `
+  import { DatabaseSync } from "node:sqlite";
+  import { readApplicationState } from ${JSON.stringify(new URL("../src/persistence/application-repository.ts", import.meta.url).href)};
+  const value = Number(process.env.ATO_FORMAT_VALUE);
+  const trigger = process.env.ATO_FORMAT_TRIGGER;
+  if (!/^[a-z_]+$/u.test(trigger)) throw new TypeError("invalid test trigger");
+  const writable = new DatabaseSync(process.env.ATO_FORMAT_DATABASE_PATH);
+  writable.exec("DROP TRIGGER " + trigger);
+  writable.exec("PRAGMA ignore_check_constraints=ON");
+  writable.prepare(process.env.ATO_FORMAT_UPDATE).run(value);
+  writable.exec("PRAGMA ignore_check_constraints=OFF");
+  writable.close();
+  const database = new DatabaseSync(process.env.ATO_FORMAT_DATABASE_PATH, { readOnly: true });
+  try {
+    readApplicationState(database);
+    process.exitCode = 2;
+  } catch (error) {
+    const stored = database.prepare(process.env.ATO_FORMAT_SELECT).get().value;
+    process.stdout.write(JSON.stringify({ name: error?.name, code: error?.code, value: stored }));
+    if (error?.name !== "PersistenceError" || error?.code !== "CORRUPT_ROW") process.exitCode = 3;
+  } finally {
+    database.close();
+  }
+`;
+
+for (const corruption of durableAuthorizationFormatCorruptions) {
+  test(`read-only current decoder refuses ${corruption.name} without rewriting the stored value`, async () => {
+    const fixture = createPersistenceFixture(`authorization-format-${corruption.name.replaceAll(" ", "-")}`);
+    let store;
+    try {
+      let sequence = 0;
+      const trusted = {
+        currentActor: () => ({ actorId: "authorization-format-owner", principal: "A".repeat(64) }),
+        now: () => "2026-08-29T12:00:00.000Z",
+        nextId: (kind) => `${kind}-authorization-format-${++sequence}`,
+        confirmHighRisk: () => true,
+      };
+      store = await openPersistence(fixture.layout, { applicationVersion: "authorization-format-current" });
+      const application = createApplicationService(store, trusted);
+      assert.equal(application.bootstrap({
+        kind: "authorization.bootstrap",
+        expiresAt: "2026-09-20T12:00:00.000Z",
+      }).ok, true);
+      if (corruption.setup === "epoch") {
+        assert.equal(application.upgrade({
+          kind: "authorization.capability.upgrade",
+          expiresAt: "2026-09-21T12:00:00.000Z",
+        }).ok, true);
+      }
+      if (corruption.setup === "lifecycle") {
+        assert.equal(application.execute({
+          kind: "runtime.backup",
+          backupGenerationId: "11111111-1111-4111-8111-111111111111",
+        }).ok, true);
+      }
+      await store.close();
+      store = undefined;
+
+      const refusal = spawnSync(process.execPath, ["--input-type=module", "--eval", ISOLATED_APPLICATION_DECODER], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          ATO_FORMAT_DATABASE_PATH: fixture.layout.databasePath,
+          ATO_FORMAT_UPDATE: corruption.update,
+          ATO_FORMAT_SELECT: corruption.select,
+          ATO_FORMAT_TRIGGER: corruption.trigger,
+          ATO_FORMAT_VALUE: String(corruption.value),
+        },
+        windowsHide: true,
+      });
+      assert.equal(refusal.status, 0, refusal.stderr);
+      assert.deepEqual(JSON.parse(refusal.stdout), {
+        name: "PersistenceError",
+        code: "CORRUPT_ROW",
+        value: corruption.value,
+      });
     } finally {
       if (store) await store.close();
       cleanupPersistenceFixture(fixture);

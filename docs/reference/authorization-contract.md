@@ -5,9 +5,9 @@
 This document is the normative owner of the implemented local runtime
 authorization model through the sole current `ato.api/v1` Manual product facade
 and reconcile-first Manual dispatcher. The implementation is deliberately
-limited to the local Phase 1 application and lifecycle surfaces, four
-database-local execution claim/lease actions, six vocabulary-6 Manual-loop
-actions, and one vocabulary-7 dispatcher action. It
+limited to nineteen base local application/lifecycle actions, four
+database-local execution claim/lease actions, six Manual-loop actions, and one
+dispatcher action across contiguous vocabulary versions 1 through 4. It
 is not an operating-system
 account system, team identity service, RBAC product, cloud identity provider,
 or authorization for development and external actions.
@@ -75,7 +75,8 @@ identifier and persisted only as its stable digest identity.
 
 ## Exact action vocabulary
 
-The complete grantable implemented vocabulary is the nineteen Phase 1 actions:
+The complete grantable implemented vocabulary begins with the nineteen base
+local actions:
 
 - `authorization.grant.issue`
 - `authorization.grant.inspect`
@@ -97,7 +98,7 @@ The complete grantable implemented vocabulary is the nineteen Phase 1 actions:
 - `runtime.backup`
 - `runtime.restore`
 
-plus the four Phase 2 execution-foundation actions:
+plus the four claim-foundation actions:
 
 - `execution.claim`
 - `execution.claim.inspect`
@@ -139,7 +140,7 @@ confirmation and atomically:
    inode, and mode) without following alias/reparse components;
 4. inserts the immutable versioned local actor/principal-to-root binding;
 5. inserts one runtime-scoped grant for that actor for each of the nineteen
-   exact Phase 1 actions;
+   exact base actions;
 6. appends the bootstrap request and sanitized audit event; and
 7. reads the terminal transaction state back before commit.
 
@@ -161,8 +162,8 @@ cannot be delegated. It requires the exact current OS-derived identity,
 runtime-root identity, a fresh named confirmation, a finite expiry more than
 seven and no more than 31 days ahead, and one atomic terminal readback.
 
-Fresh bootstrap establishes the immutable local identity, a vocabulary-4
-bootstrap and only the nineteen Phase 1 origin grants. It creates no capability
+Fresh bootstrap establishes the immutable local identity, a vocabulary-version-1
+bootstrap and only the nineteen base origin grants. It creates no capability
 epoch and no later-vocabulary authority. There is no identity-adoption mode or
 historical-schema transition.
 
@@ -171,11 +172,11 @@ execution vocabulary. It is non-grantable and requires the exact current
 OS-derived actor, principal and runtime-root binding, a fresh named high-risk
 confirmation, a finite expiry more than seven and no more than 31 days ahead,
 and an eligible current origin. Each call advances exactly one contiguous step:
-vocabulary 4 to 5 appends one origin grant for each of the twenty-three Phase 2A
-actions, vocabulary 5 to 6 appends one origin grant for each of the twenty-nine
-Phase-2B actions, and vocabulary 6 to 7 appends one origin grant for each of all
-thirty current actions. A vocabulary-4 runtime cannot skip directly to 6 or 7,
-and a vocabulary-5 runtime cannot skip directly to 7.
+version 1 to 2 appends one origin grant for each of the twenty-three
+claim-capable actions, version 2 to 3 appends one origin grant for each of the
+twenty-nine Manual-capable actions, and version 3 to 4 appends one origin grant
+for each of all thirty current actions. A version-1 runtime cannot skip directly
+to 3 or 4, and a version-2 runtime cannot skip directly to 4.
 The epoch, exact grant set, request/allow-decision/audit unit, and terminal
 readback commit together. Migration, bootstrap, an earlier decision, Task
 readiness, ordinary grant issue, and renewal cannot substitute for either
@@ -188,8 +189,8 @@ origin grant blocks early renewal; revocation is not a shortcut to replace a
 capability. Each accepted renewal appends a contiguous positive epoch revision,
 the exact vocabulary/version digest, a request/decision/audit unit, and one new
 finite origin grant for every action in the already-current vocabulary:
-nineteen for vocabulary 4, twenty-three for vocabulary 5, twenty-nine for
-vocabulary 6, or thirty for vocabulary 7. Every epoch and current origin grant
+nineteen for vocabulary version 1, twenty-three for version 2, twenty-nine for
+version 3, or thirty for version 4. Every epoch and current origin grant
 uses the single `authorization_capability_epochs` and `authorization_grants`
 relations with direct `capability_epoch_id` provenance. Renewal never changes a vocabulary version. Previous epochs and
 grants remain immutable history.
@@ -386,7 +387,7 @@ creates no execution attempt, Task transition, operation intent, or adapter
 effect; replay and restart return the same immutable lineage.
 
 When one Domain command would mutate Tasks owned by more than one Project,
-every affected Project must be covered. In Phase 1 the only such implemented
+every affected Project must be covered. In the base stage the only such implemented
 case is cancellation propagation to ready dependents. A Project-scoped
 `task.cancel` grant fails closed before the Domain write if propagation would
 cross a Project boundary; the finite runtime-scoped `task.cancel` capability
@@ -426,7 +427,8 @@ data-loss acknowledgement before requesting authorization. An accepted
 decision atomically appends one immutable lifecycle authorization bound to the
 exact operation, proposed backup generation ID, actor, runtime-root key,
 matching grant and revision, request/decision/audit IDs and counts, application
-state digest, and short finite validity interval. Terminal output reads back the
+state digest version 1 from the sole complete non-lifecycle
+`applicationStateProjection`, and short finite validity interval. Terminal output reads back the
 exact newly allocated lifecycle authorization ID; operation/generation matching
 is never used as a non-unique substitute, including on a retry.
 
@@ -468,13 +470,14 @@ command content are not copied into audit records. See
 
 ## Explicit non-claims
 
-Phase 1 implements the local CLI initialization, finite grant administration,
+The base stage implements local CLI initialization, finite grant administration,
 status, backup authorization, separately confirmed restore authorization, and
-read-only doctor experience. Phase 2A adds the four local claim/lease grants;
-Phase 2B adds one separately confirmed vocabulary-6 step and the six exact
-Manual-loop grants and decisions described above. Phase 2C adds one separately
-confirmed vocabulary-7 step and the exact `dispatch.run` decision path for the
-explicit-Manual dispatcher. The current product API exposes only those existing
+the read-only doctor experience. The claim stage adds the four local
+claim/lease grants; the Manual stage adds one separately confirmed version-3
+step and the six exact Manual-loop grants and decisions described above. The
+current dispatcher stage adds one separately confirmed version-4 step and the
+exact `dispatch.run` decision path for the explicit-Manual dispatcher. The
+current product API exposes only those existing
 decisions through `ato.api/v1`; it adds no action, grant, epoch, implicit
 upgrade, or alternate authorization owner. It does not implement login,
 credentials, team accounts, RBAC, cloud identity, an external policy adapter,

@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Rebuilt the unreleased authorization state baseline around cumulative base,
+  claim, Manual, and current action sets at vocabulary versions 1 through 4.
+  Bootstrap, separately confirmed contiguous upgrades, renewal, epoch/grant
+  decoding, and the sole schema-version-1 baseline now share that current-only
+  model. One digest-version-1 `applicationStateProjection` directly covers
+  every non-lifecycle application-state family; the synthetic grant/epoch link,
+  dispatcher partition, lifecycle-specific digest wrapper, earlier vocabulary
+  numbering, prior digest shape, migration, and compatibility reader are absent.
 - Unified cancellation-reason validation behind one exported pure Domain
   predicate: CLI and typed Application ingress, Domain cancellation transitions,
   complete snapshots, and persistence readback now enforce the same well-formed

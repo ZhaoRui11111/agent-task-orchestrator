@@ -105,7 +105,7 @@ and generation-local store, then pack the declared distribution, install it
 into a disposable consumer without registry access, typecheck the public
   declarations without undeclared Node type dependencies, import the library
   entry, exercise trusted bootstrap plus Project/Task commands, three sequential
-  explicit capability upgrades through vocabulary 7, an atomic
+  explicit capability upgrades through vocabulary version 4, an atomic
   execution claim, the local Manual start/inspect/outcome/finalization/
   completion library loop after restart, the typed product facade's Manual
   dispatch-to-completion restart path, and a fresh persistence backup; verify

@@ -21,7 +21,7 @@ import {
   type SchemaEvidence,
 } from "./migrations.ts";
 import {
-  applicationStateSha256ForLifecycleAuthorization,
+  applicationStateSha256,
   lifecycleAuthorizationSha256,
   parseApplicationLifecycleAuthorization,
   readApplicationState,
@@ -480,7 +480,7 @@ function verifyBackupGenerationWithHooks(
       );
       const stateSha256 = authorization === undefined
         ? null
-        : applicationStateSha256ForLifecycleAuthorization(state, authorization);
+        : applicationStateSha256(state);
       if (
         authorization === undefined ||
         authorization.operation !== "runtime.backup" ||
@@ -758,10 +758,7 @@ export async function createBackupUnderLock(
   const clonedDatabase = openReadOnlyDatabase(stageDatabasePath);
   try {
     const clonedState = readApplicationState(clonedDatabase);
-    const clonedStateSha256 = applicationStateSha256ForLifecycleAuthorization(
-      clonedState,
-      terminalAuthorization.authorization,
-    );
+    const clonedStateSha256 = applicationStateSha256(clonedState);
     if (clonedStateSha256 !== terminalAuthorization.stateSha256) {
       throw persistenceFailure("BACKUP_CONFLICT", "Cloned state does not match lifecycle authorization");
     }
@@ -1261,7 +1258,7 @@ function validatePublishedBackupAuthorization(layout: RuntimeLayout, intent: Res
       authorization.backupGenerationId !== intent.backupGenerationId ||
       lifecycleAuthorizationSha256(authorization) !== manifest.lifecycleAuthorizationSha256 ||
       authorization.authorizedStateSha256 !== manifest.sourceApplicationStateSha256 ||
-      applicationStateSha256ForLifecycleAuthorization(state, authorization) !==
+      applicationStateSha256(state) !==
         manifest.sourceApplicationStateSha256
     ) {
       throw persistenceFailure("RESTORE_BLOCKED", "Published target does not retain the backup authorization lineage");

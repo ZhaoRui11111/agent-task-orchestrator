@@ -25,7 +25,7 @@ create or change this policy.
   versions begin at `1`. The current and only accepted target is `1`.
   `0001-current-baseline.sql` directly owns the complete implemented local
   explicit-Manual Phase 2 storage shape, including lifecycle state-digest
-  version 4 and authorization vocabularies 4 through 7. Schema version and
+  version 1 and authorization vocabularies 1 through 4. Schema version and
   authorization vocabulary are independent counters. Exact migration
   identity, checksum, allocation, and mechanics are owned by the
   [persistence contract](persistence-contract.md#migration-identity-and-atomicity).

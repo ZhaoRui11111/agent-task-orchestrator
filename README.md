@@ -94,9 +94,9 @@ skeleton nor a command that was not run is evidence of a passing gate.
 ## Reliable Manual execution and product facade
 
 The package exports the provisional typed claim service and reliable Manual
-loop. Fresh schema creation, bootstrap, and vocabulary-5 renewal do not create any of the six
-Manual-loop grants. A vocabulary-5 runtime must perform its own fresh,
-identity- and confirmation-bound upgrade to vocabulary 6 before
+loop. Fresh schema creation, bootstrap, and vocabulary-version-2 renewal do not create any of the six
+Manual-loop grants. A version-2 claim-capable runtime must perform its own fresh,
+identity- and confirmation-bound upgrade to version 3 before
 `execution.start`, `execution.inspect`, `execution.resume`, `execution.retry`,
 `execution.cancel`, or `execution.completion.accept` can authorize work.
 
@@ -123,9 +123,9 @@ development evidence is not a platform-support claim. The exact rules are owned 
 
 ## Reconcile-first Manual dispatcher
 
-Fresh schema creation, bootstrap, and vocabulary-6 renewal do not create
+Fresh schema creation, bootstrap, and vocabulary-version-3 renewal do not create
 `dispatch.run`. A runtime must complete its own fresh identity- and
-confirmation-bound vocabulary-6-to-7 upgrade before an explicit Manual trigger
+confirmation-bound version-3-to-4 upgrade before an explicit Manual trigger
 can create or continue a dispatcher run. Each run has a trusted worker owner,
 bounded non-banking heartbeat lease, owner/run revisions, and exact-expiry
 takeover fencing.
@@ -183,8 +183,8 @@ ato authorization upgrade --expires-at $expiry --confirm "UPGRADE LOCAL CAPABILI
 ato dispatch run --idempotency-key manual-run-1 --lease-duration-seconds 300
 ```
 
-Each newer vocabulary requires its own confirmed upgrade invocation; migration
-and renewal never grant Phase 2 authority. Retired `ato.api/v2` and any other
+Each later vocabulary requires its own confirmed upgrade invocation; migration
+and renewal never advance the current authorization stage. Retired `ato.api/v2` and any other
 unsupported major fail before runtime construction or protected mutation; no
 compatibility fallback exists. Use `--format json` for the versioned single-line
 machine surface. The exhaustive 33-command tree, `COMMON` execution tuple,

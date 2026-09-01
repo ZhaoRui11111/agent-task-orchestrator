@@ -8,8 +8,8 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import {
-  PHASE2A_AUTHORIZATION_ACTIONS,
-  PHASE2B_AUTHORIZATION_ACTIONS,
+  CLAIM_AUTHORIZATION_ACTIONS,
+  MANUAL_AUTHORIZATION_ACTIONS,
   AUTHORIZATION_ACTIONS,
   openPersistence,
 } from "../src/index.ts";
@@ -170,8 +170,8 @@ test("source ato.api/v1 closes the real local Manual dispatch-to-completion loop
     ]).status, 0);
 
     for (const expected of [
-      PHASE2A_AUTHORIZATION_ACTIONS.length,
-      PHASE2B_AUTHORIZATION_ACTIONS.length,
+      CLAIM_AUTHORIZATION_ACTIONS.length,
+      MANUAL_AUTHORIZATION_ACTIONS.length,
       AUTHORIZATION_ACTIONS.length,
     ]) {
       const upgraded = invoke(runtimeRoot, [
@@ -335,8 +335,8 @@ test("source ato.api/v1 opens the exact current baseline and completes one resta
           "--task-id", "phase2-task", "--expected-task-revision", "1",
         ]).status, 0);
         for (const expected of [
-          PHASE2A_AUTHORIZATION_ACTIONS.length,
-          PHASE2B_AUTHORIZATION_ACTIONS.length,
+          CLAIM_AUTHORIZATION_ACTIONS.length,
+          MANUAL_AUTHORIZATION_ACTIONS.length,
           AUTHORIZATION_ACTIONS.length,
         ]) {
           const upgraded = invoke(runtimeRoot, [

@@ -1,6 +1,10 @@
 import type { SqliteDatabase } from "./database.ts";
 import { persistenceFailure } from "./errors.ts";
-import { applicationStateSha256, lifecycleAuthorizationProjection } from "./application-repository-digest.ts";
+import {
+  APPLICATION_STATE_DIGEST_VERSION,
+  applicationStateSha256,
+  lifecycleAuthorizationProjection,
+} from "./application-repository-digest.ts";
 import type { ApplicationLifecycleAuthorization, ApplicationState } from "./application-repository-model.ts";
 import { readApplicationState, readApplicationStateUntransactional } from "./application-repository-state.ts";
 import { canonicalJson, isCanonicalUtcTimestamp } from "./values.ts";
@@ -14,7 +18,7 @@ function validateLifecycleAuthorizationState(
 ): Readonly<{
   authorization: ApplicationLifecycleAuthorization;
   stateSha256: string;
-  stateDigestVersion: 4;
+  stateDigestVersion: typeof APPLICATION_STATE_DIGEST_VERSION;
 }> {
   if (!isCanonicalUtcTimestamp(now)) throw persistenceFailure("INVALID_INPUT", "Lifecycle validation time is invalid");
   const authorization = state.lifecycle.find((candidate) => candidate.authorizationId === handoff.authorizationId);
@@ -37,7 +41,7 @@ function validateLifecycleAuthorizationState(
   ) {
     throw persistenceFailure("AUTHORIZATION_DENIED", "Lifecycle authorization is no longer current");
   }
-  const stateDigestVersion = 4 as const;
+  const stateDigestVersion = APPLICATION_STATE_DIGEST_VERSION;
   const stateSha256 = applicationStateSha256(state);
   if (
     stateSha256 !== authorization.authorizedStateSha256 ||
@@ -59,7 +63,7 @@ export function validateLifecycleAuthorizationForUse(
 ): Readonly<{
   authorization: ApplicationLifecycleAuthorization;
   stateSha256: string;
-  stateDigestVersion: 4;
+  stateDigestVersion: typeof APPLICATION_STATE_DIGEST_VERSION;
 }> {
   return validateLifecycleAuthorizationState(readApplicationState(database), handoff, operation, generationId, now);
 }
@@ -73,7 +77,7 @@ export function validateLifecycleAuthorizationForUseUntransactional(
 ): Readonly<{
   authorization: ApplicationLifecycleAuthorization;
   stateSha256: string;
-  stateDigestVersion: 4;
+  stateDigestVersion: typeof APPLICATION_STATE_DIGEST_VERSION;
 }> {
   return validateLifecycleAuthorizationState(readApplicationStateUntransactional(database), handoff, operation, generationId, now);
 }

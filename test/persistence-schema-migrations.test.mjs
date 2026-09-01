@@ -24,7 +24,7 @@ import {
   expectPersistenceError,
 } from "./persistence-test-helpers.mjs";
 
-const BASELINE_CHECKSUM = "EF756403D6D03EF73208326B0234991CBC4189372121474E6AD97C11BA70F6BD";
+const BASELINE_CHECKSUM = "518E84129E6753E7D0E5078223DCCB43E155AA2FD2120DD2A4C3F5F633FCEBFA";
 
 const CURRENT_TABLES = Object.freeze([
   "application_audit",
@@ -276,7 +276,7 @@ test("fresh initialization atomically creates the exact current schema", async (
       });
       assert.match(
         database.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='application_lifecycle_authorizations'").get().sql,
-        /state_digest_version\s*=\s*4/u,
+        /state_digest_version\s*=\s*1/u,
       );
     } finally {
       database.close();

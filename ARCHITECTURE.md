@@ -9,13 +9,14 @@ authorization owner, a typed Project/Task/dependency application service, a
 local SQLite persistence foundation, the closed local Phase 1 product, and the
 complete explicit-Manual local Phase 2 product through the sole current `ato.api/v1`. One immutable
 schema-version-1 baseline directly owns metadata and exact Domain snapshots;
-ProjectRegistry; local identity; vocabulary-4-through-7 epochs and grants;
+ProjectRegistry; local identity; vocabulary-version-1-through-4 epochs and grants;
 requests, authorization decisions, lifecycle authorizations and append-only
 audit; ordered execution attempts, lease state and per-Task fencing; reliable
 Manual-loop intents, authorization bindings, observations, verified receipts,
 finalizations, terminal facts and journal records; and bounded dispatcher run,
 reconciliation, membership, member-outcome and summary records. Lifecycle
-authorization uses only state-digest version 4.
+authorization uses the sole complete non-lifecycle application-state projection
+at state-digest version 1.
 The application service orchestrates business owners in one transaction;
 persistence never selects a Domain command or grants authority. Its physical
 implementation is split into database-free model, input, policy, Domain

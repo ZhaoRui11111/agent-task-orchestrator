@@ -1,14 +1,16 @@
 import {
   AUTHORIZATION_ACTIONS,
-  PHASE1_AUTHORIZATION_ACTIONS,
-  PHASE2A_AUTHORIZATION_ACTIONS,
-  PHASE2B_AUTHORIZATION_ACTIONS,
+  BASE_AUTHORIZATION_ACTIONS,
+  CLAIM_AUTHORIZATION_ACTIONS,
+  MANUAL_AUTHORIZATION_ACTIONS,
+  actionsForVocabulary,
   canIssueGrant,
   evaluateAuthorization,
   type AuthorizationAction,
   type AuthorizationEvaluation,
   type AuthorizationPolicyResult,
   type AuthorizationScope,
+  type AuthorizationVocabularyVersion,
 } from "./authorization.ts";
 import type { ProjectRootIdentity } from "./project-registry.ts";
 import type {
@@ -48,25 +50,15 @@ export function sameLocalIdentity(state: ApplicationState, identity: OperationId
     state.identity.runtimeRootKey === root.rootKey;
 }
 
-export const PHASE1_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(PHASE1_AUTHORIZATION_ACTIONS));
-export const PHASE2A_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(PHASE2A_AUTHORIZATION_ACTIONS));
-export const PHASE2B_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(PHASE2B_AUTHORIZATION_ACTIONS));
+export const BASE_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(BASE_AUTHORIZATION_ACTIONS));
+export const CLAIM_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(CLAIM_AUTHORIZATION_ACTIONS));
+export const MANUAL_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(MANUAL_AUTHORIZATION_ACTIONS));
 export const CURRENT_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
-
-export function actionsForVocabulary(version: 4 | 5 | 6 | 7): readonly AuthorizationAction[] {
-  return version === 4
-    ? PHASE1_AUTHORIZATION_ACTIONS
-    : version === 5
-      ? PHASE2A_AUTHORIZATION_ACTIONS
-      : version === 6
-        ? PHASE2B_AUTHORIZATION_ACTIONS
-        : AUTHORIZATION_ACTIONS;
-}
 
 export interface RenewalAssessment {
   readonly mode: "renewed";
   readonly nextEpochRevision: number;
-  readonly vocabularyVersion: 4 | 5 | 6 | 7;
+  readonly vocabularyVersion: AuthorizationVocabularyVersion;
 }
 
 export function assessRenewal(
@@ -80,7 +72,7 @@ export function assessRenewal(
   const localIdentity = state.identity;
   if (localIdentity === null || !sameLocalIdentity(state, identity, root)) return "authorization_denied";
   const latestEpoch = state.epochs.at(-1);
-  const vocabularyVersion = latestEpoch?.vocabularyVersion ?? 4;
+  const vocabularyVersion = latestEpoch?.vocabularyVersion ?? 1;
   const currentActions = actionsForVocabulary(vocabularyVersion);
   const originActor = localIdentity.actorId;
   const originCreatedAt = latestEpoch?.createdAt ?? bootstrap.createdAt;
@@ -106,8 +98,8 @@ export function assessRenewal(
 
 export interface UpgradeAssessment {
   readonly nextEpochRevision: number;
-  readonly currentVocabularyVersion: 4 | 5 | 6;
-  readonly targetVocabularyVersion: 5 | 6 | 7;
+  readonly currentVocabularyVersion: 1 | 2 | 3;
+  readonly targetVocabularyVersion: 2 | 3 | 4;
 }
 
 export function assessCapabilityUpgrade(
@@ -122,7 +114,7 @@ export function assessCapabilityUpgrade(
   }
   const latestEpoch = state.epochs.at(-1);
   const currentVocabulary = latestEpoch?.vocabularyVersion ?? bootstrap.vocabularyVersion;
-  if (currentVocabulary !== 4 && currentVocabulary !== 5 && currentVocabulary !== 6) {
+  if (currentVocabulary !== 1 && currentVocabulary !== 2 && currentVocabulary !== 3) {
     return "not_eligible";
   }
   const originCreatedAt = latestEpoch?.createdAt ?? bootstrap.createdAt;
@@ -143,7 +135,7 @@ export function assessCapabilityUpgrade(
   return Object.freeze({
     nextEpochRevision: (latestEpoch?.epochRevision ?? 0) + 1,
     currentVocabularyVersion: currentVocabulary,
-    targetVocabularyVersion: currentVocabulary === 4 ? 5 as const : currentVocabulary === 5 ? 6 as const : 7 as const,
+    targetVocabularyVersion: currentVocabulary === 1 ? 2 as const : currentVocabulary === 2 ? 3 as const : 4 as const,
   });
 }
 

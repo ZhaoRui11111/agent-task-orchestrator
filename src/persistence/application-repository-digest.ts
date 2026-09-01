@@ -3,16 +3,14 @@ import type { ApplicationLifecycleAuthorization, ApplicationState } from "./appl
 import { canonicalJson, exactRecord, isCanonicalUtcTimestamp, isNonemptyString, sha256 } from "./values.ts";
 
 export function applicationStateSha256(state: ApplicationState): string {
-  const vocabularySevenEpochs = Object.freeze(state.epochs.filter((epoch) => epoch.vocabularyVersion === 7));
-  const vocabularySevenEpochIds = new Set(vocabularySevenEpochs.map((epoch) => epoch.epochId));
-  const vocabularySevenGrantIds = new Set(state.authorizationGrantEpochLinks
-    .filter((link) => vocabularySevenEpochIds.has(link.capabilityEpochId))
-    .map((link) => link.grantId));
-  const preDispatcherEpochs = Object.freeze(state.epochs.filter((epoch) => epoch.vocabularyVersion <= 6));
-  const preDispatcherGrants = Object.freeze(state.grants.filter((grant) => !vocabularySevenGrantIds.has(grant.grantId)));
-  return sha256(canonicalJson({
+  return sha256(canonicalJson(applicationStateProjection(state)));
+}
+
+export const APPLICATION_STATE_DIGEST_VERSION = 1 as const;
+
+export function applicationStateProjection(state: ApplicationState): Readonly<Record<string, unknown>> {
+  return Object.freeze({
     audit: state.audit,
-    authorizationGrantEpochLinks: state.authorizationGrantEpochLinks,
     bootstrap: state.bootstrap,
     decisions: state.decisions,
     dispatcherAuthorizationDecisions: state.dispatcherAuthorizationDecisions,
@@ -28,7 +26,7 @@ export function applicationStateSha256(state: ApplicationState): string {
     dispatcherRunSummaries: state.dispatcherRunSummaries,
     dispatcherTriggerRequests: state.dispatcherTriggerRequests,
     domain: state.domain,
-    epochs: preDispatcherEpochs,
+    epochs: state.epochs,
     executionAuthorizationDecisions: state.executionAuthorizationDecisions,
     executionFinalizations: state.executionFinalizations,
     executionIntentAuthorizationBindings: state.executionIntentAuthorizationBindings,
@@ -40,24 +38,14 @@ export function applicationStateSha256(state: ApplicationState): string {
     executionSequences: state.executionSequences,
     executionTerminalStates: state.executionTerminalStates,
     executions: state.executions,
-    grants: preDispatcherGrants,
+    grants: state.grants,
     identity: state.identity,
     manualBackendOperations: state.manualBackendOperations,
     manualCompletionDecisions: state.manualCompletionDecisions,
     manualTurns: state.manualTurns,
-    registry: state.projects,
+    projects: state.projects,
     requests: state.requests,
-    vocabularySevenEpochs,
-    vocabularySevenGrants: Object.freeze(state.grants.filter((grant) => vocabularySevenGrantIds.has(grant.grantId))),
-  }));
-}
-
-export function applicationStateSha256ForLifecycleAuthorization(
-  state: ApplicationState,
-  authorization: ApplicationLifecycleAuthorization,
-): string {
-  void authorization;
-  return applicationStateSha256(state);
+  });
 }
 
 export function lifecycleAuthorizationProjection(record: ApplicationLifecycleAuthorization): Readonly<Record<string, unknown>> {

@@ -13,8 +13,9 @@ import {
 } from "../src/index.ts";
 import { createApplicationServiceWithHooks } from "../src/application.ts";
 import {
+  APPLICATION_STATE_DIGEST_VERSION,
+  applicationStateProjection,
   applicationStateSha256,
-  applicationStateSha256ForLifecycleAuthorization,
   readApplicationState,
   readApplicationStateForOwner,
 } from "../src/persistence/application-repository.ts";
@@ -125,7 +126,7 @@ test("malformed dispatcher values and exceptional shapes fail before trusted ing
   assert.equal(ingressCalls, 0);
 });
 
-test("schema migration and vocabulary six do not grant dispatch.run; only the confirmed vocabulary-seven upgrade does", async () => {
+test("schema creation and the Manual stage do not grant dispatch.run; only the confirmed current-stage upgrade does", async () => {
   const fixture = createPersistenceFixture("dispatcher-explicit-upgrade");
   const trusted = trustedIngress("dispatcher-explicit-upgrade");
   const store = await openPersistence(fixture.layout, { applicationVersion: "ep02c-security" });
@@ -147,7 +148,7 @@ test("schema migration and vocabulary six do not grant dispatch.run; only the co
       assert.equal(application.upgrade({ kind: "authorization.capability.upgrade", expiresAt: EXPIRY }).ok, true);
     }
     let state = readApplicationStateForOwner(store);
-    assert.equal(state.epochs.at(-1).vocabularyVersion, 6);
+    assert.equal(state.epochs.at(-1).vocabularyVersion, 3);
     assert.equal(state.grants.some((grant) => grant.action === "dispatch.run"), false);
     assert.equal(state.dispatcherRuns.length, 0);
 
@@ -156,7 +157,7 @@ test("schema migration and vocabulary six do not grant dispatch.run; only the co
     });
     trusted.setNow("2026-08-30T12:00:03.000Z");
     const denied = dispatcher.start({
-      kind: "dispatch.start", idempotencyKey: "denied-before-v7", leaseDurationSeconds: 300,
+      kind: "dispatch.start", idempotencyKey: "denied-before-current-stage", leaseDurationSeconds: 300,
     });
     assert.equal(denied.ok, false);
     assert.equal(denied.error.code, "AUTHORIZATION_DENIED");
@@ -167,36 +168,37 @@ test("schema migration and vocabulary six do not grant dispatch.run; only the co
     assert.equal(state.domain.tasks[0].state, "ready");
 
     trusted.setNow("2026-08-30T12:00:04.000Z");
-    const exactVocabularySix = structuredClone(state);
-    const v7Stages = Object.freeze([
+    const exactManualStage = structuredClone(state);
+    const currentStages = Object.freeze([
       "request", "epoch", ...AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`), "decision", "audit",
     ]);
-    for (const stage of v7Stages) {
+    for (const stage of currentStages) {
       const faulting = createApplicationServiceWithHooks(store, trusted, {
-        afterStage(current) { if (current === stage) throw new Error(`v7-upgrade-failpoint:${stage}`); },
+        afterStage(current) { if (current === stage) throw new Error(`current-upgrade-failpoint:${stage}`); },
       });
       assert.throws(
         () => faulting.upgrade({ kind: "authorization.capability.upgrade", expiresAt: EXPIRY }),
         (error) => error?.name === "PersistenceError",
         stage,
       );
-      assert.deepEqual(readApplicationStateForOwner(store), exactVocabularySix, stage);
+      assert.deepEqual(readApplicationStateForOwner(store), exactManualStage, stage);
     }
     const upgraded = application.upgrade({ kind: "authorization.capability.upgrade", expiresAt: EXPIRY });
     assert.equal(upgraded.ok, true, JSON.stringify(upgraded));
     state = readApplicationStateForOwner(store);
-    assert.equal(state.epochs.at(-1).vocabularyVersion, 7);
+    assert.equal(state.epochs.at(-1).vocabularyVersion, 4);
     assert.equal(state.grants.filter((grant) => grant.action === "dispatch.run" && grant.revokedAt === null).length, 1);
-    const upgradedEpochId = state.epochs.at(-1).epochId;
-    const upgradedLinks = state.authorizationGrantEpochLinks.filter(
-      (link) => link.capabilityEpochId === upgradedEpochId,
+    const upgradedEpoch = state.epochs.at(-1);
+    const upgradedOriginGrants = state.grants.filter((grant) =>
+      grant.issuerGrantId === null && grant.sourceGrantId === null &&
+      grant.notBefore === upgradedEpoch.createdAt && grant.expiresAt === upgradedEpoch.expiresAt
     );
-    assert.equal(upgradedLinks.length, AUTHORIZATION_ACTIONS.length);
-    assert.deepEqual(upgradedLinks.map((link) => link.action).sort(), [...AUTHORIZATION_ACTIONS].sort());
+    assert.equal(upgradedOriginGrants.length, AUTHORIZATION_ACTIONS.length);
+    assert.deepEqual(upgradedOriginGrants.map((grant) => grant.action).sort(), [...AUTHORIZATION_ACTIONS].sort());
 
     trusted.setNow("2026-08-30T12:00:05.000Z");
     const allowed = dispatcher.start({
-      kind: "dispatch.start", idempotencyKey: "allowed-after-v7", leaseDurationSeconds: 300,
+      kind: "dispatch.start", idempotencyKey: "allowed-after-current-stage", leaseDurationSeconds: 300,
     });
     assert.equal(allowed.ok, true, JSON.stringify(allowed));
     state = readApplicationStateForOwner(store);
@@ -207,14 +209,14 @@ test("schema migration and vocabulary six do not grant dispatch.run; only the co
       audit: state.dispatcherAudit,
     });
     assert.doesNotMatch(dispatcherProjection, /sensitive dispatcher body/u);
-    assert.doesNotMatch(dispatcherProjection, /allowed-after-v7|denied-before-v7/u);
+    assert.doesNotMatch(dispatcherProjection, /allowed-after-current-stage|denied-before-current-stage/u);
     assert.match(state.dispatcherTriggerRequests.at(-1).idempotencyKey, /^dispatch-trigger:[A-Fa-f0-9]{64}$/u);
 
     trusted.setNow("2026-09-15T12:00:00.000Z");
-    const exactVocabularySeven = structuredClone(readApplicationStateForOwner(store));
-    for (const stage of v7Stages) {
+    const exactCurrentStage = structuredClone(readApplicationStateForOwner(store));
+    for (const stage of currentStages) {
       const faulting = createApplicationServiceWithHooks(store, trusted, {
-        afterStage(current) { if (current === stage) throw new Error(`v7-renewal-failpoint:${stage}`); },
+        afterStage(current) { if (current === stage) throw new Error(`current-renewal-failpoint:${stage}`); },
       });
       assert.throws(
         () => faulting.renew({
@@ -223,7 +225,7 @@ test("schema migration and vocabulary six do not grant dispatch.run; only the co
         (error) => error?.name === "PersistenceError",
         stage,
       );
-      assert.deepEqual(readApplicationStateForOwner(store), exactVocabularySeven, stage);
+      assert.deepEqual(readApplicationStateForOwner(store), exactCurrentStage, stage);
     }
     const renewed = application.renew({
       kind: "authorization.capability.renew", expiresAt: "2026-10-15T12:00:00.000Z",
@@ -231,12 +233,14 @@ test("schema migration and vocabulary six do not grant dispatch.run; only the co
     assert.equal(renewed.ok, true, JSON.stringify(renewed));
     assert.equal(renewed.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
-    assert.equal(state.epochs.at(-1).vocabularyVersion, 7);
-    const renewedLinks = state.authorizationGrantEpochLinks.filter(
-      (link) => link.capabilityEpochId === state.epochs.at(-1).epochId,
+    assert.equal(state.epochs.at(-1).vocabularyVersion, 4);
+    const renewedEpoch = state.epochs.at(-1);
+    const renewedOriginGrants = state.grants.filter((grant) =>
+      grant.issuerGrantId === null && grant.sourceGrantId === null &&
+      grant.notBefore === renewedEpoch.createdAt && grant.expiresAt === renewedEpoch.expiresAt
     );
-    assert.equal(renewedLinks.length, AUTHORIZATION_ACTIONS.length);
-    assert.deepEqual(renewedLinks.map((link) => link.action).sort(), [...AUTHORIZATION_ACTIONS].sort());
+    assert.equal(renewedOriginGrants.length, AUTHORIZATION_ACTIONS.length);
+    assert.deepEqual(renewedOriginGrants.map((grant) => grant.action).sort(), [...AUTHORIZATION_ACTIONS].sort());
     assert.equal(state.dispatcherRuns.length, 1);
     assert.match(applicationStateSha256(state), /^[0-9A-F]{64}$/u);
 
@@ -249,11 +253,26 @@ test("schema migration and vocabulary six do not grant dispatch.run; only the co
       (candidate) => candidate.authorizationId === lifecycle.value.authorizationId,
     );
     assert.ok(recorded);
-    assert.equal(applicationStateSha256ForLifecycleAuthorization(state, recorded), recorded.authorizedStateSha256);
+    assert.equal(APPLICATION_STATE_DIGEST_VERSION, 1);
+    assert.equal(applicationStateSha256(state), recorded.authorizedStateSha256);
+    const projectedKeys = Object.keys(applicationStateProjection(state)).sort();
+    const expectedKeys = Object.keys(state).filter((key) => key !== "lifecycle").sort();
+    assert.deepEqual(projectedKeys, expectedKeys);
+    const currentDigest = applicationStateSha256(state);
+    for (const key of projectedKeys) {
+      const drift = structuredClone(state);
+      drift[key] = Array.isArray(drift[key])
+        ? [...drift[key], { digestProbe: key }]
+        : { digestProbe: key };
+      assert.notEqual(applicationStateSha256(drift), currentDigest, key);
+    }
+    const lifecycleOnlyDrift = structuredClone(state);
+    lifecycleOnlyDrift.lifecycle.push({ digestProbe: "lifecycle" });
+    assert.equal(applicationStateSha256(lifecycleOnlyDrift), currentDigest);
     const dispatcherDrift = structuredClone(state);
     dispatcherDrift.dispatcherRuns[0].runRevision += 1;
     assert.notEqual(
-      applicationStateSha256ForLifecycleAuthorization(dispatcherDrift, recorded),
+      applicationStateSha256(dispatcherDrift),
       recorded.authorizedStateSha256,
     );
   } finally {
@@ -262,7 +281,7 @@ test("schema migration and vocabulary six do not grant dispatch.run; only the co
   }
 });
 
-test("current decoder rejects representative dispatcher and vocabulary-seven corruption classes", async () => {
+test("current decoder rejects representative dispatcher and current-vocabulary corruption classes", async () => {
   const fixture = createPersistenceFixture("dispatcher-corruption-matrix");
   const trusted = trustedIngress("dispatcher-corruption-matrix");
   let store = await openPersistence(fixture.layout, { applicationVersion: "ep02c-corruption" });

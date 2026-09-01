@@ -1,4 +1,8 @@
-import { AUTHORIZATION_ACTIONS, parseAuthorizationGrant } from "../authorization.ts";
+import {
+  AUTHORIZATION_ACTIONS,
+  isAuthorizationVocabularyVersion,
+  parseAuthorizationGrant,
+} from "../authorization.ts";
 import type {
   AuthorizationAction,
   AuthorizationGrant,
@@ -9,6 +13,7 @@ import type {
 import { sqliteNullableText, sqliteText } from "./database.ts";
 import type { SqliteDatabase } from "./database.ts";
 import { persistenceFailure } from "./errors.ts";
+import { APPLICATION_STATE_DIGEST_VERSION } from "./application-repository-digest.ts";
 import {
   DISPATCHER_AUDIT_CODES,
   DISPATCHER_MEMBER_CODES,
@@ -220,7 +225,7 @@ export function readBootstrap(database: SqliteDatabase): AuthorizationBootstrap 
   }
   const row = rows[0] as Record<string, unknown>;
   const vocabularyVersion = integer(row.vocabulary_version, "authorization_bootstrap.vocabulary_version");
-  if (vocabularyVersion !== 4) {
+  if (vocabularyVersion !== 1) {
     throw persistenceFailure("CORRUPT_ROW", "Authorization bootstrap vocabulary is unsupported");
   }
   return Object.freeze({
@@ -275,7 +280,7 @@ export function readEpochs(database: SqliteDatabase): readonly AuthorizationCapa
     FROM authorization_capability_epochs ORDER BY epoch_revision`,
   ).all().map((row) => {
     const vocabularyVersion = integer(row.vocabulary_version, "authorization_capability_epochs.vocabulary_version");
-    if (vocabularyVersion !== 4 && vocabularyVersion !== 5 && vocabularyVersion !== 6 && vocabularyVersion !== 7) {
+    if (!isAuthorizationVocabularyVersion(vocabularyVersion)) {
       throw persistenceFailure("CORRUPT_ROW", "Capability epoch vocabulary is unsupported");
     }
     return Object.freeze({
@@ -305,7 +310,7 @@ export function readLifecycle(database: SqliteDatabase): readonly ApplicationLif
       row.state_digest_version,
       "application_lifecycle_authorizations.state_digest_version",
     );
-    if (digestVersion !== 4) {
+    if (digestVersion !== APPLICATION_STATE_DIGEST_VERSION) {
       throw persistenceFailure("CORRUPT_ROW", "Lifecycle state digest version is unsupported");
     }
     return Object.freeze({

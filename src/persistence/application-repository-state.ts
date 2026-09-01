@@ -1,8 +1,6 @@
 import {
-  AUTHORIZATION_ACTIONS,
-  PHASE1_AUTHORIZATION_ACTIONS,
-  PHASE2A_AUTHORIZATION_ACTIONS,
-  PHASE2B_AUTHORIZATION_ACTIONS,
+  BASE_AUTHORIZATION_ACTIONS,
+  actionsForVocabulary,
   isHighRiskAction,
 } from "../authorization.ts";
 import type { AuthorizationAction, AuthorizationGrant, AuthorizationScope } from "../authorization.ts";
@@ -15,7 +13,6 @@ import type {
   ApplicationLifecycleAuthorization,
   ApplicationRequestRecord,
   AuthorizationDecisionRecord,
-  AuthorizationGrantEpochLinkRecord,
   DispatcherMemberOutcome,
   ApplicationState,
 } from "./application-repository-model.ts";
@@ -252,14 +249,6 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     throw persistenceFailure("CORRUPT_ROW", "Authorization grant relation identifiers are not globally unique");
   }
   const grantRelationById = new Map(grantRelations.map((relation) => [relation.grantId, relation]));
-  const vocabularySevenEpochIds = new Set(epochs.filter((epoch) => epoch.vocabularyVersion === 7).map((epoch) => epoch.epochId));
-  const authorizationGrantEpochLinks = Object.freeze(grantRelations
-    .filter((relation) => relation.capabilityEpochId !== null && vocabularySevenEpochIds.has(relation.capabilityEpochId))
-    .map((relation): AuthorizationGrantEpochLinkRecord => Object.freeze({
-      grantId: relation.grantId,
-      action: relation.action,
-      capabilityEpochId: relation.capabilityEpochId as string,
-    })));
   if ((bootstrap === null) !== (grants.length === 0)) {
     throw persistenceFailure("CORRUPT_ROW", "Bootstrap and grant existence do not form one initialized authorization state");
   }
@@ -278,7 +267,7 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     ) {
       throw persistenceFailure("CORRUPT_ROW", "Bootstrap request binding is incomplete");
     }
-    const fixedActions = PHASE1_AUTHORIZATION_ACTIONS;
+    const fixedActions = BASE_AUTHORIZATION_ACTIONS;
     const fixedRelations = grantRelations.filter((relation) => relation.createdRequestId === bootstrap.requestId);
     if (fixedRelations.length !== fixedActions.length) {
       throw persistenceFailure("CORRUPT_ROW", "Bootstrap does not own one fixed grant for every implemented action");
@@ -318,26 +307,17 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
       identity.bootstrapRequestId !== bootstrap.requestId ||
       identity.createdAt !== bootstrap.createdAt
     ) {
-      throw persistenceFailure("CORRUPT_ROW", "Vocabulary-v4 bootstrap does not bind the immutable local identity");
+      throw persistenceFailure("CORRUPT_ROW", "Version-1 bootstrap does not bind the immutable local identity");
     }
   }
-  const phase1ActionSetSha256 = sha256(canonicalJson(PHASE1_AUTHORIZATION_ACTIONS));
-  const phase2aActionSetSha256 = sha256(canonicalJson(PHASE2A_AUTHORIZATION_ACTIONS));
-  const phase2bActionSetSha256 = sha256(canonicalJson(PHASE2B_AUTHORIZATION_ACTIONS));
-  const currentActionSetSha256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
   for (let index = 0; index < epochs.length; index += 1) {
     const epoch = epochs[index];
     const request = epoch === undefined ? undefined : requestById.get(epoch.requestId);
-    const previousVocabulary = index === 0 ? 4 : epochs[index - 1]?.vocabularyVersion;
+    const previousVocabulary = index === 0 ? 1 : epochs[index - 1]?.vocabularyVersion;
     const isUpgrade = epoch !== undefined && previousVocabulary !== undefined && epoch.vocabularyVersion === previousVocabulary + 1;
     const isRenewal = epoch?.vocabularyVersion === previousVocabulary;
-    const expectedActionSetSha256 = epoch?.vocabularyVersion === 7
-      ? currentActionSetSha256
-      : epoch?.vocabularyVersion === 6
-        ? phase2bActionSetSha256
-      : epoch?.vocabularyVersion === 5
-        ? phase2aActionSetSha256
-        : phase1ActionSetSha256;
+    const expectedActions = epoch === undefined ? null : actionsForVocabulary(epoch.vocabularyVersion);
+    const expectedActionSetSha256 = expectedActions === null ? null : sha256(canonicalJson(expectedActions));
     if (
       epoch === undefined ||
       identity === null ||
@@ -357,18 +337,12 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
       throw persistenceFailure("CORRUPT_ROW", "Capability epoch lineage is incomplete or non-contiguous");
     }
     const epochRelations = grantRelations.filter((relation) => relation.capabilityEpochId === epoch.epochId);
-    const expectedActions = epoch.vocabularyVersion === 7
-      ? AUTHORIZATION_ACTIONS
-      : epoch.vocabularyVersion === 6
-        ? PHASE2B_AUTHORIZATION_ACTIONS
-      : epoch.vocabularyVersion === 5
-        ? PHASE2A_AUTHORIZATION_ACTIONS
-        : PHASE1_AUTHORIZATION_ACTIONS;
+    const epochActions = actionsForVocabulary(epoch.vocabularyVersion);
     const actionSet = new Set(epochRelations.map((relation) => relation.action));
     if (
-      epochRelations.length !== expectedActions.length ||
-      actionSet.size !== expectedActions.length ||
-      expectedActions.some((expected) => !actionSet.has(expected))
+      epochRelations.length !== epochActions.length ||
+      actionSet.size !== epochActions.length ||
+      epochActions.some((expected) => !actionSet.has(expected))
     ) {
       throw persistenceFailure("CORRUPT_ROW", "Capability epoch grant action inventory is not exact");
     }
@@ -524,17 +498,11 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     const createdCount = grantRelations.filter((relation) => relation.createdRequestId === request.requestId).length;
     const revokedCount = grantRelations.filter((relation) => relation.revokedRequestId === request.requestId).length;
     const expectedCreatedCount = request.result === "bootstrap"
-      ? PHASE1_AUTHORIZATION_ACTIONS.length
+      ? BASE_AUTHORIZATION_ACTIONS.length
       : request.result === "renewal" || request.result === "upgrade"
         ? (() => {
             const epoch = epochs.find((candidate) => candidate.requestId === request.requestId);
-            return epoch?.vocabularyVersion === 7
-              ? AUTHORIZATION_ACTIONS.length
-              : epoch?.vocabularyVersion === 6
-                ? PHASE2B_AUTHORIZATION_ACTIONS.length
-                : epoch?.vocabularyVersion === 5
-                  ? PHASE2A_AUTHORIZATION_ACTIONS.length
-                  : PHASE1_AUTHORIZATION_ACTIONS.length;
+            return epoch === undefined ? -1 : actionsForVocabulary(epoch.vocabularyVersion).length;
           })()
       : request.result === "allow" && request.action === "authorization.grant.issue"
         ? 1
@@ -1280,7 +1248,7 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher terminal summary is inconsistent");
   }
   const stateWithoutLifecycle = Object.freeze({
-    domain, projects, bootstrap, identity, grants, epochs, authorizationGrantEpochLinks,
+    domain, projects, bootstrap, identity, grants, epochs,
     requests, decisions, audit,
     executionSequences, executions,
     executionOperationRequests, executionAuthorizationDecisions, executionOperationAudit,

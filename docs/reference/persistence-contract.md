@@ -10,11 +10,11 @@ incompatible/corrupt-state handling.
 
 The current implementation stores the complete local explicit-Manual Phase 2
 model in one schema-version-1 baseline: exact Project/Task Domain snapshots,
-ProjectRegistry, local identity, vocabulary-4-through-7 epochs and grants,
+ProjectRegistry, local identity, vocabulary-version-1-through-4 epochs and grants,
 application requests, authorization decisions, lifecycle authorizations,
 sanitized audit, execution attempts/sequences, reliable Manual-loop evidence
 and journal records, and reconcile-first Manual dispatcher records. Lifecycle
-authorization stores and verifies only application-state digest version 4.
+authorization stores and verifies only application-state digest version 1.
 
 Persistence exposes lifecycle operations, read-only doctor, and the typed
 application transaction owner; it does not authorize a mutation or select or
@@ -44,7 +44,7 @@ prefix, checksum, physical authorization partition, grant-link relation,
 historical application-state projection, or lifecycle digest version. Schema
 version and authorization vocabulary are independent: the database remains
 schema version 1 while separately confirmed capability transitions advance
-vocabulary 4 to 5, 5 to 6, and 6 to 7.
+vocabulary version 1 to 2, 2 to 3, and 3 to 4.
 
 The baseline does not pre-allocate workspace, scheduling
 registration/delivery, gates, ProjectPolicy, CompletionBackend, or MCP records.
@@ -69,7 +69,7 @@ the non-empty `application_version`. The metadata `updated_at` must equal the
 applied history timestamp. History contains exactly the one version-1
 `current-baseline` row. It is not inferred from table shape.
 
-### Phase 1 Domain Core storage
+### Domain Core storage
 
 `projects` stores only:
 
@@ -78,7 +78,7 @@ applied history timestamp. History contains exactly the one version-1
 
 This row is the minimum Project value required to reconstruct the implemented
 Domain Core. Canonical root and registry revisions live in the separate
-Phase 1 `project_registry` owner. Adapter configuration and later lifecycle
+current `project_registry` owner. Adapter configuration and later lifecycle
 fields are not silently represented here.
 
 `tasks` stores the complete current Domain Core Task shape:
@@ -131,12 +131,12 @@ local Project/Task/dependency application owner:
   one exact runtime, Project, Task, or grant target and `bootstrap|allow|deny`
   result.
 - singleton `authorization_bootstrap` binds the trusted actor/principal,
-  immutable runtime-root identity/expiry, and initial vocabulary 4 to its
+  immutable runtime-root identity/expiry, and initial vocabulary version 1 to its
   request.
 - `authorization_local_identity` stores the immutable versioned
   actor/principal digest and runtime-root binding created by bootstrap.
 - `authorization_capability_epochs` stores one immutable contiguous
-  vocabulary-4-through-7 renewal/upgrade lineage bound to the exact action-set
+  vocabulary-version-1-through-4 renewal/upgrade lineage bound to the exact action-set
   digest.
 - `authorization_grants` stores the exact finite action, runtime or
   revision-bound Project scope, lifetime, administrative/source provenance,
@@ -149,7 +149,7 @@ local Project/Task/dependency application owner:
   prompts, tool output, Agent text, or secrets.
 - `application_lifecycle_authorizations` stores immutable short-lived
   backup/restore handoffs bound to authorization evidence and exactly
-  `state_digest_version = 4` of the complete current application state.
+  `state_digest_version = 1` of the complete current non-lifecycle application state.
 
 Every application relation is `STRICT`. Requests, bootstrap, identity, epochs,
 decisions, lifecycle authorizations, and audit are append-only; grants are
@@ -172,13 +172,16 @@ advance must be exact `+1`; attempt updates are limited to a current-owner
 lease-renewal CAS or an expired active-attempt supersession CAS. Attempts and
 sequences cannot be deleted. Baseline creation inserts no capability epoch,
 grant, execution row, or authority. Bootstrap creates only the fixed nineteen
-vocabulary-4 grants. A separately confirmed contiguous upgrade is the only
-path that appends vocabulary 5, 6, or 7 origin grants.
+version-1 base grants. A separately confirmed contiguous upgrade is the only
+path that appends vocabulary-version-2, -3, or -4 origin grants.
 
 Reliable Manual-loop storage uses the same epoch/grant relations and the sole
-current digest-version-4 application projection. A confirmed vocabulary-5-to-6
-upgrade appends one epoch and exactly twenty-nine current origin grants; there
-is no physical vocabulary partition, grant-link relation, or digest fallback.
+current digest-version-1 `applicationStateProjection`. A confirmed
+version-2-to-3 upgrade appends one epoch and exactly twenty-nine current origin
+grants. The projection enumerates direct epochs and grants once under their
+current property names and excludes only lifecycle authorizations to avoid a
+self-reference; there is no physical vocabulary partition, grant-link relation,
+compatibility projection, ignored-argument wrapper, or digest fallback.
 
 The operation relations separate immutable request/decision/audit,
 authorization-bound semantic intent, immutable prepare/act/finalize
@@ -203,9 +206,9 @@ allocated.
 The baseline itself inserts no epoch/grant, lifecycle authorization,
 execution operation, Manual turn, receipt, finalization, terminal, or completion
 row. Fresh schema creation does not bootstrap application state. A separately
-confirmed vocabulary-6-to-7 upgrade or later vocabulary-7 renewal appends one
+confirmed version-3-to-4 upgrade or later version-4 renewal appends one
 epoch and exactly thirty fresh origin grants in the same current relations;
-baseline creation, bootstrap, and older-vocabulary renewal add no
+baseline creation, bootstrap, and earlier-version renewal add no
 `dispatch.run` authority.
 
 The dispatcher relations separate bounded trigger observation, authorization
@@ -234,10 +237,10 @@ member, member-denial, or summary row.
 | --- | --- | --- |
 | `schema_metadata.schema_version`, registry identity/fingerprint, `updated_at`, and `migration_history` | `src/persistence/migrations.ts` | current startup validation, backup/restore verification, and read-only doctor |
 | `schema_metadata.domain_initialized` one-time `0` to `1` transition | `src/persistence/repository.ts` inside the initial snapshot transaction | current startup validation, repository decoder, backup/restore verification |
-| `projects`, `tasks`, `task_dependencies` | `src/persistence/repository.ts`, invoked only through the internal Phase 1 application transaction after initialization | the same repository decoder, combined application decoder, backup verification, and doctor |
+| `projects`, `tasks`, `task_dependencies` | `src/persistence/repository.ts`, invoked only through the internal application transaction after initialization | the same repository decoder, combined application decoder, backup verification, and doctor |
 | `project_registry` | `src/persistence/application-repository-transaction.ts` in the accepted application transaction | `application-repository-readers.ts` and the combined `application-repository-state.ts` decoder, then the application service through the stable `application-repository.ts` facade |
-| `authorization_bootstrap`, `authorization_local_identity`, and all vocabulary-4-through-7 `authorization_capability_epochs`/`authorization_grants` | `src/persistence/application-repository-transaction.ts` in bootstrap, renewal/upgrade, or authorized grant transactions | `application-repository-readers.ts`, the combined `application-repository-state.ts` decoder, and the application authorization owner through the stable facade |
-| `application_requests`, `authorization_decisions`, `application_audit`, `application_lifecycle_authorizations` | `src/persistence/application-repository-transaction.ts` in the same decision/operation transaction | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-4 `application-repository-digest.ts`, `application-repository-lifecycle.ts`, backup verification, and doctor |
+| `authorization_bootstrap`, `authorization_local_identity`, and all vocabulary-version-1-through-4 `authorization_capability_epochs`/`authorization_grants` | `src/persistence/application-repository-transaction.ts` in bootstrap, renewal/upgrade, or authorized grant transactions | `application-repository-readers.ts`, the combined `application-repository-state.ts` decoder, and the application authorization owner through the stable facade |
+| `application_requests`, `authorization_decisions`, `application_audit`, `application_lifecycle_authorizations` | `src/persistence/application-repository-transaction.ts` in the same decision/operation transaction | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-1 `application-repository-digest.ts`, `application-repository-lifecycle.ts`, backup verification, and doctor |
 | `task_execution_sequences`, `execution_attempts` | `src/persistence/application-repository-transaction.ts` only inside the typed execution application transaction | `application-repository-readers.ts`, `application-repository-state.ts`, the execution application owner, backup verification, and doctor |
 | `execution_operation_requests`, `execution_authorization_decisions`, `execution_operation_audit`, `execution_operation_intents`, `execution_intent_authorization_bindings`, `execution_observations`, `execution_verified_receipts`, `execution_finalizations`, `execution_terminal_states`, `manual_completion_decisions` | `src/persistence/application-repository-transaction.ts` only inside reliable-loop transactions after the application owner selects and authorizes the exact operation | `application-repository-readers.ts`, `application-repository-state.ts`, the reliable execution owner, backup verification, and doctor |
 | `manual_backend_turns`, `manual_backend_operations` | `src/persistence/manual-backend-repository.ts` remains the semantic journal writer through the injected production Manual backend/control after a matching committed core intent; physical writes use the same `ApplicationTransaction` from `application-repository-transaction.ts` | the same journal plus `application-repository-readers.ts`, `application-repository-state.ts`, the reliable execution owner, backup verification, and doctor |
@@ -393,8 +396,8 @@ union reader, fallback projection, or compatibility decoder.
 
 Grant identifiers are globally unique in the one current grant relation. Each
 capability epoch has the exact inventory for its recorded vocabulary: nineteen,
-twenty-three, twenty-nine, or thirty direct grants for vocabulary 4, 5, 6, or
-7 respectively. Missing, substituted, duplicate-action, wrong-epoch, or
+twenty-three, twenty-nine, or thirty direct grants for vocabulary versions 1,
+2, 3, or 4 respectively. Missing, substituted, duplicate-action, wrong-epoch, or
 noncontiguous state is corruption. The decoder also requires each dispatcher request,
 decision, audit, run, reconciliation summary, membership/member, bound
 execution/intent, and run summary to form one exact lineage. Unknown enum/code,
@@ -477,7 +480,7 @@ The sole migration is `0001-current-baseline.sql`, registry ID
 
 | Version | Canonical line ending | Canonical `checksum_sha256` |
 | --- | --- | --- |
-| `1` | LF | `EF756403D6D03EF73208326B0234991CBC4189372121474E6AD97C11BA70F6BD` |
+| `1` | LF | `518E84129E6753E7D0E5078223DCCB43E155AA2FD2120DD2A4C3F5F633FCEBFA` |
 
 The sole lazily loaded registry accepts a migration source only when it is the
 complete exact logical content transported with uniformly LF or uniformly

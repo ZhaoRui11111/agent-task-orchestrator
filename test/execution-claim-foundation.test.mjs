@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AUTHORIZATION_ACTIONS,
+  BASE_AUTHORIZATION_ACTIONS,
+  CLAIM_AUTHORIZATION_ACTIONS,
   EXECUTION_AUTHORIZATION_ACTIONS,
-  PHASE1_AUTHORIZATION_ACTIONS,
-  PHASE2A_AUTHORIZATION_ACTIONS,
   createApplicationService,
   createExecutionApplicationService,
   openPersistence,
@@ -89,11 +89,11 @@ test("explicit capability upgrade gates claim, renewal, restart takeover, replay
     assert.equal(store.migration.schemaVersion, 1);
     const application = prepareReadyTask(store, trusted, fixture);
     let state = readApplicationStateForOwner(store);
-    assert.equal(PHASE1_AUTHORIZATION_ACTIONS.length, 19);
+    assert.equal(BASE_AUTHORIZATION_ACTIONS.length, 19);
     assert.equal(EXECUTION_AUTHORIZATION_ACTIONS.length, 4);
-    assert.equal(PHASE2A_AUTHORIZATION_ACTIONS.length, 23);
+    assert.equal(CLAIM_AUTHORIZATION_ACTIONS.length, 23);
     assert.equal(AUTHORIZATION_ACTIONS.length, 30);
-    assert.equal(state.bootstrap?.vocabularyVersion, 4);
+    assert.equal(state.bootstrap?.vocabularyVersion, 1);
     assert.equal(state.epochs.length, 0);
     assert.equal(state.grants.some((grant) => grant.action.startsWith("execution.")), false);
 
@@ -113,8 +113,8 @@ test("explicit capability upgrade gates claim, renewal, restart takeover, replay
     assert.equal(upgraded.value.mode, "upgraded");
     assert.equal(upgraded.value.capabilityCount, 23);
     state = readApplicationStateForOwner(store);
-    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 5);
-    assert.equal(state.grants.length, PHASE1_AUTHORIZATION_ACTIONS.length + PHASE2A_AUTHORIZATION_ACTIONS.length);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 2);
+    assert.equal(state.grants.length, BASE_AUTHORIZATION_ACTIONS.length + CLAIM_AUTHORIZATION_ACTIONS.length);
     assert.equal(
       EXECUTION_AUTHORIZATION_ACTIONS.every(
         (action) => state.grants.some((grant) => grant.action === action && grant.actorId === ACTOR),
@@ -441,7 +441,7 @@ test("lease renewal never banks more than the bounded duration from trusted now"
   }
 });
 
-test("capability upgrade requires fresh confirmation and every staged failure preserves the exact vocabulary-4 origin", async () => {
+test("capability upgrade requires fresh confirmation and every staged failure preserves the exact base origin", async () => {
   const fixture = createPersistenceFixture("execution-upgrade-failpoints");
   const trusted = ingress("upgrade-failpoints");
   let store;
@@ -484,7 +484,7 @@ test("capability upgrade requires fresh confirmation and every staged failure pr
     const stages = [
       "request",
       "epoch",
-      ...PHASE2A_AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`),
+      ...CLAIM_AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`),
       "decision",
       "audit",
     ];
@@ -503,7 +503,7 @@ test("capability upgrade requires fresh confirmation and every staged failure pr
     }
     const beforeSuccess = readApplicationStateForOwner(store);
     assert.equal(beforeSuccess.epochs.length, 0);
-    assert.equal(beforeSuccess.grants.length, PHASE1_AUTHORIZATION_ACTIONS.length);
+    assert.equal(beforeSuccess.grants.length, BASE_AUTHORIZATION_ACTIONS.length);
     const upgraded = setup.upgrade({
       kind: "authorization.capability.upgrade",
       expiresAt: UPGRADE_EXPIRY,
@@ -511,8 +511,8 @@ test("capability upgrade requires fresh confirmation and every staged failure pr
     assert.equal(upgraded.ok, true);
     const terminal = readApplicationStateForOwner(store);
     assert.equal(terminal.epochs.length, 1);
-    assert.equal(terminal.epochs[0]?.vocabularyVersion, 5);
-    assert.equal(terminal.grants.length, PHASE1_AUTHORIZATION_ACTIONS.length + PHASE2A_AUTHORIZATION_ACTIONS.length);
+    assert.equal(terminal.epochs[0]?.vocabularyVersion, 2);
+    assert.equal(terminal.grants.length, BASE_AUTHORIZATION_ACTIONS.length + CLAIM_AUTHORIZATION_ACTIONS.length);
     const afterUpgrade = readApplicationStateForOwner(store);
     const replay = setup.upgrade({
       kind: "authorization.capability.upgrade",
@@ -565,7 +565,7 @@ test("competing initial claims persist exactly one winner, active attempt, seque
   }
 });
 
-test("a competing capability upgrade creates one vocabulary-5 origin and makes stale preflight a no-write loser", async () => {
+test("a competing capability upgrade creates one claim-capable origin and makes stale preflight a no-write loser", async () => {
   const fixture = createPersistenceFixture("execution-upgrade-contention");
   const primaryIngress = ingress("upgrade-primary");
   const competingIngress = ingress("upgrade-competitor");
@@ -595,8 +595,8 @@ test("a competing capability upgrade creates one vocabulary-5 origin and makes s
     assert.equal(losingResult.error.code, "STALE_REVISION");
     const state = readApplicationStateForOwner(primary);
     assert.equal(state.epochs.length, 1);
-    assert.equal(state.epochs[0]?.vocabularyVersion, 5);
-    assert.equal(state.grants.length, PHASE1_AUTHORIZATION_ACTIONS.length + PHASE2A_AUTHORIZATION_ACTIONS.length);
+    assert.equal(state.epochs[0]?.vocabularyVersion, 2);
+    assert.equal(state.grants.length, BASE_AUTHORIZATION_ACTIONS.length + CLAIM_AUTHORIZATION_ACTIONS.length);
     assert.equal(state.requests.filter((request) => request.action === "authorization.capability.upgrade").length, 1);
   } finally {
     if (competitor !== undefined) await competitor.close();

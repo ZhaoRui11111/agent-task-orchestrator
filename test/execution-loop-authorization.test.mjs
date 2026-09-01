@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
-  PHASE1_AUTHORIZATION_ACTIONS,
-  PHASE2A_AUTHORIZATION_ACTIONS,
-  PHASE2B_AUTHORIZATION_ACTIONS,
+  BASE_AUTHORIZATION_ACTIONS,
+  CLAIM_AUTHORIZATION_ACTIONS,
+  MANUAL_AUTHORIZATION_ACTIONS,
   createApplicationService,
   openPersistence,
 } from "../src/index.ts";
@@ -17,8 +17,8 @@ import {
 } from "./persistence-test-helpers.mjs";
 
 const PRINCIPAL = "A".repeat(64);
-const EP02B_ACTIONS = Object.freeze(PHASE2B_AUTHORIZATION_ACTIONS.filter(
-  (action) => !PHASE2A_AUTHORIZATION_ACTIONS.includes(action),
+const MANUAL_EXTENSION_ACTIONS = Object.freeze(MANUAL_AUTHORIZATION_ACTIONS.filter(
+  (action) => !CLAIM_AUTHORIZATION_ACTIONS.includes(action),
 ));
 
 function trustedIngress(label) {
@@ -36,11 +36,11 @@ function trustedIngress(label) {
   };
 }
 
-function hasEp02bGrant(state) {
-  return state.grants.some((grant) => EP02B_ACTIONS.includes(grant.action));
+function hasManualExtensionGrant(state) {
+  return state.grants.some((grant) => MANUAL_EXTENSION_ACTIONS.includes(grant.action));
 }
 
-async function seedVocabularySix(fixture, label) {
+async function seedManualStage(fixture, label) {
   const ingress = trustedIngress(label);
   const store = await openPersistence(fixture.layout, { applicationVersion: label });
   try {
@@ -59,19 +59,19 @@ async function seedVocabularySix(fixture, label) {
       expiresAt: "2026-09-26T12:00:00.000Z",
     });
     assert.equal(upgraded.ok, true, JSON.stringify(upgraded));
-    assert.equal(readApplicationStateForOwner(store).epochs.at(-1)?.vocabularyVersion, 6);
+    assert.equal(readApplicationStateForOwner(store).epochs.at(-1)?.vocabularyVersion, 3);
   } finally {
     await store.close();
   }
 }
 
-test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every 5-to-6 failpoint is atomic", async () => {
-  const fixture = createPersistenceFixture("execution-loop-vocabulary-6");
-  const ingress = trustedIngress("execution-loop-vocabulary-6");
+test("claim-capable renewal exposes no Manual authority, while every claim-to-Manual failpoint is atomic", async () => {
+  const fixture = createPersistenceFixture("execution-loop-manual-stage");
+  const ingress = trustedIngress("execution-loop-manual-stage");
   let store;
   try {
-    assert.equal(EP02B_ACTIONS.length, 6);
-    assert.equal(PHASE2B_AUTHORIZATION_ACTIONS.length, 29);
+    assert.equal(MANUAL_EXTENSION_ACTIONS.length, 6);
+    assert.equal(MANUAL_AUTHORIZATION_ACTIONS.length, 29);
     store = await openPersistence(fixture.layout, { applicationVersion: "ep02b-authorization" });
     const application = createApplicationService(store, ingress);
     assert.equal(application.bootstrap({
@@ -79,8 +79,8 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
       expiresAt: "2026-09-20T12:00:00.000Z",
     }).ok, true);
     let state = readApplicationStateForOwner(store);
-    assert.equal(state.grants.length, PHASE1_AUTHORIZATION_ACTIONS.length);
-    assert.equal(hasEp02bGrant(state), false);
+    assert.equal(state.grants.length, BASE_AUTHORIZATION_ACTIONS.length);
+    assert.equal(hasManualExtensionGrant(state), false);
 
     const firstUpgrade = application.upgrade({
       kind: "authorization.capability.upgrade",
@@ -88,8 +88,8 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
     });
     assert.equal(firstUpgrade.ok, true, JSON.stringify(firstUpgrade));
     state = readApplicationStateForOwner(store);
-    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 5);
-    assert.equal(hasEp02bGrant(state), false);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 2);
+    assert.equal(hasManualExtensionGrant(state), false);
 
     ingress.setNow("2026-09-15T12:00:00.000Z");
     const renewed = application.renew({
@@ -97,11 +97,11 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
       expiresAt: "2026-09-25T12:00:00.000Z",
     });
     assert.equal(renewed.ok, true, JSON.stringify(renewed));
-    assert.equal(renewed.value.capabilityCount, PHASE2A_AUTHORIZATION_ACTIONS.length);
+    assert.equal(renewed.value.capabilityCount, CLAIM_AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
-    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 5);
-    assert.equal(hasEp02bGrant(state), false);
-    const exactVocabulary5Origin = structuredClone(state);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 2);
+    assert.equal(hasManualExtensionGrant(state), false);
+    const exactClaimOrigin = structuredClone(state);
 
     ingress.setConfirmed(false);
     const unconfirmed = application.upgrade({
@@ -110,13 +110,13 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
     });
     assert.equal(unconfirmed.ok, false);
     assert.equal(unconfirmed.error.code, "AUTHORIZATION_DENIED");
-    assert.deepEqual(readApplicationStateForOwner(store), exactVocabulary5Origin);
+    assert.deepEqual(readApplicationStateForOwner(store), exactClaimOrigin);
     ingress.setConfirmed(true);
 
     const stages = Object.freeze([
       "request",
       "epoch",
-      ...PHASE2B_AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`),
+      ...MANUAL_AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`),
       "decision",
       "audit",
     ]);
@@ -143,14 +143,14 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
       expiresAt: "2026-09-26T12:00:00.000Z",
     });
     assert.equal(upgraded.ok, true, JSON.stringify(upgraded));
-    assert.equal(upgraded.value.capabilityCount, PHASE2B_AUTHORIZATION_ACTIONS.length);
+    assert.equal(upgraded.value.capabilityCount, MANUAL_AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
-    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 6);
-    const vocabulary5GrantIds = new Set(exactVocabulary5Origin.grants.map((grant) => grant.grantId));
-    const newestGrants = state.grants.filter((grant) => !vocabulary5GrantIds.has(grant.grantId));
-    assert.equal(newestGrants.length, PHASE2B_AUTHORIZATION_ACTIONS.length);
-    assert.deepEqual(newestGrants.map((grant) => grant.action).sort(), [...PHASE2B_AUTHORIZATION_ACTIONS].sort());
-    assert.equal(EP02B_ACTIONS.every((action) => newestGrants.some(
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 3);
+    const claimGrantIds = new Set(exactClaimOrigin.grants.map((grant) => grant.grantId));
+    const newestGrants = state.grants.filter((grant) => !claimGrantIds.has(grant.grantId));
+    assert.equal(newestGrants.length, MANUAL_AUTHORIZATION_ACTIONS.length);
+    assert.deepEqual(newestGrants.map((grant) => grant.action).sort(), [...MANUAL_AUTHORIZATION_ACTIONS].sort());
+    assert.equal(MANUAL_EXTENSION_ACTIONS.every((action) => newestGrants.some(
       (grant) => grant.action === action && grant.actorId === "local_manual_operator" && grant.revokedAt === null,
     )), true);
 
@@ -160,21 +160,20 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
       assert.ok(currentEpochId);
       assert.equal(inspection.prepare(
         "SELECT count(*) AS count FROM authorization_grants WHERE capability_epoch_id=?",
-      ).get(currentEpochId).count, PHASE2B_AUTHORIZATION_ACTIONS.length);
+      ).get(currentEpochId).count, MANUAL_AUTHORIZATION_ACTIONS.length);
       assert.equal(inspection.prepare(
         `SELECT count(*) AS count
          FROM authorization_grants
          WHERE capability_epoch_id=?
            AND issuer_grant_id IS NULL
            AND source_grant_id IS NULL`,
-      ).get(currentEpochId).count, PHASE2B_AUTHORIZATION_ACTIONS.length);
+      ).get(currentEpochId).count, MANUAL_AUTHORIZATION_ACTIONS.length);
       assert.deepEqual(inspection.prepare(
         `SELECT name FROM sqlite_schema
          WHERE name IN (
-           'authorization_capability_epochs_v6', 'authorization_capability_epochs_v7',
-           'authorization_grants_v6', 'authorization_grants_v7',
-           'authorization_grant_epoch_v6_links', 'authorization_grant_epoch_v7_legacy_links',
-           'authorization_grant_epoch_v7_v6_links'
+           'authorization_capability_epochs_claim', 'authorization_capability_epochs_manual',
+           'authorization_grants_claim', 'authorization_grants_manual',
+           'authorization_grant_epoch_links', 'authorization_grant_epoch_compatibility_links'
          ) ORDER BY name`,
       ).all(), []);
       assert.deepEqual(inspection.prepare("PRAGMA foreign_key_check").all(), []);
@@ -183,24 +182,24 @@ test("vocabulary 5 bootstrap and renewal expose no EP-02B authority, while every
     }
 
     ingress.setNow("2026-09-25T12:00:01.000Z");
-    const v6OnlyStatus = application.execute({ kind: "runtime.status" });
-    assert.equal(v6OnlyStatus.ok, true, JSON.stringify(v6OnlyStatus));
-    const v6StatusGrant = newestGrants.find((grant) => grant.action === "runtime.status");
-    assert.ok(v6StatusGrant);
+    const currentStageStatus = application.execute({ kind: "runtime.status" });
+    assert.equal(currentStageStatus.ok, true, JSON.stringify(currentStageStatus));
+    const currentStageStatusGrant = newestGrants.find((grant) => grant.action === "runtime.status");
+    assert.ok(currentStageStatusGrant);
     assert.equal(
       readApplicationStateForOwner(store).decisions.find(
-        (decision) => decision.requestId === v6OnlyStatus.requestId,
+        (decision) => decision.requestId === currentStageStatus.requestId,
       )?.grantId,
-      v6StatusGrant.grantId,
+      currentStageStatusGrant.grantId,
     );
 
     await store.close();
     store = await openPersistence(fixture.layout, { applicationVersion: "ep02b-authorization-reopen" });
     state = readApplicationStateForOwner(store);
-    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 6);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 3);
     assert.equal(
-      state.grants.filter((grant) => !vocabulary5GrantIds.has(grant.grantId)).length,
-      PHASE2B_AUTHORIZATION_ACTIONS.length,
+      state.grants.filter((grant) => !claimGrantIds.has(grant.grantId)).length,
+      MANUAL_AUTHORIZATION_ACTIONS.length,
     );
   } finally {
     if (store !== undefined) await store.close();
@@ -232,7 +231,7 @@ const currentGrantCorruptions = Object.freeze([
 test("current schema rejects a duplicated action in one capability epoch", async () => {
   const fixture = createPersistenceFixture("execution-current-duplicate-action");
   try {
-    await seedVocabularySix(fixture, "execution-current-duplicate-action");
+    await seedManualStage(fixture, "execution-current-duplicate-action");
     const database = new DatabaseSync(fixture.layout.databasePath);
     try {
       database.exec("PRAGMA foreign_keys=ON");
@@ -260,7 +259,7 @@ for (const corruption of currentGrantCorruptions) {
   test(`current decoder rejects ${corruption.name}`, async () => {
     const fixture = createPersistenceFixture(`execution-current-corrupt-${corruption.name.replaceAll(" ", "-")}`);
     try {
-      await seedVocabularySix(fixture, `execution-current-corrupt-${corruption.name.replaceAll(" ", "-")}`);
+      await seedManualStage(fixture, `execution-current-corrupt-${corruption.name.replaceAll(" ", "-")}`);
       const database = new DatabaseSync(fixture.layout.databasePath);
       try {
         database.exec("PRAGMA foreign_keys=ON");

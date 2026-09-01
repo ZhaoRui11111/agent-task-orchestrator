@@ -173,7 +173,7 @@ CREATE TABLE authorization_bootstrap (
   request_id TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL CHECK (length(created_at) > 0),
   expires_at TEXT NOT NULL CHECK (length(expires_at) > 0),
-  vocabulary_version INTEGER NOT NULL DEFAULT 4 CHECK (vocabulary_version = 4),
+  vocabulary_version INTEGER NOT NULL DEFAULT 1 CHECK (vocabulary_version = 1),
   UNIQUE(actor_id, runtime_root_key),
   FOREIGN KEY (request_id) REFERENCES application_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT
 ) STRICT;
@@ -196,7 +196,7 @@ CREATE TABLE authorization_capability_epochs (
   epoch_revision INTEGER NOT NULL UNIQUE CHECK (epoch_revision > 0),
   actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
   runtime_root_key TEXT NOT NULL CHECK (length(runtime_root_key) > 0),
-  vocabulary_version INTEGER NOT NULL CHECK (vocabulary_version IN (4, 5, 6, 7)),
+  vocabulary_version INTEGER NOT NULL CHECK (vocabulary_version IN (1, 2, 3, 4)),
   action_set_sha256 TEXT NOT NULL CHECK (length(action_set_sha256) = 64 AND action_set_sha256 NOT GLOB '*[^0-9A-F]*'),
   request_id TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL CHECK (length(created_at) > 0),
@@ -330,7 +330,7 @@ CREATE TABLE application_lifecycle_authorizations (
   decision_id TEXT NOT NULL UNIQUE,
   audit_id TEXT NOT NULL UNIQUE,
   authorized_state_sha256 TEXT NOT NULL CHECK (length(authorized_state_sha256) = 64 AND authorized_state_sha256 NOT GLOB '*[^0-9A-F]*'),
-  state_digest_version INTEGER NOT NULL CHECK (state_digest_version = 4),
+  state_digest_version INTEGER NOT NULL CHECK (state_digest_version = 1),
   expected_request_count INTEGER NOT NULL CHECK (expected_request_count >= 1),
   expected_decision_count INTEGER NOT NULL CHECK (expected_decision_count >= 1),
   expected_audit_count INTEGER NOT NULL CHECK (expected_audit_count >= 1),

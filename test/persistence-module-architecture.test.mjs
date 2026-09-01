@@ -18,19 +18,20 @@ const EXPECTED_INTERNAL_EDGES = Object.freeze({
   digest: ["model"],
   lifecycle: ["digest", "model", "state"],
   model: [],
-  readers: ["model"],
+  readers: ["digest", "model"],
   state: ["digest", "model", "readers"],
   transaction: ["digest", "model", "readers", "state"],
 });
 
 const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "ApplicationTransaction",
+  "APPLICATION_STATE_DIGEST_VERSION",
   "DISPATCHER_AUDIT_CODES",
   "DISPATCHER_MEMBER_CODES",
   "DISPATCHER_RECONCILIATION_CODES",
   "applicationAuditKind",
+  "applicationStateProjection",
   "applicationStateSha256",
-  "applicationStateSha256ForLifecycleAuthorization",
   "bindApplicationDatabase",
   "commitDomainForOwner",
   "initializeDomainForOwner",

@@ -1,5 +1,5 @@
 import {
-  PHASE1_AUTHORIZATION_ACTIONS,
+  BASE_AUTHORIZATION_ACTIONS,
   isAuthorizationAction,
   isHighRiskAction,
   type AuthorizationScope,
@@ -163,7 +163,7 @@ export function parseCommand(value: unknown): ApplicationCommand | null {
       !("value" in descriptor) ||
       !descriptor.enumerable ||
       typeof descriptor.value !== "string" ||
-      !(PHASE1_AUTHORIZATION_ACTIONS as readonly string[]).includes(descriptor.value)
+      !(BASE_AUTHORIZATION_ACTIONS as readonly string[]).includes(descriptor.value)
     ) return null;
     kind = descriptor.value as ApplicationCommand["kind"];
   } catch {
