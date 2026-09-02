@@ -106,7 +106,13 @@ Task/source content, environment, credential, backend message/payload, SQL, and
 stack values are not persisted or returned by the application view. The exact
 backend receipt may contain bounded path/Git observations for semantic
 verification, but the application retains only its digest and redacted closed
-facts; the current backend is a test-only Fake.
+facts. The test Fake remains unexported. The exported Windows Git backend writes
+one closed canonical ownership manifest only inside its bound Git administrative
+directory; that manifest contains the immutable ownership-binding digest,
+closed versions and object IDs, and hashes of filesystem identities, never a
+Task body, credential, environment, raw canonical path, or command output. The
+backend is not wired to the product or CLI and exposes no logging or telemetry
+surface.
 
 Task body, Project canonical path, prompts, source/repository content, tool or
 Agent output, free text, raw commands, environment values, credentials, and

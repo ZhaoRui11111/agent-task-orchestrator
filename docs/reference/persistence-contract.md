@@ -303,8 +303,10 @@ the receipt digest and bounded redacted facts survive.
 Fresh baseline creation inserts no workspace generation, decision, intent,
 observation, receipt, finalization, or event. These rows can be selected only
 by the typed workspace application owner against an injected backend. The
-current backend is a test-only Fake; this allocation is not a real Git or
-filesystem-workspace claim.
+package now contains both the test Fake and an exported product-unwired Windows
+Git backend, but neither is a persistence writer: the schema and its digest/
+closed receipt projection remain unchanged and store no raw physical manifest,
+canonical path, or Git payload.
 
 ## Writer and reader closure
 
@@ -786,13 +788,14 @@ separately acknowledged verified-backup mechanism can publish older data.
 
 The current repository proves a local schema-version-1 persistence/application
 foundation, durable claims/leases/fences, reliable Manual-loop records, and
-explicit-Manual dispatcher records, plus the durable Fake-only workspace
-generation/operation/evidence foundation and versioned local product CLI backup,
+explicit-Manual dispatcher records, plus the durable workspace generation/
+operation/evidence foundation and versioned local product CLI backup,
 separately confirmed restore, and read-only doctor surfaces on the observed
 development host. The typed local product facade composes those records without
 adding schema or a second writer. This does not establish a release, Windows
-support, production Codex/Git/filesystem workspace or Scheduler adapter, scheduled
-delivery, ProjectPolicy, CompletionBackend/gates, MCP server, plugin,
+support, Codex or Scheduler adapter, product-wired filesystem/Git workspace,
+scheduled delivery, workspace integration/ref/push/cleanup, ProjectPolicy,
+CompletionBackend/gates, MCP server, plugin,
 deployment, public workspace CLI, or external Project operation. The
 Manual journal contains local no-workspace lifecycle facts only;
 ProjectRegistry inspection never authorizes or performs a mutation inside a

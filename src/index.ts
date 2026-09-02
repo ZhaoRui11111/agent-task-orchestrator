@@ -69,6 +69,17 @@ export type {
   WorkspaceBackendResult,
   WorkspaceBackend,
 } from "./workspace-port.ts";
+export {
+  WINDOWS_GIT_WORKSPACE_ADAPTER_ID,
+  WINDOWS_GIT_WORKSPACE_ADAPTER_VERSION,
+  createWindowsGitWorkspaceBackend,
+} from "./workspace-git-adapter.ts";
+export type {
+  WindowsGitWorkspaceAdapterConfiguration,
+  WindowsGitWorkspaceAdapterDescription,
+  WindowsGitWorkspaceBackend,
+  WindowsGitWorkspaceRootBinding,
+} from "./workspace-git-adapter.ts";
 export * from "./workspace-application.ts";
 export * from "./product-runtime.ts";
 export * from "./persistence/index.ts";

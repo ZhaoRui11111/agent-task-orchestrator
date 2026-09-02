@@ -28,8 +28,8 @@ entrypoint and contains no product judgment.
 This is a local single-user surface, not a released compatibility or
 platform-support promise. The sole current `ato.api/v1` exposes only the local
 explicit-Manual control/recovery subset documented below. It exposes no scheduler, scheduled
-trigger, daemon, MCP, production Codex/Git/filesystem workspace adapter or
-workspace operation command, network service, ProjectPolicy,
+trigger, daemon, MCP, Codex or workspace-adapter route, workspace operation
+command, network service, ProjectPolicy,
 CompletionBackend/gates, secret operation, release, deployment, repair, cleanup,
 or arbitrary shell/filesystem operation.
 
@@ -296,8 +296,8 @@ ingress, doctor, runtime creation/loading, persistence, authorization, or Domain
 evaluation. Unknown majors and commands never fall back, coerce, or guess
 another major. `authorization issue` and `authorization evaluate` accept exactly
 the current finite thirty-five actions. The independently exported pure
-`ato.workspace/v1` and workspace application library add no command ID, public
-result, or error to this closed tree.
+`ato.workspace/v1`, workspace application library, and product-unwired Windows
+Git backend add no command ID, public result, or error to this closed tree.
 
 The nine product-facade IDs are exhaustive:
 

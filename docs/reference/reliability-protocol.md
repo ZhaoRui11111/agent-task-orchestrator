@@ -19,10 +19,12 @@ existing owners to the sole current `ato.api/v1`, deriving non-public operation 
 from current durable state. The fresh-only workspace foundation additionally
 implements the pure `ato.workspace/v1` port plus durable generation,
 authorization, intent, observation, verification, finalization, response-loss,
-and restart handling against an unexported test Fake. It has no
-SchedulerBackend or scheduled trigger, production filesystem/Git workspace or
-publication effect, ProjectPolicy, CompletionBackend, or completion gate; those
-sections remain requirements for their implementing plans.
+and restart handling against an unexported test Fake and an exported,
+product-unwired Windows Git backend. The latter binds a direct-exclusive
+physical manifest to current Git/filesystem observation and still has no
+cleanup/integration/ref/push effect. There is no SchedulerBackend or scheduled
+trigger, ProjectPolicy, CompletionBackend, or completion gate; those sections
+remain requirements for their implementing plans.
 
 Task-state meaning comes from the [domain contract](domain-contract.md), record
 layout from the [persistence contract](persistence-contract.md), permission from
@@ -100,7 +102,8 @@ Current workspace intents bind the exact reserve/create/inspect/recover/cleanup
 action, Project resource/config/root identity, Task revision, dispatcher run/
 member/membership revisions, execution revision/attempt/fence, system workspace
 ID/generation/revision, trusted workspace-root identity, creator operation,
-base reference, nullable cleaned predecessor, adapter/contract versions,
+base reference, application-derived immutable ownership-binding digest,
+nullable cleaned predecessor, adapter/contract versions,
 correlation/causation, and expected generation status. A stable workspace ID
 does not weaken this tuple: reuse requires the same positive generation and
 revision, while replacement requires the exact cleaned predecessor and
@@ -267,7 +270,13 @@ The ordered workspace protocol is:
    transaction. Parse the exact hostile-input-safe result and semantically
    compare contract/operation/idempotency/adapter/workspace/generation/root/
    state/code/inventory relationships before persisting the next positive
-   observation number and receipt digest.
+   observation number and receipt digest. For the Windows backend, an adapter
+   namespace acquisition or production capability-probe mutation is an effect
+   even if the exact transient empty probe is subsequently removed; a later
+   failure cannot discard that upstream fact and is returned as ambiguous. In
+   particular, successful directory creation is effect-possible before the
+   post-create identity read; an unreadable or unprovable new identity is not
+   cleanup authority and remains an ambiguous effect.
 4. **Verify:** for a non-ambiguous success or refusal, persist at most one
    verified receipt bound to the exact observation and generation revision.
    Ambiguous or malformed evidence never becomes verified success.
@@ -303,7 +312,7 @@ Workspace restart/recovery is exact:
 | `observed` | Verify the already persisted receipt without a second backend call. |
 | `verified` | Re-run only current-authorized finalization CAS. |
 | `finalized` | Revalidate trusted identity/root and return the bounded durable result. |
-| Lost backend response | Independently known Fake state may be observed; otherwise the generation remains `recovery_required`/ambiguous. |
+| Lost backend response | Independently known Fake state or a matching Windows-adapter manifest plus authoritative Git/filesystem state may be observed; otherwise the generation remains `recovery_required`/ambiguous. |
 
 A verified reserve refusal or recover-absent proof may return the same generation
 to `allocated` for an exact retry. A partial or conflicting observation cannot.
@@ -316,8 +325,10 @@ operation/request/decision/event identities and revalidates the complete current
 owner, root, generation, and authorization tuple before any backend call.
 Only `cleaned` may be the predecessor of generation `n+1`; no retry, restart,
 path discovery, or branch similarity allocates a duplicate or adopts external
-state. These guarantees cover the durable coordinator and test Fake only, not a
-production filesystem/Git effect.
+state. These guarantees cover the durable coordinator and the exact injected
+backend. The Windows Git implementation supplies local create/inspect/recover
+evidence only; it adds no product wiring, cleanup, integration, remote effect,
+or platform-support claim.
 
 ## Private staging and publication
 

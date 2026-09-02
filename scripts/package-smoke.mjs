@@ -427,6 +427,10 @@ const expectedEntries = [
   "package/dist/project-registry.d.ts.map",
   "package/dist/project-registry.js",
   "package/dist/project-registry.js.map",
+  "package/dist/workspace-git-adapter.d.ts",
+  "package/dist/workspace-git-adapter.d.ts.map",
+  "package/dist/workspace-git-adapter.js",
+  "package/dist/workspace-git-adapter.js.map",
   "package/dist/workspace-application.d.ts",
   "package/dist/workspace-application.d.ts.map",
   "package/dist/workspace-application.js",
@@ -439,7 +443,7 @@ const expectedEntries = [
   "package/package.json",
 ].sort();
 
-invariant(expectedEntries.length === 180, `packed expected inventory count drifted: ${expectedEntries.length}`);
+invariant(expectedEntries.length === 184, `packed expected inventory count drifted: ${expectedEntries.length}`);
 
 const packageManagerVersion = pnpm(["--version"], repoRoot).stdout.trim();
 invariant(packageManagerVersion === "11.19.0", `pnpm version drifted: ${packageManagerVersion}`);
@@ -566,12 +570,15 @@ export async function resolve(specifier, context, nextResolve) {
     `import {
   AUTHORIZATION_ACTIONS,
   WORKSPACE_CONTRACT_ID,
+  WINDOWS_GIT_WORKSPACE_ADAPTER_ID,
+  WINDOWS_GIT_WORKSPACE_ADAPTER_VERSION,
   createApplicationService,
   createExecutionApplicationService,
   createManualExecutionBackend,
   createProductRuntime,
   createReliableExecutionService,
   createWorkspaceApplicationService,
+  createWindowsGitWorkspaceBackend,
   currentSchemaVersion,
   inspectProjectRoot,
   parseWorkspaceBackendRequest,
@@ -587,6 +594,8 @@ export async function resolve(specifier, context, nextResolve) {
   type ProductRuntime,
   type WorkspaceBackend,
   type WorkspaceBackendRequest,
+  type WindowsGitWorkspaceAdapterConfiguration,
+  type WindowsGitWorkspaceBackend,
   type RestoreReceipt,
   type RuntimeRootRequest,
 } from "agent-task-orchestrator";
@@ -606,12 +615,15 @@ void restoreReceipt;
 void currentSchemaVersion();
 void AUTHORIZATION_ACTIONS;
 void WORKSPACE_CONTRACT_ID;
+void WINDOWS_GIT_WORKSPACE_ADAPTER_ID;
+void WINDOWS_GIT_WORKSPACE_ADAPTER_VERSION;
 void createApplicationService;
 void createExecutionApplicationService;
 void createManualExecutionBackend;
 void createProductRuntime;
 void createReliableExecutionService;
 void createWorkspaceApplicationService;
+void createWindowsGitWorkspaceBackend;
 void inspectProjectRoot;
 void parseWorkspaceBackendRequest;
 void parseWorkspaceBackendResult;
@@ -627,12 +639,16 @@ const outcomeControl = null as unknown as ManualOutcomeControl;
 const productRuntime = null as unknown as ProductRuntime;
 const workspaceBackend = null as unknown as WorkspaceBackend;
 const workspaceRequest = null as unknown as WorkspaceBackendRequest;
+const windowsGitConfiguration = null as unknown as WindowsGitWorkspaceAdapterConfiguration;
+const windowsGitBackend = null as unknown as WindowsGitWorkspaceBackend;
 void reliableIngress;
 void backend;
 void outcomeControl;
 void productRuntime;
 void workspaceBackend;
 void workspaceRequest;
+void windowsGitConfiguration;
+void windowsGitBackend;
 `,
     "utf8",
   );
@@ -829,7 +845,10 @@ void workspaceRequest;
           workspaceExport: m.WORKSPACE_CONTRACT_ID === "ato.workspace/v1" &&
             typeof m.createWorkspaceApplicationService === "function" &&
             typeof m.parseWorkspaceBackendRequest === "function" &&
-            typeof m.parseWorkspaceBackendResult === "function",
+            typeof m.parseWorkspaceBackendResult === "function" &&
+            m.WINDOWS_GIT_WORKSPACE_ADAPTER_ID === "windows-git-local" &&
+            m.WINDOWS_GIT_WORKSPACE_ADAPTER_VERSION === "1.0.0" &&
+            typeof m.createWindowsGitWorkspaceBackend === "function",
           schema: m.currentSchemaVersion(),
           backup: verified.generationId === backup.generationId,
         }));

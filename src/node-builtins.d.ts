@@ -3,6 +3,7 @@ declare const process: {
   readonly env: Record<string, string | undefined>;
   readonly pid: number;
   readonly platform: string;
+  readonly execPath: string;
   readonly versions: Readonly<Record<string, string | undefined>>;
   exitCode: number | undefined;
   cwd(): string;
@@ -26,6 +27,7 @@ declare module "node:fs" {
     readonly dev: number | bigint;
     readonly ino: number | bigint;
     readonly mode: number;
+    readonly nlink: number;
     readonly size: number;
     readonly mtimeMs: number;
     isDirectory(): boolean;
@@ -77,6 +79,7 @@ declare module "node:path" {
     dirname(path: string): string;
     isAbsolute(path: string): boolean;
     join(...paths: string[]): string;
+    normalize(path: string): string;
     parse(path: string): { readonly root: string };
     relative(from: string, to: string): string;
     resolve(...paths: string[]): string;
@@ -84,6 +87,44 @@ declare module "node:path" {
 
   const path: PathApi;
   export default path;
+}
+
+declare module "node:buffer" {
+  export class Buffer extends Uint8Array {
+    static from(value: string, encoding?: "base64" | "utf8"): Buffer;
+    static from(value: Uint8Array): Buffer;
+    toString(encoding?: "base64" | "hex" | "utf8"): string;
+  }
+}
+
+declare module "node:child_process" {
+  interface SpawnSyncOptions {
+    readonly cwd?: string;
+    readonly env?: Readonly<Record<string, string | undefined>>;
+    readonly input?: string | Uint8Array;
+    readonly encoding?: "utf8";
+    readonly timeout?: number;
+    readonly maxBuffer?: number;
+    readonly windowsHide?: boolean;
+    readonly shell?: boolean;
+    readonly stdio?: "pipe";
+  }
+
+  interface SpawnSyncReturns {
+    readonly pid: number;
+    readonly output: readonly (string | Uint8Array | null)[];
+    readonly stdout: string | Uint8Array;
+    readonly stderr: string | Uint8Array;
+    readonly status: number | null;
+    readonly signal: string | null;
+    readonly error?: Error;
+  }
+
+  export function spawnSync(
+    command: string,
+    args: readonly string[],
+    options?: SpawnSyncOptions,
+  ): SpawnSyncReturns;
 }
 
 declare module "node:os" {

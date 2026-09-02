@@ -32,6 +32,7 @@ function subject() {
     generation: 1,
     workspaceRevision: 5,
     workspaceRootKey: "workspace-root-key",
+    ownershipBindingSha256: "C".repeat(64),
     creatorOperationId: "creator-operation",
     baseReference: "refs/heads/main",
   };
@@ -66,6 +67,7 @@ function receipt(operation, externalState, outcome, code) {
     generation: 1,
     projectRootKey: "project-root-key",
     workspaceRootKey: "workspace-root-key",
+    ownershipBindingSha256: "C".repeat(64),
     externalState,
     outcome,
     code,
@@ -175,12 +177,19 @@ test("hostile request and result shapes fail closed without getters or exception
 
   const extraRequest = { ...request(), extra: true };
   const substitutedMember = { ...request(), subject: { ...subject(), memberId: "" } };
+  const oldSubjectShape = { ...subject() };
+  delete oldSubjectShape.ownershipBindingSha256;
   assert.equal(parseWorkspaceBackendRequest(extraRequest), null);
   assert.equal(parseWorkspaceBackendRequest(substitutedMember), null);
+  assert.equal(parseWorkspaceBackendRequest({ ...request(), subject: oldSubjectShape }), null);
+  assert.equal(parseWorkspaceBackendRequest({ ...request(), subject: { ...subject(), ownershipBindingSha256: "c".repeat(64) } }), null);
   assert.equal(parseWorkspaceBackendRequest({ ...request(), contractId: "ato.workspace/v2" }), null);
 
   const valid = receipt("create", "complete", "succeeded", "created");
+  const oldReceiptShape = { ...valid };
+  delete oldReceiptShape.ownershipBindingSha256;
   const invalidResults = [
+    { ok: true, receipt: oldReceiptShape },
     { ok: true, receipt: { ...valid, extra: true } },
     { ok: true, receipt: { ...valid, operation: "reserve" } },
     { ok: true, receipt: { ...valid, outcome: "refused" } },

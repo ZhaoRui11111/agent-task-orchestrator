@@ -125,9 +125,14 @@ hostile-shape suite, generation/idempotency/concurrency tests, authorization and
 cleanup-confirmation negatives, writer-boundary static analysis, every-write-
 seam rollback, SQLite close/reopen at prepare/execute/observe/verify/finalize,
 response-loss and ambiguity recovery, stale revision/fence refusal, combined
-decoder corruption, redaction, package-export, and Fake-only inventory evidence.
-There is still no SchedulerBackend or scheduled trigger, MCP, production
-Codex/Git/filesystem workspace adapter, ProjectPolicy,
+decoder corruption, redaction, and package-export evidence. The exported,
+product-unwired Windows Git backend additionally has exact-host contract,
+closed-command/environment, hostile-tree/path/reparse, direct-exclusive
+manifest, response-loss, SQLite restart, and create/inspect/recover E2E tests;
+cleanup is verified as an unconditional policy denial. This is implementation
+evidence, not a platform-support claim. There is still no SchedulerBackend or
+scheduled trigger, MCP, production Codex adapter, product-wired Git/filesystem
+workspace route, ProjectPolicy,
 CompletionBackend/gate, or support-matrix harness, so
 those routes remain unimplemented and cannot be claimed as passing. Repository task-artifact checks cover only
 maintainer workflow scratch and do not count as product persistence or

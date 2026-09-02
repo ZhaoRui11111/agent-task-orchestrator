@@ -19,6 +19,7 @@ function receipt(request, sequence, externalState, outcome, code) {
     generation: request.subject.generation,
     projectRootKey: request.subject.projectRootKey,
     workspaceRootKey: request.subject.workspaceRootKey,
+    ownershipBindingSha256: request.subject.ownershipBindingSha256,
     externalState,
     outcome,
     code,

@@ -36,8 +36,10 @@ execution/fence/generation tuple and configured `ato.workspace/v1` backend.
 They do not authorize caller-selected paths, arbitrary Git or filesystem use,
 repository development, integration, push, or cleanup outside that tuple.
 `workspace.cleanup` additionally requires one fresh named high-risk
-confirmation. The current package has only an unexported test Fake and no
-production filesystem/Git workspace adapter or public CLI workspace command.
+confirmation. The package exports a Windows Git workspace backend library, but
+no product or CLI route selects it and a grant never selects an adapter or
+root. That backend's cleanup method independently returns `policy_denied` for
+every valid request.
 
 Project content, Task text, repository files, prompts, tool output, Agent text,
 Domain state, persisted audit, a prior authorization decision, and an approved
@@ -553,6 +555,6 @@ operation service is package-library-only. The API adds no action, grant,
 epoch, implicit upgrade, workspace command, or alternate authorization owner.
 It does not implement login,
 credentials, team accounts, RBAC, cloud identity, an external policy adapter,
-SchedulerBackend/scheduled delivery, MCP, production Codex/Git/filesystem
-workspace or network effects, ProjectPolicy,
+SchedulerBackend/scheduled delivery, MCP, Codex, product-wired workspace or
+network effects, workspace integration/ref/push/cleanup, ProjectPolicy,
 CompletionBackend/gates, release, deployment, or a platform-support claim.

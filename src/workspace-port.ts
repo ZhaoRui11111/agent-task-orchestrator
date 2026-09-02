@@ -114,6 +114,7 @@ export interface WorkspaceSubject {
   readonly generation: number;
   readonly workspaceRevision: number;
   readonly workspaceRootKey: string;
+  readonly ownershipBindingSha256: string;
   readonly creatorOperationId: string;
   readonly baseReference: string;
 }
@@ -149,6 +150,7 @@ export interface WorkspaceBackendReceipt {
   readonly generation: number;
   readonly projectRootKey: string;
   readonly workspaceRootKey: string;
+  readonly ownershipBindingSha256: string;
   readonly externalState: WorkspaceExternalState;
   readonly outcome: WorkspaceReceiptOutcome;
   readonly code: WorkspaceReceiptCode;
@@ -259,6 +261,10 @@ function isOperation(value: unknown): value is WorkspaceOperation {
   return typeof value === "string" && (WORKSPACE_OPERATIONS as readonly string[]).includes(value);
 }
 
+function ownershipBinding(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9A-F]{64}$/u.test(value);
+}
+
 function parseSubject(value: unknown): WorkspaceSubject | null {
   const record = exactRecord(value, [
     "projectId",
@@ -280,6 +286,7 @@ function parseSubject(value: unknown): WorkspaceSubject | null {
     "generation",
     "workspaceRevision",
     "workspaceRootKey",
+    "ownershipBindingSha256",
     "creatorOperationId",
     "baseReference",
   ]);
@@ -309,7 +316,13 @@ function parseSubject(value: unknown): WorkspaceSubject | null {
     record.workspaceRevision,
   ];
   const baseReference = reference(record.baseReference);
-  if (!identifiers.every(identifier) || !revisions.every(revision) || baseReference === undefined || baseReference === null) {
+  if (
+    !identifiers.every(identifier) ||
+    !revisions.every(revision) ||
+    !ownershipBinding(record.ownershipBindingSha256) ||
+    baseReference === undefined ||
+    baseReference === null
+  ) {
     return null;
   }
   return Object.freeze({
@@ -332,6 +345,7 @@ function parseSubject(value: unknown): WorkspaceSubject | null {
     generation: record.generation as number,
     workspaceRevision: record.workspaceRevision as number,
     workspaceRootKey: record.workspaceRootKey as string,
+    ownershipBindingSha256: record.ownershipBindingSha256,
     creatorOperationId: record.creatorOperationId as string,
     baseReference,
   });
@@ -592,6 +606,7 @@ function parseReceipt(value: unknown): WorkspaceBackendReceipt | null {
     "generation",
     "projectRootKey",
     "workspaceRootKey",
+    "ownershipBindingSha256",
     "externalState",
     "outcome",
     "code",
@@ -638,6 +653,7 @@ function parseReceipt(value: unknown): WorkspaceBackendReceipt | null {
   const inventory = parseInventory(record.inventory);
   if (
     !required.every(identifier) ||
+    !ownershipBinding(record.ownershipBindingSha256) ||
     !revision(record.generation) ||
     externalState === null ||
     outcome === null ||
@@ -667,6 +683,7 @@ function parseReceipt(value: unknown): WorkspaceBackendReceipt | null {
     generation: record.generation,
     projectRootKey: record.projectRootKey as string,
     workspaceRootKey: record.workspaceRootKey as string,
+    ownershipBindingSha256: record.ownershipBindingSha256,
     externalState,
     outcome,
     code,

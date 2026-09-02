@@ -63,6 +63,7 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/product-runtime.ts",
   "src/project-registry.ts",
   "src/workspace-application.ts",
+  "src/workspace-git-adapter.ts",
   "src/workspace-port.ts",
 ]);
 
@@ -87,6 +88,15 @@ export const EXPECTED_CLI_NODE_BUILTINS = Object.freeze({
   "src/cli-api.ts": Object.freeze([]),
   "src/cli.ts": Object.freeze(["node:path", "node:url"]),
 });
+
+export const EXPECTED_WORKSPACE_GIT_ADAPTER_BUILTINS = Object.freeze([
+  "node:buffer",
+  "node:child_process",
+  "node:crypto",
+  "node:fs",
+  "node:path",
+  "node:url",
+]);
 
 export const EXPECTED_PACKAGE_SCRIPTS = Object.freeze({
   build: "tsc -p tsconfig.json",
@@ -169,14 +179,22 @@ export function productionBoundaryFailures(inventory, readSource) {
       JSON.stringify([...builtins].sort()) !== JSON.stringify(expectedCliBuiltins)) {
       failures.push(`${relative}: CLI Node built-in mapping drifted`);
     }
+    const workspaceGitBuiltins = relative === "src/workspace-git-adapter.ts";
+    if (workspaceGitBuiltins &&
+      JSON.stringify([...builtins].sort()) !== JSON.stringify(EXPECTED_WORKSPACE_GIT_ADAPTER_BUILTINS)) {
+      failures.push(`${relative}: workspace Git adapter Node built-in mapping drifted`);
+    }
     for (const builtin of builtins) {
       const registryBuiltin = relative === "src/project-registry.ts" &&
         (builtin === "node:fs" || builtin === "node:path");
       const cliBuiltin = expectedCliBuiltins?.includes(builtin) === true;
       const manualAdapterBuiltin = relative === "src/manual-execution-backend.ts" && builtin === "node:crypto";
-      if (!relative.startsWith("src/persistence/") && !registryBuiltin && !cliBuiltin && !manualAdapterBuiltin) {
+      if (
+        !relative.startsWith("src/persistence/") && !registryBuiltin && !cliBuiltin && !manualAdapterBuiltin &&
+        !workspaceGitBuiltins
+      ) {
         failures.push(`${relative}: Node built-in escaped the persistence owner boundary`);
-      } else if (!ALLOWED_PERSISTENCE_BUILTINS.has(builtin)) {
+      } else if (!workspaceGitBuiltins && !ALLOWED_PERSISTENCE_BUILTINS.has(builtin)) {
         failures.push(`${relative}: undeclared persistence built-in ${builtin}`);
       }
     }

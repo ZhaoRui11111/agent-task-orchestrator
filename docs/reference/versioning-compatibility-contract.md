@@ -114,14 +114,26 @@ authorization, side-effect, lifecycle, receipt, or error-meaning change requires
 
 EP-03A is the first implementation of `ato.workspace/v1`. The package was still
 private and unreleased, and no earlier workspace implementation, export,
-negotiation, persisted receipt, or supported adapter existed. Its exact
-five-operation request/subject/receipt/failure shapes are now closed: changing a
-required field, identity/revision/fence relationship, operation side effect,
-receipt code/state/outcome relationship, evidence-reference rule, or error
-meaning requires `ato.workspace/v2`. A backend version bump cannot reinterpret
-v1. The unexported test Fake proves only the local contract and durable
-coordinator; no production filesystem/Git adapter or platform compatibility is
-claimed.
+negotiation, persisted receipt, or supported adapter existed.
+
+EP-03B consumes one separately and explicitly authorized unreleased
+fresh-only exception for this port. Before the Windows Git backend existed, the
+package remained `0.0.0-development`; no product route constructed a workspace
+backend, no supported external consumer or production workspace existed, and
+SQLite persisted only the existing receipt digest and closed projection rather
+than a raw full receipt. The sole current `ato.workspace/v1` subject and receipt
+therefore now both require the exact uppercase 64-hex
+`ownershipBindingSha256`. The application derives it from the immutable durable
+generation tuple, and the adapter must echo it and bind it to restart-readable
+physical evidence. The old shape is invalid: there is no old reader, alias,
+fallback, migration, dual write, or deprecation window.
+
+That named reset closes `ato.workspace/v1` again. Any later required field or
+identity change, operation-side-effect change, receipt code/state/outcome
+change, evidence-reference rule change, or error-meaning change requires
+`ato.workspace/v2`; an adapter version bump cannot reinterpret v1. The
+exported Windows Git backend remains product-unwired and its exact-host evidence
+does not establish platform compatibility or support.
 
 ## Forward migration
 

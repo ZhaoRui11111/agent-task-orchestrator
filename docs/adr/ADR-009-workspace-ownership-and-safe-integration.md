@@ -2,7 +2,11 @@
 
 **Status:** Accepted
 
-This is an accepted design requirement for the product's future task-workspace adapter, not authorization to create a worktree for repository development and not a statement that workspace or Git automation exists today.
+The local creation/inspection portion is now implemented by an exported but
+product-unwired Windows Git backend library. Integration reservation, ref/push
+effects, policy-gated completion, and cleanup remain unimplemented. This ADR is
+not authorization to create a worktree for repository development and is not a
+platform-support claim.
 
 ## Context
 
@@ -10,7 +14,7 @@ Workspace creation, Git integration, and cleanup mutate filesystem and repositor
 
 ## Decision
 
-Require evidence-bound workspace ownership, isolated run/workspace topology, an explicit integration reservation, contained regular-path and no-follow safety checks, and cleanup that refuses uncertain ownership or identity. Recover Git partial success by observation and reconciliation rather than assumed rollback. The completion/workspace owner defines all exact receipts, topology, path, reservation, and recovery rules.
+Require evidence-bound workspace ownership, isolated workspace topology, an explicit integration reservation, contained regular-path and no-follow safety checks, and cleanup that refuses uncertain ownership or identity. Recover Git partial success by observation and reconciliation rather than assumed rollback. The completion/workspace owner defines all exact receipts, topology, path, reservation, and recovery rules. The current adapter implements only contained creation and read-only inspection/recovery and refuses every cleanup request.
 
 ## Consequences
 

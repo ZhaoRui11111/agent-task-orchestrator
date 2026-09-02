@@ -43,16 +43,21 @@ confirmed application decision alone may complete a Task from verified
 `turn_succeeded` evidence. The Manual dispatcher coordinates those
 owners after one explicit trigger: it durably reconciles old work, seals a
 finite candidate set, resolves every member, and publishes a summary only after
-complete readback. The repository still implements no SchedulerBackend or
-scheduled trigger, MCP component, production Codex/Git/filesystem workspace
-adapter, ProjectPolicy,
+complete readback. The package also exports one concrete Windows local Git
+workspace adapter library. It can create and authoritatively inspect one
+exactly bound detached linked worktree when a library caller injects trusted
+disjoint roots, but it is not constructed by the product runtime or CLI and
+its cleanup method always returns `policy_denied`. The repository still
+implements no SchedulerBackend or scheduled trigger, MCP component, Codex
+adapter, product-wired workspace adapter, ProjectPolicy,
 CompletionBackend or gates, daemon/service, supported platform integration,
 release, or deployment. The local Manual product records operator-supplied turn
 facts; it does not execute Task content or perform Project/workspace effects.
-The separate workspace application coordinator implements only durable
+The separate workspace application coordinator implements durable
 authorization, generation, intent, observation, verification, finalization,
-replay, and restart recovery against an injected port; its sole backend is an
-unexported test Fake.
+replay, and restart recovery against an injected port. Its tests use both an
+unexported Fake and the exported Windows Git adapter; no current product entry
+point selects either workspace backend.
 
 ## Authority and ownership
 
@@ -115,9 +120,9 @@ The architecture separates:
   contract kits, plus planned scheduler, project-policy, and completion
   contracts.
 - `adapters`: the implemented local Manual execution backend and outcome
-  control; the workspace Fake is test-only and unexported, while a production
-  filesystem/Git workspace adapter, Codex, and every other adapter remain
-  planned.
+  control plus one exported, product-unwired Windows Git workspace backend;
+  the workspace Fake is test-only and unexported. Codex and every other adapter
+  remain planned, and no cleanup/integration/push capability is implied.
 - `product-runtime`: the implemented typed local facade that validates the
   closed public CAS tuple, derives non-public durable lineage, composes the
   current application/dispatcher/reliable owners, and returns only bounded
@@ -138,7 +143,10 @@ the Manual adapter mutates only its persistence-owned local journal through a
 committed, authorization-bound intent; it does not execute Task content, invoke
 a vendor, or touch a Project/workspace. The workspace foundation mutates only
 its current SQLite records and a test Fake through the injected pure port; it
-has no product CLI route and no production filesystem or Git mutation. The
+  has no product CLI route. The separately exported Windows Git backend owns
+  its contained local worktree effect, writes no SQLite state, and is exercised
+  only with disposable repositories; it has no cleanup, integration/ref/push,
+  or support claim. The
 product execution runtime is only the explicit local Manual control/recovery
 surface described above.
 Every other later name remains accepted design direction rather than a current
@@ -194,6 +202,7 @@ The repository's current
 [local agent Git workflow](docs/reference/local-agent-git-flow.md) coordinates
 how maintainers develop and integrate this source tree. It is operational
 governance outside the product runtime dependency graph. It neither implements
-the product's current pure `WorkspaceBackend` contract nor a production
-workspace adapter, `CompletionBackend`, or project-specific Git policy. Those
-product concerns remain independent of maintainer worktree governance.
+the product's current `WorkspaceBackend` contract nor the exported Windows Git
+adapter. It also does not provide `CompletionBackend` or project-specific Git
+policy. Those product concerns remain independent of maintainer worktree
+governance.

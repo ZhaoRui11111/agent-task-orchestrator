@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Added one exported, product-unwired Windows local Git `WorkspaceBackend`
+  (`windows-git-local` `1.0.0`) for exact reserve/create/inspect/recover of an
+  ownership-bound detached linked worktree in trusted disjoint roots. The
+  adapter builds its closed registration without `git worktree add` or
+  checkout, materializes only prevalidated regular local blobs under
+  current-directory identity guards, publishes a direct-exclusive canonical
+  ownership manifest, and reconciles response loss through authoritative
+  read-only Git/filesystem observation. This unreleased fresh-only change also
+  requires `ownershipBindingSha256` in the sole `ato.workspace/v1` subject and
+  receipt and rejects the old shape without a compatibility reader. Cleanup is
+  always `policy_denied`; the product/CLI remain Manual-only, compatibility is
+  unverified, and no integration, push, release, deployment, or platform
+  support is claimed.
+
 - Added the fresh-only Phase 3 durable workspace foundation: one cumulative,
   separately confirmed authorization vocabulary version 5 with exactly
   `workspace.reserve`, `workspace.create`, `workspace.inspect`,

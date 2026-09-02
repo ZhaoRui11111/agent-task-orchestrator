@@ -14,8 +14,9 @@ service, current schema-version-1 SQLite persistence, a composable local Phase 1
 CLI, a typed reliable Manual execution loop, a reconcile-first Manual
 dispatcher, and a sole current `ato.api/v1` local Manual product surface. The
 package also exposes a fresh-only durable workspace foundation: the pure exact
-`ato.workspace/v1` contract and a typed application/persistence coordinator
-tested only against an unexported Fake backend. The three backup/restore JSON
+`ato.workspace/v1` contract, a typed application/persistence coordinator, and
+one product-unwired Windows local Git backend library tested against disposable
+repositories. The three backup/restore JSON
 artifacts each use an independent exact current
 schema version `1`; that number does not couple them to the database schema.
 The application owner remains the sole business command/query owner and atomically
@@ -36,11 +37,12 @@ candidate set, claims and prepares permitted Tasks through the existing owners,
 resolves every member, and publishes a completeness-checked summary. The real
 `manual-local` backend records no-workspace Manual lifecycle facts; it does not
 execute Task content or touch a Project repository. The repository still has
-no MCP server, plugin, SchedulerBackend or scheduled trigger, production
-Codex/Git/filesystem workspace adapter, ProjectPolicy or CompletionBackend
-gate, supported release, or validated product platform integration. The
-workspace foundation has no public CLI command and performs no production
-Project/workspace effect.
+no MCP server, plugin, SchedulerBackend or scheduled trigger, Codex adapter,
+product-wired workspace adapter, ProjectPolicy or CompletionBackend gate,
+integration/push/cleanup effect, supported release, or validated product
+platform integration. The workspace foundation has no public CLI command; the
+Windows Git backend can be selected only by a direct library caller, and its
+cleanup operation always refuses.
 
 Unimplemented planned capabilities are not current capabilities. Design
 proposals and roadmaps must remain clearly labeled until their implementations
@@ -154,9 +156,13 @@ Authorization vocabulary version 5 cumulatively adds exactly the five
 `workspace.*` actions after the existing four stages. Each stage still needs a
 separate confirmed upgrade, bootstrap and renewal never advance the vocabulary,
 and `workspace.cleanup` alone is newly high risk. This foundation is a package
-library boundary only: its backend is an unexported test Fake, the sole current
-`ato.api/v1` command/error grammar is unchanged, and no production
-filesystem/Git adapter, path mutation, cleanup, or platform claim exists.
+library boundary only. Alongside the test Fake, the package exports a Windows
+local Git backend that derives an owner-bound path, builds one detached linked
+worktree without checkout, materializes only validated regular local blobs,
+and performs read-only inspection/recovery. The sole current `ato.api/v1`
+command/error grammar is unchanged; the product and CLI do not construct the
+backend, cleanup always returns `policy_denied`, and no integration, ref/push,
+release, or platform-support claim exists.
 
 ## Reconcile-first Manual dispatcher
 
@@ -244,8 +250,8 @@ material.
 
 The authoritative lifecycle, recovery, and safety rules are in the
 [local agent Git workflow](docs/reference/local-agent-git-flow.md). This is
-current repository governance, not evidence that the product's pure workspace
-contract has a production worktree adapter or CompletionBackend.
+current repository governance, not evidence for the independent product
+workspace adapter or a CompletionBackend.
 
 ## Data boundary
 

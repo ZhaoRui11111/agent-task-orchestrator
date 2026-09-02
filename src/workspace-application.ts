@@ -1085,6 +1085,31 @@ function effectStatus(operation: WorkspaceOperation, current: WorkspaceGeneratio
 }
 
 function subjectFor(generation: WorkspaceGenerationRecord): WorkspaceSubject {
+  const ownershipBindingSha256 = sha256(canonicalJson({
+    adapterId: generation.adapterId,
+    adapterVersion: generation.adapterVersion,
+    attemptNumber: generation.attemptNumber,
+    baseReference: generation.baseReference,
+    contractId: WORKSPACE_CONTRACT_ID,
+    creatorOperationId: generation.creatorOperationId,
+    executionId: generation.executionId,
+    executionRevisionFloor: generation.executionRevision,
+    fencingToken: generation.fencingToken,
+    generation: generation.generation,
+    memberId: generation.memberId,
+    memberRevisionFloor: generation.memberRevision,
+    membershipRevision: generation.membershipRevision,
+    projectConfigRevisionFloor: generation.projectConfigRevision,
+    projectId: generation.projectId,
+    projectResourceRevisionFloor: generation.projectResourceRevision,
+    projectRootKey: generation.projectRootKey,
+    runId: generation.runId,
+    runRevisionFloor: generation.runRevision,
+    taskId: generation.taskId,
+    taskRevisionFloor: generation.taskRevision,
+    workspaceId: generation.workspaceId,
+    workspaceRootKey: generation.workspaceRootKey,
+  }));
   return Object.freeze({
     projectId: generation.projectId,
     projectResourceRevision: generation.projectResourceRevision,
@@ -1105,6 +1130,7 @@ function subjectFor(generation: WorkspaceGenerationRecord): WorkspaceSubject {
     generation: generation.generation,
     workspaceRevision: generation.revision,
     workspaceRootKey: generation.workspaceRootKey,
+    ownershipBindingSha256,
     creatorOperationId: generation.creatorOperationId,
     baseReference: generation.baseReference,
   });
@@ -1129,7 +1155,8 @@ function receiptEchoes(receipt: WorkspaceBackendReceipt, request: WorkspaceBacke
     receipt.idempotencyKey === request.idempotencyKey && receipt.adapterId === request.adapterId &&
     receipt.adapterVersion === request.adapterVersion && receipt.workspaceId === request.subject.workspaceId &&
     receipt.generation === request.subject.generation && receipt.projectRootKey === request.subject.projectRootKey &&
-    receipt.workspaceRootKey === request.subject.workspaceRootKey;
+    receipt.workspaceRootKey === request.subject.workspaceRootKey &&
+    receipt.ownershipBindingSha256 === request.subject.ownershipBindingSha256;
 }
 
 function evidenceFromObservation(observation: WorkspaceObservationRecord): WorkspaceReceiptEvidence {

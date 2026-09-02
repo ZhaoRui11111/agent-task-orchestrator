@@ -56,17 +56,20 @@ authorization, intent, observation, verified-receipt, finalization, and bounded
 redacted event records. The coordinator binds the current
 Project/Task/dispatcher-member/execution/fence tuple, calls only an injected
 backend outside writer transactions, and reconciles durable ambiguity before
-retry. The only workspace backend is an unexported test Fake: no production
-filesystem or Git workspace effect exists.
+retry. The package additionally exports one Windows local Git backend library
+for exact reserve/create/inspect/recover behavior against trusted disjoint
+roots. It writes no SQLite state, is not constructed by the product runtime or
+CLI, and its cleanup route is an unconditional `policy_denied`.
 
 The Phase 2 product capabilities are implemented only for the local
 explicit-Manual product and `manual-local` adapter. They do not execute Task
 content or perform an external Project/workspace effect. The Phase 3 workspace
-foundation likewise has no production adapter or public CLI command. The
-repository still has no scheduler or scheduled trigger, MCP component,
-Codex/Git/filesystem workspace adapter, ProjectPolicy or CompletionBackend
-gate, daemon/service, release, deployment, or validated platform-support
-claim. Do not describe those planned
+foundation has no public CLI command or product composition; its disposable
+Git `2.53.0.windows.1` adapter evidence is development evidence only. The
+repository still has no scheduler or scheduled trigger, MCP component, Codex
+adapter, product-wired workspace adapter, ProjectPolicy or CompletionBackend
+gate, integration/ref/push/cleanup effect, daemon/service, release, deployment,
+or validated platform-support claim. Do not describe those planned
 modules, platform support, safety properties, or integration behavior as
 implemented. Follow the
 [toolchain contract](docs/reference/toolchain-contract.md) for current

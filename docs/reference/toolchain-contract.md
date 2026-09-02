@@ -111,7 +111,9 @@ into a disposable consumer without registry access, typecheck the public
   completion library loop after restart, the typed product facade's Manual
   dispatch-to-completion restart path, and a fresh persistence backup; verify
   the exported reconcile-first dispatcher/product operational surfaces plus the
-  pure workspace contract and typed application declarations; and
+  pure workspace contract, typed application declarations, and the public
+  Windows Git workspace-adapter factory, constants, and narrow configuration
+  types without wiring or invoking that adapter through the product; and
   invoke the console entry. The console portion compares source, built, and
   packed-installed CLI behavior for omitted and explicit current `ato.api/v1`
   JSON/human responses, retired-major refusal, invalid input, public exits, and
@@ -126,7 +128,8 @@ ProjectRegistry identity owner, finite authorization
 owner, typed Phase 1 and claim application services, the pure execution port
   kit, production local Manual backend/control, reliable execution loop,
 reconcile-first Manual dispatcher, the pure workspace port kit and typed
-durable workspace application service, typed local product facade, current schema-version-1
+durable workspace application service, the exported product-unwired Windows
+Git workspace adapter, typed local product facade, current schema-version-1
 persistence foundation, local lifecycle surfaces, and versioned product CLI
 API; it does not maintain a parallel hand-synchronized capability-status
 registry. The packed inventory includes the
@@ -140,7 +143,7 @@ wildcard. The `ato` console is the local Phase 1 and explicit-Manual Phase 2
 product CLI defined by the
 [CLI/API contract](cli-contract.md).
 
-Production source is exactly these 45 files:
+Production source is exactly these 46 files:
 
 - `src/index.ts`, `src/domain.ts`, `src/cli.ts`, `src/cli-api.ts`,
   `src/cli-api-model.ts`, `src/cli-api-parser.ts`,
@@ -153,6 +156,7 @@ Production source is exactly these 45 files:
   `src/execution-loop.ts`, `src/manual-execution-backend.ts`,
   `src/dispatcher-application.ts`, `src/dispatcher.ts`,
   `src/workspace-port.ts`, `src/workspace-application.ts`,
+  `src/workspace-git-adapter.ts`,
   `src/node-builtins.d.ts`, and `src/product-runtime.ts`;
 - `src/persistence/application-repository.ts`,
   `src/persistence/application-repository-model.ts`,
@@ -175,11 +179,15 @@ parser imports exactly `node:path`, the runtime imports exactly `node:crypto`,
 and the model, presentation, and facade import no Node built-in. Other existing
 identity, digest, Manual-integrity, filesystem, and SQLite owners retain their
 narrow declarations; no shared CLI-family or wildcard built-in exception is
-allowed. The package has no production dependency and must not acquire a scheduler, MCP,
-production Codex/Git/filesystem workspace adapter, ProjectPolicy,
-CompletionBackend/gates, daemon, or
-external-effect orchestrator as part of this boundary. The Fake backend remains
-test-only and absent from the packed inventory.
+allowed. The Windows Git workspace adapter imports exactly `node:buffer`,
+`node:child_process`, `node:crypto`, `node:fs`, `node:path`, and `node:url`; it
+uses no shell, package dependency, or wildcard built-in exception. The package
+has no production dependency and must not acquire a scheduler, MCP, production
+Codex adapter, ProjectPolicy, CompletionBackend/gates, daemon, remote effect,
+or external-effect orchestrator as part of this boundary. The Windows Git
+adapter remains an explicitly injected library surface with no product/CLI
+composition, cleanup, integration, ref mutation, or push route. The Fake
+backend remains test-only and absent from the packed inventory.
 
 ## Validation entry points
 

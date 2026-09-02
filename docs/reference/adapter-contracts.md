@@ -6,17 +6,18 @@ This file is the sole normative owner of port directions, current port
 identifiers and versions, operation shapes, receipt envelopes, and adapter
 error taxonomy. The package implements the pure `ato.execution/v1` contract
 kit, the pure `ato.workspace/v1` contract kit, one production `manual-local`
-adapter backed by the current schema-version-1 local Manual journal, and its
-narrow `ato.manual-outcome-control/v1` control. Fake backends are test-only and
-unexported. The Manual dispatcher composes that
+adapter backed by the current schema-version-1 local Manual journal, its narrow
+`ato.manual-outcome-control/v1` control, and one exported Windows local Git
+workspace backend. Fake backends are test-only and unexported. The Manual dispatcher composes that
 unchanged execution port and adds no adapter contract. The sole current
 `ato.api/v1` product facade can invoke the dispatcher and reliable loop, but it
 does not change `ato.execution/v1`, turn the local journal into Task-content
 execution, or add an adapter. The typed workspace application service composes
-`ato.workspace/v1`, but no production filesystem/Git workspace adapter or CLI
-workspace command exists. Scheduler, ProjectPolicy, and Completion ports remain
-planned. No vendor, operating system, external API, or released product
-platform is currently supported.
+`ato.workspace/v1`. The Windows backend is a direct library surface only: the
+current product runtime and CLI do not construct it, it has no integration/ref/
+push behavior, and its cleanup operation always refuses. Scheduler,
+ProjectPolicy, and Completion ports remain planned. No vendor, operating
+system, external API, or released product platform is currently supported.
 
 Business rules remain with their linked owners. An adapter translates a
 versioned port and cannot change Task state semantics, authorize an operation,
@@ -25,7 +26,7 @@ declare an unverified external effect successful, or write SQLite directly.
 | Port | Direction relative to core | Current contract ID | Responsibility boundary |
 | --- | --- | --- | --- |
 | Execution | Outbound: reliable application loop calls adapter; the implemented Manual dispatcher calls that loop | `ato.execution/v1` | Start, resume, inspect, or request cancellation of one no-workspace execution turn |
-| Workspace | Outbound: workspace application coordinator calls injected backend | `ato.workspace/v1` | Reserve, create, inspect, recover, or request cleanup of one exactly bound workspace generation; current backend is test-only Fake |
+| Workspace | Outbound: workspace application coordinator calls injected backend | `ato.workspace/v1` | Reserve, create, inspect, recover, or request cleanup of one exactly bound workspace generation; implementations are the test Fake and exported product-unwired Windows Git backend, whose cleanup always refuses |
 | Scheduler | Outbound lifecycle plus inbound trigger delivery | `ato.scheduler/v1` | Register/inspect/remove a schedule and deliver a bounded dispatch trigger |
 | ProjectPolicy | Outbound: application calls adapter | `ato.project-policy/v1` | Evaluate mutation, completion requirements, integration, and cleanup policy |
 | Completion | Outbound: application calls adapter | `ato.completion/v1` | Run and inspect named completion gates and return bound gate evidence |
@@ -196,10 +197,11 @@ prepare-only decision.
 ## WorkspaceBackend: `ato.workspace/v1`
 
 This pure closed contract kit is implemented and exported. It contains no
-filesystem, Git, child-process, vendor, scheduler, policy, or CLI code. The only
-current implementation of `WorkspaceBackend` is an unexported disposable test
-Fake, so its contract and durable protocol are current while real path/Git
-effects and platform behavior are not.
+filesystem, Git, child-process, vendor, scheduler, policy, or CLI code. The
+concrete `windows-git-local` adapter version `1.0.0` lives in its own module and
+depends inward on this port; an unexported disposable Fake remains available to
+tests. The concrete adapter and one-host fixtures do not turn the pure port into
+a platform-support claim.
 
 Every request has exactly `contractId`, `operation`, `operationId`,
 `idempotencyKey`, `correlationId`, nullable `causationId`, `adapterId`,
@@ -210,7 +212,8 @@ Every request has exactly `contractId`, `operation`, `operationId`,
 - dispatcher run ID/revision, member ID/revision, and membership revision;
 - execution ID/revision, attempt number, and fencing token;
 - workspace ID, positive generation/revision, trusted workspace-root identity,
-  and creator operation ID; and
+  exact uppercase 64-hex `ownershipBindingSha256`, and creator operation ID;
+  and
 - one bounded base reference.
 
 All identifiers and references are bounded NFC strings; all revisions,
@@ -229,7 +232,8 @@ fail before backend dispatch. The operation is exactly one of:
 
 A successful backend result contains only `ok: true` plus one exact receipt.
 The receipt repeats contract/operation/idempotency/adapter/workspace/root
-identity, reports external state `absent`, `reserved`, `partial`, `complete`,
+identity and `ownershipBindingSha256`, reports external state `absent`,
+`reserved`, `partial`, `complete`,
 `ambiguous`, `removed`, or `refused`; outcome `succeeded`, `refused`, or
 `ambiguous`; one operation-specific
 closed code, nullable canonical path/repository/registration/branch/base/HEAD
@@ -252,8 +256,9 @@ matching `[A-Za-z0-9][A-Za-z0-9._:-]*`; a raw path, URL credential, message,
 payload, SQL, stack, or secret is invalid.
 
 The [completion and workspace contract](completion-workspace-contract.md) owns
-the implemented durable generation topology and the still-planned real
-path/reparse, ownership-receipt, Git integration, and cleanup-eligibility rules.
+the implemented durable generation topology, Windows adapter path/reparse and
+physical ownership rules, and the still-planned Git integration and
+cleanup-eligibility rules.
 The [reliability protocol](reliability-protocol.md) owns intent, observation,
 verification, finalization, response-loss, and restart handling.
 

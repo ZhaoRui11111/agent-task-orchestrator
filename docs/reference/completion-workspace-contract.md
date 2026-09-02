@@ -3,13 +3,16 @@
 ## Status and authority
 
 This file is the sole normative owner of current durable workspace-generation
-topology and planned completion-gate identity/freshness, physical worktree
+topology, implemented local creation/inspection ownership, and planned
+completion-gate identity/freshness, physical worktree
 ownership receipts, integration reservation, Git partial-success observation,
 contained regular-path/no-follow/reparse checks, and cleanup eligibility. The
-pure `ato.workspace/v1` contract, typed application coordinator, and durable
-generation/operation/evidence lifecycle are implemented against an unexported
-test Fake. No production filesystem/Git workspace adapter, physical worktree,
-gate runner, Git integration, or product cleanup effect exists today.
+pure `ato.workspace/v1` contract, typed application coordinator, durable
+generation/operation/evidence lifecycle, and an exported Windows local Git
+backend are implemented. The backend is not wired into the product runtime or
+CLI; its cleanup route always refuses. No gate runner, Git integration/ref/push
+operation, product cleanup effect, release, or platform-support claim exists
+today.
 
 The implemented Phase 2B Manual completion decision is deliberately outside
 this planned gate owner. It consumes only a current verified local Manual
@@ -29,8 +32,9 @@ by the [reliability protocol](reliability-protocol.md), and permission by the
 The current schema allocates one workspace generation to exactly one frozen
 Project resource/config/root identity, Task revision, dispatcher run/member/
 membership revisions, execution revision/attempt/fence, trusted workspace-root
-identity, adapter/contract version, creator operation, base reference, and
-optional cleaned predecessor generation/revision. The workspace ID is
+identity, adapter/contract version, creator operation, base reference, the
+application-derived immutable ownership-binding digest, and optional cleaned
+predecessor generation/revision. The workspace ID is
 system-issued and stable; its positive generations are contiguous. A current
 generation is unique for one Project/Task/run/execution owner tuple, and only a
 cleaned predecessor may create generation `n+1` with the exact predecessor
@@ -53,24 +57,33 @@ while nested ambiguous recover nodes remain valid only within the same `R`.
 Inspect does not change the backend generation.
 
 An effect-possible reserve/create/cleanup state is never blindly replayed after
-restart or response loss. Known Fake state may be observed and finalized;
-unknown or conflicting state remains `recovery_required`/ambiguous until an
-explicit recover operation proves a current postcondition. A verified refusal
+restart or response loss. Known Fake state or the Windows adapter's matching
+physical manifest plus authoritative Git/filesystem state may be observed and
+finalized; unknown or conflicting state remains `recovery_required`/ambiguous
+until an explicit recover operation proves a current postcondition. A verified refusal
 or recovered absence can permit the same allocated generation to retry without
 allocating a duplicate; a cleaned predecessor is the only route to the next
-generation. These are current durable-library guarantees only. Canonical path,
-Git registration, branch/ref, HEAD, filesystem inventory, ownership, and path
-safety in a Fake receipt are contract-shaped test evidence, not a validated real
-worktree or cleanup claim.
+generation. These are current durable-library guarantees only. The exact-host
+Windows adapter tests establish local development evidence for canonical path,
+Git registration, HEAD, inventory, ownership, and path safety; they do not
+establish a supported platform or any cleanup claim.
 
 ## Run and workspace topology
 
-The durable identity/generation rules in this list are current. The physical
-path layout and containment rules are requirements for the future production
-adapter and are not evidence that those directories exist today.
+The durable identity/generation rules and the Windows adapter path layout in
+this list are current library behavior. They are not evidence that the product
+constructs a workspace or that another host is supported.
 
-- A trusted configured `workspace_root` contains logical paths
-  `runs/<run_id>/workspaces/<workspace_id>/g<generation>`.
+- A trusted configured `workspace_root` contains the exact adapter-owned path
+  `ato-workspaces/w-<lowercase SHA-256(workspace_id)>-g<generation>`.
+- The matching linked administration directory is exactly
+  `<Project>/.git/worktrees/ato-<lowercase ownershipBindingSha256>`; the
+  adapter constructs this registration itself and never invokes `git worktree
+  add` or checkout.
+- The complete target path and linked administration path are each limited to
+  at most 240 UTF-16 code units. The generation suffix is the canonical positive
+  decimal representation with no sign or leading zero. A longer path is refused
+  before registration, target creation, or any Git mutation.
 - `run_id`, `workspace_id`, and `generation` are system-generated identities,
   not Task titles, branch names, prompt text, or user-provided relative paths.
 - A workspace generation belongs to exactly one Project, Task, execution, run,
@@ -82,31 +95,39 @@ adapter and are not evidence that those directories exist today.
 - Stages, gate output, and diagnostic material have named children of that
   generation. Code never discovers them by globbing siblings or choosing the
   lexicographically latest path.
-- The configured root, run root, and workspace generation are resolved and
-  checked independently. Containment of one workspace confers no ownership of a
-  sibling or ancestor.
+- The configured workspace root, its exact `ato-workspaces` child, and the exact
+  generation target are resolved and checked as separate containment/identity
+  boundaries. Run identity exists in `ownershipBindingSha256`; it is not a path
+  level. Containment of one workspace confers no ownership of a sibling or
+  ancestor.
 
 ## Worktree ownership receipt
 
-This section remains a production-adapter requirement. The current Fake can
-return the closed receipt fields for contract and durable-protocol tests, but it
-does not establish a real Git/filesystem ownership receipt.
+The Windows adapter implements this section for one closed local topology: a
+non-bare main worktree whose Git directory and common directory are the same
+real contained `<Project>/.git`, with contained ordinary objects and linked
+administration directories. The test Fake still provides contract-only
+evidence. Other Git layouts and hosts remain unverified.
 
-Creation is not complete until an immutable ownership receipt binds:
+Creation is not complete until the durable generation/request, adapter receipt,
+direct-exclusive physical manifest, and current Git/filesystem observation
+agree. `ownershipBindingSha256` is derived from the immutable Project/Task/run/
+member/execution/fence/workspace/generation/creator/base/adapter tuple and is
+required in both request and receipt. The manifest binds that digest plus:
 
-- workspace ID and generation;
-- creator operation ID, execution ID, fencing token, and run ID;
-- Project ID and canonical repository identity, including Git common-directory
-  identity;
+- workspace generation;
+- canonical repository identity, including Project, Git common-directory, and
+  object-directory identity hashes;
 - canonical workspace path and trusted workspace-root identity;
 - worktree registration identity from Git's authoritative worktree inventory;
-- branch/ref identity, base object ID, and observed HEAD object ID;
-- creation intent and adapter receipt IDs;
-- creation time, adapter/contract versions, and policy/config revision; and
-- a complete initial filesystem/Git inventory.
+- detached base/HEAD object ID and object format;
+- adapter/contract versions; and
+- target/admin identity hashes and registration identity.
 
-The durable database receipt and current Git/filesystem observations must both
-match. A directory, branch, marker file, Git registration, or database row by
+The durable database stores only the existing receipt digest and closed
+projection, not the raw manifest or path. The current request digest, reopened
+canonical manifest, and current Git/filesystem observations must all match. A
+directory, branch, marker file, Git registration, manifest, receipt, or database row by
 itself is insufficient. Recovery of a partial create inspects all of them; a
 conflict is `workspace_conflict` or `ambiguous_external_state`, not implicit
 adoption.
@@ -191,8 +212,10 @@ mutation and routes observation/reconciliation.
 
 ## Git partial-success protocol
 
-This section remains planned for the production Git workspace/integration
-adapter.
+This section remains planned for integration/ref/remote operations. The current
+Windows adapter implements only local linked-worktree creation and read-only
+observation under the durable workspace protocol; it performs no integration
+or remote step.
 
 Every Git or remote step has its own persisted intent and observation. The
 system records actual state rather than pretending a multi-step sequence is
@@ -214,38 +237,61 @@ ambiguous.
 
 ## Contained-path and no-follow checks
 
-This section remains a mandatory production-adapter safety requirement. The
-current pure port and Fake perform no filesystem mutation and do not validate a
-host platform's path primitives.
+This section is implemented for create/inspect/recover by the Windows adapter
+and remains mandatory for any future cleanup implementation. The pure port and
+Fake themselves perform no filesystem mutation. Current host evidence is
+limited to the exact recorded development environment and is not a support
+claim.
 
 Before every filesystem mutation or cleanup, the workspace adapter MUST:
 
-1. obtain a handle-backed canonical identity for the trusted root;
-2. reject empty/root targets, `.`/`..` traversal, drive or share changes,
+1. obtain a canonical no-reparse device/inode/mode identity for each trusted
+   root and hold each mutation namespace and its ancestors as a verified worker
+   current directory for the relevant write window;
+2. before acquiring either registration leaf, run a production capability
+   attestation below both the exact `.git/worktrees` parent and exact
+   `ato-workspaces` parent: a fresh ownership-bound empty child must pass a
+   rename-and-restore positive control, then a nested worker holding that child
+   as its current directory must make the same rename fail with exactly
+   `EBUSY` or `EPERM`; verify same-device/identity facts and remove only that
+   exact empty probe with non-recursive removal, otherwise fail closed;
+3. reject empty/root targets, `.`/`..` traversal, drive or share changes,
    alternate data-stream syntax, device paths, and normalization ambiguity;
-3. walk every existing path component without following symbolic links,
+4. walk every existing path component without following symbolic links,
    junctions, mount points, or any other reparse point;
-4. require expected directories to be directories and ownership markers,
-   manifests, and receipts to be regular files, never links or special files;
-5. open the target with no-follow semantics where the platform exposes them,
-   then compare the opened identity and containment again to close path-swap
-   races; and
-6. compare paths with the target filesystem's case and normalization rules,
+5. require expected directories to be directories and every control, ownership,
+   manifest, index, receipt, and materialized content leaf to be a single-link
+   regular file, never a hardlink, symbolic link, or special file; retain and
+   revalidate the linked-admin index identity across Git status inspection;
+6. atomically acquire each new directory, pass the parent-observed identity to
+   the child current-directory guard, acquire every final regular file with
+   exclusive create, verify the open descriptor, and compare identities and
+   containment again after the operation; and
+7. compare paths with the target filesystem's case and normalization rules,
    while retaining the exact opened identity rather than trusting a string
    prefix.
 
 An unsupported no-follow or reparse inspection capability is a failed safety
 precondition, not permission to fall back to recursive string-based deletion.
 Git command output and repository content are untrusted input and cannot supply
-the trusted root or ownership identity.
+the trusted root or ownership identity. Creation propagates the logical OR of
+every parent/probe/downstream effect: once a namespace was acquired or a probe
+mutated it, any later failure is ambiguous even when the intended linked-admin
+and target leaves were not reached. A successful atomic directory acquisition
+is an effect before its identity read: if that read cannot prove the newly
+created identity, the adapter retains the effect fact and does not attempt to
+remove the unproven object. A capability conflict detected before any probe
+creation is a proved no-effect refusal.
 
 ## Cleanup refusal
 
 The current application layer requires an exact ready generation, current
 workspace grant, fresh cleanup confirmation, current owner/revisions/fence, and
-verified port receipt, but only the test Fake can exercise that protocol. The
-additional real worktree checks below remain mandatory before any production
-cleanup effect can be implemented or claimed.
+verified port receipt. The exported Windows adapter nevertheless returns the
+same non-retryable `policy_denied`/`cleanup_policy_unavailable` failure for
+every valid cleanup request before any root, worker, or Git access. The
+additional real worktree checks below remain mandatory before any cleanup
+effect can be implemented or claimed.
 
 Cleanup proceeds only when all of these are proven current:
 
