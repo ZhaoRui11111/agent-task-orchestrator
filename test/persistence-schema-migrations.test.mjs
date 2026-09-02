@@ -24,7 +24,7 @@ import {
   expectPersistenceError,
 } from "./persistence-test-helpers.mjs";
 
-const BASELINE_CHECKSUM = "518E84129E6753E7D0E5078223DCCB43E155AA2FD2120DD2A4C3F5F633FCEBFA";
+const BASELINE_CHECKSUM = "34440A65E9CC73BF8C6575F8563745D4FFDD71A9E065E6BD4A6062904174D8CA";
 
 const CURRENT_TABLES = Object.freeze([
   "application_audit",
@@ -67,6 +67,13 @@ const CURRENT_TABLES = Object.freeze([
   "task_dependencies",
   "task_execution_sequences",
   "tasks",
+  "workspace_authorization_decisions",
+  "workspace_events",
+  "workspace_finalizations",
+  "workspace_generations",
+  "workspace_observations",
+  "workspace_operation_intents",
+  "workspace_verified_receipts",
 ]);
 
 const CURRENT_INDEXES = Object.freeze([
@@ -84,6 +91,7 @@ const CURRENT_INDEXES = Object.freeze([
   "tasks_parent_id_index",
   "tasks_project_id_index",
   "tasks_supersedes_task_id_index",
+  "workspace_generations_current_owner_index",
 ]);
 
 const CURRENT_TRIGGERS = Object.freeze([
@@ -159,6 +167,20 @@ const CURRENT_TRIGGERS = Object.freeze([
   "project_registry_no_delete",
   "task_execution_sequences_increment_only",
   "task_execution_sequences_no_delete",
+  "workspace_authorization_decisions_no_delete",
+  "workspace_authorization_decisions_no_update",
+  "workspace_events_no_delete",
+  "workspace_events_no_update",
+  "workspace_finalizations_no_delete",
+  "workspace_finalizations_no_update",
+  "workspace_generations_no_delete",
+  "workspace_generations_update_guard",
+  "workspace_observations_no_delete",
+  "workspace_observations_no_update",
+  "workspace_operation_intents_no_delete",
+  "workspace_operation_intents_update_guard",
+  "workspace_verified_receipts_no_delete",
+  "workspace_verified_receipts_no_update",
 ]);
 
 function userSchemaNames(database, type = null) {

@@ -16,7 +16,7 @@ successful narrow check does not waive another applicable route.
 | Domain or state machine | Targeted unit tests plus property/state-machine tests for legal and illegal histories |
 | ProjectRegistry or application service | Canonical path/identity and revision negatives, typed command/query parity with Domain, accepted/denied atomicity, restart readback, concurrent writers, injected failure, and public-boundary tests |
 | Persistence, schema, migration, backup, restore, or doctor | Targeted repository tests, exact fresh-baseline and incompatible/noncurrent refusal matrix, canonical migration identity from uniform LF and CRLF transports, malformed/mixed-EOL pre-mutation refusal, concurrent-reader/writer tests, read-only diagnostic tests, and interruption or corruption recovery |
-| Dispatcher, publication, lease, or recovery | Contract tests, competing-worker tests, fencing and CAS tests, and failpoint recovery at every durable transition |
+| Dispatcher, workspace lifecycle, publication, lease, or recovery | Contract tests, competing-worker tests, fencing and CAS tests, and failpoint recovery at every durable transition |
 | Adapter or external side effect | Shared adapter contract suite plus E2E on every platform/API combination for which support will be claimed |
 | CLI, MCP, or another public interface | Schema and negative-input tests plus application-service parity tests proving there is no second business-rule implementation |
 | Authorization, filesystem, secret, privacy, or other security boundary | Authorization tests and the negative-test obligations owned by the [threat model](../security/threat-model.md#negative-test-obligations) |
@@ -120,8 +120,14 @@ The committed Windows workflow is a CI skeleton only; hosted enforcement
 remains unverified until an actual run is observed. The Phase 1 application,
 authorization, persistence lifecycle, product CLI, claim foundation, local
 Manual-loop, explicit-Manual dispatcher, and sole current `ato.api/v1` product routes
-are implemented test surfaces. There is still no SchedulerBackend or scheduled trigger, MCP,
-Codex/Git/workspace adapter, ProjectPolicy,
+are implemented test surfaces. The workspace foundation adds an exact pure-port
+hostile-shape suite, generation/idempotency/concurrency tests, authorization and
+cleanup-confirmation negatives, writer-boundary static analysis, every-write-
+seam rollback, SQLite close/reopen at prepare/execute/observe/verify/finalize,
+response-loss and ambiguity recovery, stale revision/fence refusal, combined
+decoder corruption, redaction, package-export, and Fake-only inventory evidence.
+There is still no SchedulerBackend or scheduled trigger, MCP, production
+Codex/Git/filesystem workspace adapter, ProjectPolicy,
 CompletionBackend/gate, or support-matrix harness, so
 those routes remain unimplemented and cannot be claimed as passing. Repository task-artifact checks cover only
 maintainer workflow scratch and do not count as product persistence or

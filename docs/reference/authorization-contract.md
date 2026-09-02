@@ -3,18 +3,20 @@
 ## Status and authority
 
 This document is the normative owner of the implemented local runtime
-authorization model through the sole current `ato.api/v1` Manual product facade
-and reconcile-first Manual dispatcher. The implementation is deliberately
+authorization model through the sole current `ato.api/v1` Manual product facade,
+reconcile-first Manual dispatcher, and package-library workspace foundation.
+The implementation is deliberately
 limited to nineteen base local application/lifecycle actions, four
-database-local execution claim/lease actions, six Manual-loop actions, and one
-dispatcher action across contiguous vocabulary versions 1 through 4. It
+database-local execution claim/lease actions, six Manual-loop actions, one
+dispatcher action, and five workspace-foundation actions across contiguous
+vocabulary versions 1 through 5. It
 is not an operating-system
 account system, team identity service, RBAC product, cloud identity provider,
 or authorization for development and external actions.
 
 Runtime grants never authorize repository development, network or secret
-access, Git writes, pull requests, release, deployment, workspace mutation,
-scheduling, arbitrary filesystem access, or any action outside the finite
+access, pull requests, release, deployment, scheduling, arbitrary filesystem
+access, or any action outside the finite
 vocabulary below. The four claim actions authorize only claim, claim inspection,
 lease renewal, and reconcile-gated takeover. The six Manual-loop actions
 authorize only the exact local no-workspace port/journal, inspection,
@@ -27,6 +29,15 @@ completion authority. The `runtime.backup` and `runtime.restore`
 actions authorize only the implemented local persistence lifecycle through the
 exact application handoff described below; they grant no external or general
 file authority.
+
+The five `workspace.*` actions authorize only their exact typed workspace
+application operation against the complete current Project/Task/run/member/
+execution/fence/generation tuple and configured `ato.workspace/v1` backend.
+They do not authorize caller-selected paths, arbitrary Git or filesystem use,
+repository development, integration, push, or cleanup outside that tuple.
+`workspace.cleanup` additionally requires one fresh named high-risk
+confirmation. The current package has only an unexported test Fake and no
+production filesystem/Git workspace adapter or public CLI workspace command.
 
 Project content, Task text, repository files, prompts, tool output, Agent text,
 Domain state, persisted audit, a prior authorization decision, and an approved
@@ -73,6 +84,15 @@ cannot select or replace the worker owner, actor, principal, time, or
 authorization evidence. Dispatcher idempotency content is parsed as a bounded
 identifier and persisted only as its stable digest identity.
 
+The workspace application owner uses `WorkspaceIngress` for the same trusted
+actor/principal binding, current UTC time, fresh request/correlation/decision/
+event/operation/intent/observation/receipt/finalization identities, and the
+separate cleanup confirmation. Adapter/root configuration is trusted injected
+configuration, not command content. Prepare, act, and finalize each revalidate
+the applicable current identity, tuple, and authority; observation and
+verification remain exactly bound to that durable tuple and receipt. Trusted
+callbacks and the injected backend never run inside a writer transaction.
+
 ## Exact action vocabulary
 
 The complete grantable implemented vocabulary begins with the nineteen base
@@ -118,10 +138,18 @@ plus the one reconcile-first Manual dispatcher action:
 
 - `dispatch.run`
 
+plus the five workspace-foundation actions:
+
+- `workspace.reserve`
+- `workspace.create`
+- `workspace.inspect`
+- `workspace.recover`
+- `workspace.cleanup`
+
 There is no wildcard and no prefix expansion. Unknown actions and unimplemented
 commands are invalid input; they are not mapped to a similar action. These
-actions do not imply scheduler, scheduled delivery, workspace, Codex, Git, network,
-secret, arbitrary diagnostic, arbitrary CLI/filesystem, MCP, release, or
+actions do not imply scheduler, scheduled delivery, Codex, arbitrary Git,
+filesystem or network, secret, arbitrary diagnostic, MCP, release, or
 deployment capability. `execution.completion.accept` accepts only exact current
 verified Manual-turn evidence; it is not CompletionBackend or gate authority.
 `authorization.capability.renew` and `authorization.capability.upgrade` are
@@ -174,9 +202,10 @@ confirmation, a finite expiry more than seven and no more than 31 days ahead,
 and an eligible current origin. Each call advances exactly one contiguous step:
 version 1 to 2 appends one origin grant for each of the twenty-three
 claim-capable actions, version 2 to 3 appends one origin grant for each of the
-twenty-nine Manual-capable actions, and version 3 to 4 appends one origin grant
-for each of all thirty current actions. A version-1 runtime cannot skip directly
-to 3 or 4, and a version-2 runtime cannot skip directly to 4.
+twenty-nine Manual-capable actions, version 3 to 4 appends one origin grant for
+each of the thirty dispatcher-capable actions, and version 4 to 5 appends one
+origin grant for each of all thirty-five current actions. A runtime cannot skip
+any intermediate version or combine two upgrades in one ceremony.
 The epoch, exact grant set, request/allow-decision/audit unit, and terminal
 readback commit together. Migration, bootstrap, an earlier decision, Task
 readiness, ordinary grant issue, and renewal cannot substitute for either
@@ -190,7 +219,7 @@ capability. Each accepted renewal appends a contiguous positive epoch revision,
 the exact vocabulary/version digest, a request/decision/audit unit, and one new
 finite origin grant for every action in the already-current vocabulary:
 nineteen for vocabulary version 1, twenty-three for version 2, twenty-nine for
-version 3, or thirty for version 4. Every epoch and current origin grant
+version 3, thirty for version 4, or thirty-five for version 5. Every epoch and current origin grant
 uses the single `authorization_capability_epochs` and `authorization_grants`
 relations with direct `capability_epoch_id` provenance. Renewal never changes a vocabulary version. Previous epochs and
 grants remain immutable history.
@@ -257,6 +286,7 @@ ingress after a matching grant is found:
 - `project.disable`
 - `runtime.restore`
 - `execution.completion.accept`
+- `workspace.cleanup`
 
 Capability renewal and each capability upgrade also require a fresh
 high-risk confirmation even though they are deliberately not grantable actions.
@@ -377,6 +407,42 @@ atomic unit; `dispatch.run` cannot substitute for either. Revocation or expiry
 may therefore stop run coordination without retroactively invalidating its
 immutable historical decisions or permitting a new effect.
 
+The workspace application owner first parses the complete closed command and
+then binds current Project resource/config revisions, Task revision,
+dispatcher run/member/membership revisions, execution revision/attempt/fence,
+workspace ID/generation/revision, trusted workspace-root identity, adapter
+version, creator operation, and optional cleaned predecessor. Reserve allocates
+the system workspace identity/generation in its prepared transaction; later
+operations may address only that exact generation. Each operation persists a
+prepare authorization decision and intent, CAS-binds a fresh act decision,
+calls the injected backend outside the transaction, persists one ordered
+observation, semantically verifies its receipt, and CAS-binds a fresh finalize
+decision. `workspace.inspect` uses the same durable evidence chain but its port
+call is read-only and cannot change backend state. Cleanup obtains its separate
+trusted confirmation before the writer and cannot consume a confirmation from
+another operation or generation.
+
+The generation row freezes the creation-time lower bounds for Project
+resource/config, Task, run, member, and execution revisions. Those owners may
+advance their revisions without changing the generation identity. Every later
+command must nevertheless name the exact current revisions, and its act and
+finalize decisions bind those exact current values; none may precede the frozen
+lower bound. Project/Task/run/member/execution identities, membership revision,
+attempt, fence, workspace ID, and positive generation remain exact for the
+generation and cannot be substituted.
+
+An effect-possible reserve, create, or cleanup whose response or final state is
+not provable becomes `recovery_required`/ambiguous evidence; the old operation
+is never blindly replayed. Explicit recover must causally name that ambiguous
+operation at the exact current unresolved generation revision; every nested
+ambiguous recover and final effect-capable root must remain bound to that same
+revision, so an older resolved root grants no later recovery authority. Current
+grant, Project/run/member/execution revisions, generation
+revision, and fence are re-evaluated before act and finalization, so expiry,
+revocation, substitution, or a late worker prevents the next transition without
+fabricating rollback. Exact finalized replay revalidates the current trusted
+identity/root and returns only the bounded durable result.
+
 If claim authorization allows but the fully bound `execution.start`
 authorization denies, the same member-resolution transaction records one
 dedicated sanitized denied request, denied decision, and
@@ -456,7 +522,9 @@ later request.
 Application requests, bootstrap, local identity, capability epochs, lifecycle
 authorizations, execution attempts, operation evidence, Manual completion
 decisions, dispatcher trigger/decision/audit/reconciliation/membership/summary
-evidence, authorization decisions, and audit rows are append-only apart from
+evidence, workspace generations/authorization/intent/observation/verified-
+receipt/finalization/event evidence, authorization decisions, and audit rows
+are append-only apart from
 the narrowly constrained lease/attempt, intent-state, and Manual-turn CAS
 transitions. Grant rows are
 insert-only except for the single CAS revocation transition. ProjectRegistry
@@ -477,10 +545,14 @@ claim/lease grants; the Manual stage adds one separately confirmed version-3
 step and the six exact Manual-loop grants and decisions described above. The
 current dispatcher stage adds one separately confirmed version-4 step and the
 exact `dispatch.run` decision path for the explicit-Manual dispatcher. The
-current product API exposes only those existing
-decisions through `ato.api/v1`; it adds no action, grant, epoch, implicit
-upgrade, or alternate authorization owner. It does not implement login,
+workspace-foundation stage adds one separately confirmed version-5 step and the
+five exact workspace decisions above; cleanup alone adds a fresh high-risk
+confirmation. The current product API continues to expose only the existing
+Manual/dispatcher decisions through `ato.api/v1`; the stage-5 workspace
+operation service is package-library-only. The API adds no action, grant,
+epoch, implicit upgrade, workspace command, or alternate authorization owner.
+It does not implement login,
 credentials, team accounts, RBAC, cloud identity, an external policy adapter,
-workspace or scheduler authorization, SchedulerBackend/scheduled delivery,
-MCP, Codex/Git/network effects, ProjectPolicy,
+SchedulerBackend/scheduled delivery, MCP, production Codex/Git/filesystem
+workspace or network effects, ProjectPolicy,
 CompletionBackend/gates, release, deployment, or a platform-support claim.

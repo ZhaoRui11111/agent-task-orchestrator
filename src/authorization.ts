@@ -50,9 +50,22 @@ export const DISPATCH_AUTHORIZATION_ACTIONS = Object.freeze([
   "dispatch.run",
 ] as const);
 
-export const AUTHORIZATION_ACTIONS = Object.freeze([
+export const DISPATCHER_AUTHORIZATION_ACTIONS = Object.freeze([
   ...MANUAL_AUTHORIZATION_ACTIONS,
   ...DISPATCH_AUTHORIZATION_ACTIONS,
+] as const);
+
+export const WORKSPACE_AUTHORIZATION_ACTIONS = Object.freeze([
+  "workspace.reserve",
+  "workspace.create",
+  "workspace.inspect",
+  "workspace.recover",
+  "workspace.cleanup",
+] as const);
+
+export const AUTHORIZATION_ACTIONS = Object.freeze([
+  ...DISPATCHER_AUTHORIZATION_ACTIONS,
+  ...WORKSPACE_AUTHORIZATION_ACTIONS,
 ] as const);
 
 export const HIGH_RISK_ACTIONS = Object.freeze([
@@ -63,13 +76,14 @@ export const HIGH_RISK_ACTIONS = Object.freeze([
   "project.disable",
   "runtime.restore",
   "execution.completion.accept",
+  "workspace.cleanup",
 ] as const);
 
 export type AuthorizationAction = (typeof AUTHORIZATION_ACTIONS)[number];
-export type AuthorizationVocabularyVersion = 1 | 2 | 3 | 4;
+export type AuthorizationVocabularyVersion = 1 | 2 | 3 | 4 | 5;
 
 export function isAuthorizationVocabularyVersion(value: unknown): value is AuthorizationVocabularyVersion {
-  return value === 1 || value === 2 || value === 3 || value === 4;
+  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5;
 }
 
 export function actionsForVocabulary(version: AuthorizationVocabularyVersion): readonly AuthorizationAction[] {
@@ -79,7 +93,9 @@ export function actionsForVocabulary(version: AuthorizationVocabularyVersion): r
       ? CLAIM_AUTHORIZATION_ACTIONS
       : version === 3
         ? MANUAL_AUTHORIZATION_ACTIONS
-        : AUTHORIZATION_ACTIONS;
+        : version === 4
+          ? DISPATCHER_AUTHORIZATION_ACTIONS
+          : AUTHORIZATION_ACTIONS;
 }
 export type AuthorizationPolicyResult = "allow" | "deny" | "read_not_applicable";
 export type AuthorizationReason =

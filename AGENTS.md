@@ -47,12 +47,26 @@ and fixed public error mapping. Adapter work remains
 outside writer transactions, turn success alone never completes a Task, lease
 expiry never authorizes blind replay, and stale-fence writes are refused.
 
-These Phase 2 capabilities are implemented only for the local explicit-Manual
-product and `manual-local` adapter. They do not execute Task content or perform
-an external Project/workspace effect. The repository still has no scheduler or
-scheduled trigger, MCP component, Codex/Git/workspace adapter, ProjectPolicy or
-CompletionBackend gate, daemon/service, release, deployment, or validated
-platform-support claim. Do not describe those planned
+The fresh-only Phase 3 workspace foundation adds one contiguous authorization
+vocabulary version 5 with exactly `workspace.reserve`, `workspace.create`,
+`workspace.inspect`, `workspace.recover`, and `workspace.cleanup`; cleanup alone
+is newly high risk. It implements the pure exact `ato.workspace/v1` contract,
+one typed application coordinator, and persistence-owned workspace generation,
+authorization, intent, observation, verified-receipt, finalization, and bounded
+redacted event records. The coordinator binds the current
+Project/Task/dispatcher-member/execution/fence tuple, calls only an injected
+backend outside writer transactions, and reconciles durable ambiguity before
+retry. The only workspace backend is an unexported test Fake: no production
+filesystem or Git workspace effect exists.
+
+The Phase 2 product capabilities are implemented only for the local
+explicit-Manual product and `manual-local` adapter. They do not execute Task
+content or perform an external Project/workspace effect. The Phase 3 workspace
+foundation likewise has no production adapter or public CLI command. The
+repository still has no scheduler or scheduled trigger, MCP component,
+Codex/Git/filesystem workspace adapter, ProjectPolicy or CompletionBackend
+gate, daemon/service, release, deployment, or validated platform-support
+claim. Do not describe those planned
 modules, platform support, safety properties, or integration behavior as
 implemented. Follow the
 [toolchain contract](docs/reference/toolchain-contract.md) for current
@@ -63,7 +77,8 @@ current finite local grant model, and the
 [persistence contract](docs/reference/persistence-contract.md) for the current
 schema and storage/recovery boundary. The
 [reliability protocol](docs/reference/reliability-protocol.md) owns the current
-claim/lease/fence, Manual effect, and dispatcher fan-out protocol. The
+claim/lease/fence, Manual effect, workspace durable-effect, and dispatcher
+fan-out protocols. The
 [CLI contract](docs/reference/cli-contract.md) alone owns commands, public output,
 and exit codes.
 

@@ -7,6 +7,12 @@ import type {
 } from "../authorization.ts";
 import type { DomainSnapshot } from "../domain.ts";
 import type { ProjectRootIdentity } from "../project-registry.ts";
+import type {
+  WorkspaceExternalState as WorkspacePortExternalState,
+  WorkspaceFailureCategory as WorkspacePortFailureCategory,
+  WorkspaceOperation as WorkspacePortOperation,
+  WorkspaceReceiptCode as WorkspacePortReceiptCode,
+} from "../workspace-port.ts";
 
 export interface RegisteredProject extends ProjectRootIdentity {
   readonly projectId: string;
@@ -628,6 +634,187 @@ export interface DispatcherRunSummaryRecord {
   readonly createdAt: string;
 }
 
+export type WorkspaceGenerationStatus =
+  | "allocated"
+  | "reserved"
+  | "creating"
+  | "ready"
+  | "cleaning"
+  | "recovery_required"
+  | "cleaned";
+
+export type WorkspaceOperationKind = WorkspacePortOperation;
+export type WorkspaceIntentState = "pending" | "executing" | "observed" | "verified" | "finalized" | "ambiguous" | "failed";
+export type WorkspaceExternalState = WorkspacePortExternalState;
+export type WorkspaceOperationOutcome = "succeeded" | "refused" | "ambiguous" | "failed";
+
+export interface WorkspaceGenerationRecord {
+  readonly workspaceId: string;
+  readonly generation: number;
+  readonly revision: number;
+  readonly status: WorkspaceGenerationStatus;
+  readonly projectId: string;
+  readonly projectResourceRevision: number;
+  readonly projectConfigRevision: number;
+  readonly projectRootKey: string;
+  readonly taskId: string;
+  readonly taskRevision: number;
+  readonly runId: string;
+  readonly runRevision: number;
+  readonly memberId: string;
+  readonly membershipRevision: number;
+  readonly memberRevision: number;
+  readonly executionId: string;
+  readonly executionRevision: number;
+  readonly attemptNumber: number;
+  readonly fencingToken: number;
+  readonly workspaceRootKey: string;
+  readonly creatorOperationId: string;
+  readonly predecessorGeneration: number | null;
+  readonly predecessorRevision: number | null;
+  readonly baseReference: string;
+  readonly contractId: "ato.workspace/v1";
+  readonly adapterId: string;
+  readonly adapterVersion: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface WorkspaceAuthorizationDecisionRecord {
+  readonly decisionId: string;
+  readonly requestId: string;
+  readonly operationId: string;
+  readonly bindingRevision: number;
+  readonly phase: "prepare" | "act" | "finalize";
+  readonly actorId: string;
+  readonly action: Extract<AuthorizationAction,
+    "workspace.reserve" | "workspace.create" | "workspace.inspect" | "workspace.recover" | "workspace.cleanup">;
+  readonly result: "allow" | "deny";
+  readonly reason: AuthorizationReason;
+  readonly policy: AuthorizationPolicyResult;
+  readonly grantId: string | null;
+  readonly grantRevision: number | null;
+  readonly projectId: string;
+  readonly projectResourceRevision: number;
+  readonly projectConfigRevision: number;
+  readonly executionId: string;
+  readonly executionRevision: number;
+  readonly fencingToken: number;
+  readonly workspaceId: string | null;
+  readonly generation: number | null;
+  readonly generationRevision: number | null;
+  readonly createdAt: string;
+}
+
+export interface WorkspaceOperationIntentRecord {
+  readonly intentId: string;
+  readonly operationId: string;
+  readonly idempotencyKey: string;
+  readonly operationKind: WorkspaceOperationKind;
+  readonly action: WorkspaceAuthorizationDecisionRecord["action"];
+  readonly state: WorkspaceIntentState;
+  readonly revision: number;
+  readonly actorId: string;
+  readonly requestId: string;
+  readonly correlationId: string;
+  readonly causationId: string | null;
+  readonly currentAuthorizationDecisionId: string;
+  readonly authorizationBindingRevision: number;
+  readonly confirmationId: string | null;
+  readonly workspaceId: string;
+  readonly generation: number;
+  readonly expectedGenerationRevision: number;
+  readonly expectedGenerationStatus: WorkspaceGenerationStatus;
+  readonly lastObservationNumber: number;
+  readonly lastFailureCategory: WorkspacePortFailureCategory | null;
+  readonly lastFailureCode: string | null;
+  readonly lastFailureRetryable: boolean | null;
+  readonly lastFailureAmbiguous: boolean | null;
+  readonly contractId: "ato.workspace/v1";
+  readonly adapterId: string;
+  readonly adapterVersion: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface WorkspaceObservationRecord {
+  readonly observationId: string;
+  readonly intentId: string;
+  readonly observationNumber: number;
+  readonly adapterReceiptId: string;
+  readonly receiptSha256: string;
+  readonly authorizationDecisionId: string;
+  readonly externalState: WorkspaceExternalState;
+  readonly outcome: Exclude<WorkspaceOperationOutcome, "failed">;
+  readonly code: WorkspacePortReceiptCode;
+  readonly pathSafety: "safe" | "unsafe" | "unknown";
+  readonly ownershipMatch: boolean | null;
+  readonly trackedCount: number;
+  readonly modifiedCount: number;
+  readonly untrackedCount: number;
+  readonly ignoredCount: number;
+  readonly evidenceReference: string | null;
+  readonly observedAt: string;
+}
+
+export interface WorkspaceVerifiedReceiptRecord {
+  readonly verifiedReceiptId: string;
+  readonly intentId: string;
+  readonly observationId: string;
+  readonly observationNumber: number;
+  readonly adapterReceiptId: string;
+  readonly receiptSha256: string;
+  readonly workspaceId: string;
+  readonly generation: number;
+  readonly generationRevision: number;
+  readonly externalState: WorkspaceExternalState;
+  readonly outcome: "succeeded" | "refused";
+  readonly code: WorkspacePortReceiptCode;
+  readonly verifiedAt: string;
+}
+
+export interface WorkspaceFinalizationRecord {
+  readonly finalizationId: string;
+  readonly intentId: string;
+  readonly verifiedReceiptId: string | null;
+  readonly authorizationDecisionId: string;
+  readonly outcome: WorkspaceOperationOutcome;
+  readonly code: string;
+  readonly resultingGenerationStatus: WorkspaceGenerationStatus;
+  readonly resultingGenerationRevision: number;
+  readonly finalizedAt: string;
+}
+
+export const WORKSPACE_EVENT_KINDS = Object.freeze([
+  "workspace.operation.prepared",
+  "workspace.operation.denied",
+  "workspace.operation.executing",
+  "workspace.operation.observed",
+  "workspace.operation.verified",
+  "workspace.operation.finalized",
+  "workspace.operation.reconciled",
+] as const);
+
+export type WorkspaceEventKind = (typeof WORKSPACE_EVENT_KINDS)[number];
+
+export interface WorkspaceEventRecord {
+  readonly eventId: string;
+  readonly operationId: string;
+  readonly intentId: string | null;
+  readonly eventKind: WorkspaceEventKind;
+  readonly outcome: "accepted" | "denied" | "refused" | "ambiguous" | "failed";
+  readonly reasonCode: string;
+  readonly actorId: string;
+  readonly correlationId: string;
+  readonly causationId: string | null;
+  readonly workspaceId: string | null;
+  readonly generation: number | null;
+  readonly generationRevision: number | null;
+  readonly observationNumber: number | null;
+  readonly evidenceReference: string | null;
+  readonly createdAt: string;
+}
+
 export interface ApplicationState {
   readonly domain: DomainSnapshot;
   readonly projects: readonly RegisteredProject[];
@@ -664,6 +851,13 @@ export interface ApplicationState {
   readonly dispatcherMemberDenialDecisions: readonly DispatcherMemberDenialDecisionRecord[];
   readonly dispatcherMemberDenialAudit: readonly DispatcherMemberDenialAuditRecord[];
   readonly dispatcherRunSummaries: readonly DispatcherRunSummaryRecord[];
+  readonly workspaceGenerations: readonly WorkspaceGenerationRecord[];
+  readonly workspaceAuthorizationDecisions: readonly WorkspaceAuthorizationDecisionRecord[];
+  readonly workspaceIntents: readonly WorkspaceOperationIntentRecord[];
+  readonly workspaceObservations: readonly WorkspaceObservationRecord[];
+  readonly workspaceReceipts: readonly WorkspaceVerifiedReceiptRecord[];
+  readonly workspaceFinalizations: readonly WorkspaceFinalizationRecord[];
+  readonly workspaceEvents: readonly WorkspaceEventRecord[];
   readonly lifecycle: readonly ApplicationLifecycleAuthorization[];
 }
 

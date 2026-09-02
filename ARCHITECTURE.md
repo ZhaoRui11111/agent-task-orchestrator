@@ -6,15 +6,18 @@ The repository has a governance and architecture-contract baseline, an
 executable toolchain and feasibility harness, a pure in-memory TypeScript
 Domain Core, a filesystem-identity ProjectRegistry, a finite local runtime
 authorization owner, a typed Project/Task/dependency application service, a
-local SQLite persistence foundation, the closed local Phase 1 product, and the
-complete explicit-Manual local Phase 2 product through the sole current `ato.api/v1`. One immutable
+local SQLite persistence foundation, the closed local Phase 1 product, the
+complete explicit-Manual local Phase 2 product through the sole current
+`ato.api/v1`, and the fresh-only durable workspace foundation. One immutable
 schema-version-1 baseline directly owns metadata and exact Domain snapshots;
-ProjectRegistry; local identity; vocabulary-version-1-through-4 epochs and grants;
+ProjectRegistry; local identity; vocabulary-version-1-through-5 epochs and grants;
 requests, authorization decisions, lifecycle authorizations and append-only
 audit; ordered execution attempts, lease state and per-Task fencing; reliable
 Manual-loop intents, authorization bindings, observations, verified receipts,
 finalizations, terminal facts and journal records; and bounded dispatcher run,
-reconciliation, membership, member-outcome and summary records. Lifecycle
+reconciliation, membership, member-outcome and summary records; plus workspace
+generations, operation authorization, intents, observations, verified receipts,
+finalizations, and bounded redacted transition events. Lifecycle
 authorization uses the sole complete non-lifecycle application-state projection
 at state-digest version 1.
 The application service orchestrates business owners in one transaction;
@@ -41,10 +44,15 @@ confirmed application decision alone may complete a Task from verified
 owners after one explicit trigger: it durably reconciles old work, seals a
 finite candidate set, resolves every member, and publishes a summary only after
 complete readback. The repository still implements no SchedulerBackend or
-scheduled trigger, MCP component, Codex/Git/workspace adapter, ProjectPolicy,
+scheduled trigger, MCP component, production Codex/Git/filesystem workspace
+adapter, ProjectPolicy,
 CompletionBackend or gates, daemon/service, supported platform integration,
 release, or deployment. The local Manual product records operator-supplied turn
 facts; it does not execute Task content or perform Project/workspace effects.
+The separate workspace application coordinator implements only durable
+authorization, generation, intent, observation, verification, finalization,
+replay, and restart recovery against an injected port; its sole backend is an
+unexported test Fake.
 
 ## Authority and ownership
 
@@ -83,8 +91,11 @@ The architecture separates:
   also owns typed execution claims/inspection/renewal, explicit
   confirmation-bound capability upgrades, the reliable Manual operation
   protocol, reconciliation, verified interruption, and Manual completion
-  acceptance. It depends on injected port/control interfaces, never a concrete
-  backend. The physical `application-model`, `application-input`,
+  acceptance. A separate typed workspace coordinator owns the exact
+  Project/Task/run/member/execution/fence/generation binding and the durable
+  reserve/create/inspect/recover/cleanup protocol. Application owners depend on
+  injected port/control interfaces, never a concrete backend. The physical
+  `application-model`, `application-input`,
   `application-policy`, `application-domain`, and `application-service`
   modules preserve that one semantic owner behind the stable facade.
   `application-input` consumes the Domain Core's exported pure canonical
@@ -92,17 +103,20 @@ The architecture separates:
 - `persistence`: the implemented SQLite runtime-root, connection, single
   current-baseline migration, combined schema-version-1 repository, transaction, lifecycle handoff,
   execution attempt/sequence, Manual-loop and dispatcher record storage,
-  backup, restore, read-only doctor, and typed-corruption owner. Backup
+  workspace generation/operation/evidence storage, backup, restore, read-only
+  doctor, and typed-corruption owner. Backup
   manifest, restore intent, and restore receipt each have an independent exact
   current JSON format at schema version 1; those format identities are not the
   database schema. Later records are added only by their implementing phase.
 - `dispatcher`: the implemented explicit-Manual reconcile-first
   run, ownership/takeover, finite fan-out, and recovery coordinator. It calls
   application and reliable owners rather than duplicating their decisions.
-- `ports`: the implemented pure `ato.execution/v1` contract kit, plus planned
-  workspace, scheduler, project-policy, and completion contracts.
+- `ports`: the implemented pure `ato.execution/v1` and `ato.workspace/v1`
+  contract kits, plus planned scheduler, project-policy, and completion
+  contracts.
 - `adapters`: the implemented local Manual execution backend and outcome
-  control; the Fake is test-only, while Codex and every other adapter remain
+  control; the workspace Fake is test-only and unexported, while a production
+  filesystem/Git workspace adapter, Codex, and every other adapter remain
   planned.
 - `product-runtime`: the implemented typed local facade that validates the
   closed public CAS tuple, derives non-public durable lineage, composes the
@@ -122,8 +136,11 @@ scaffold or capability-status registry.
 Only the boundaries explicitly described above are implemented. In particular,
 the Manual adapter mutates only its persistence-owned local journal through a
 committed, authorization-bound intent; it does not execute Task content, invoke
-a vendor, or touch a Project/workspace. The product execution runtime is only
-the explicit local Manual control/recovery surface described above.
+a vendor, or touch a Project/workspace. The workspace foundation mutates only
+its current SQLite records and a test Fake through the injected pure port; it
+has no product CLI route and no production filesystem or Git mutation. The
+product execution runtime is only the explicit local Manual control/recovery
+surface described above.
 Every other later name remains accepted design direction rather than a current
 runtime component.
 
@@ -147,6 +164,10 @@ runtime component.
 - the Manual-loop application coordinator calls injected execution and outcome
   ports outside writer transactions; it neither imports the concrete Manual
   adapter nor accepts adapter facts as authority or Domain decisions.
+- the workspace application coordinator calls its injected backend outside
+  writer transactions; trusted ingress, confirmation, runtime/root validation,
+  semantic verification, and authorization decisions remain application-owned,
+  while the backend neither writes SQLite nor selects a lifecycle transition.
 - `dispatcher` coordinates application services and the reliable execution
   loop without embedding authorization, Domain eligibility/state transitions,
   adapter verification, or project-specific policy.
@@ -172,7 +193,7 @@ validation evidence land.
 The repository's current
 [local agent Git workflow](docs/reference/local-agent-git-flow.md) coordinates
 how maintainers develop and integrate this source tree. It is operational
-governance outside the planned runtime dependency graph. It neither implements
-nor constrains a future project's `WorkspaceBackend`, `CompletionBackend`, or
-project-specific Git policy beyond the adapter contracts that will be designed
-and validated separately.
+governance outside the product runtime dependency graph. It neither implements
+the product's current pure `WorkspaceBackend` contract nor a production
+workspace adapter, `CompletionBackend`, or project-specific Git policy. Those
+product concerns remain independent of maintainer worktree governance.

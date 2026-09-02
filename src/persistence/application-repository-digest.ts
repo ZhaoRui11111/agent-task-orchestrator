@@ -45,6 +45,13 @@ export function applicationStateProjection(state: ApplicationState): Readonly<Re
     manualTurns: state.manualTurns,
     projects: state.projects,
     requests: state.requests,
+    workspaceAuthorizationDecisions: state.workspaceAuthorizationDecisions,
+    workspaceEvents: state.workspaceEvents,
+    workspaceFinalizations: state.workspaceFinalizations,
+    workspaceGenerations: state.workspaceGenerations,
+    workspaceIntents: state.workspaceIntents,
+    workspaceObservations: state.workspaceObservations,
+    workspaceReceipts: state.workspaceReceipts,
   });
 }
 

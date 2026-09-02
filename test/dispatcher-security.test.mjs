@@ -4,7 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
-  AUTHORIZATION_ACTIONS,
+  DISPATCHER_AUTHORIZATION_ACTIONS,
   createApplicationService,
   createDispatcherApplicationService,
   createManualDispatcher,
@@ -170,7 +170,7 @@ test("schema creation and the Manual stage do not grant dispatch.run; only the c
     trusted.setNow("2026-08-30T12:00:04.000Z");
     const exactManualStage = structuredClone(state);
     const currentStages = Object.freeze([
-      "request", "epoch", ...AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`), "decision", "audit",
+      "request", "epoch", ...DISPATCHER_AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`), "decision", "audit",
     ]);
     for (const stage of currentStages) {
       const faulting = createApplicationServiceWithHooks(store, trusted, {
@@ -193,8 +193,8 @@ test("schema creation and the Manual stage do not grant dispatch.run; only the c
       grant.issuerGrantId === null && grant.sourceGrantId === null &&
       grant.notBefore === upgradedEpoch.createdAt && grant.expiresAt === upgradedEpoch.expiresAt
     );
-    assert.equal(upgradedOriginGrants.length, AUTHORIZATION_ACTIONS.length);
-    assert.deepEqual(upgradedOriginGrants.map((grant) => grant.action).sort(), [...AUTHORIZATION_ACTIONS].sort());
+    assert.equal(upgradedOriginGrants.length, DISPATCHER_AUTHORIZATION_ACTIONS.length);
+    assert.deepEqual(upgradedOriginGrants.map((grant) => grant.action).sort(), [...DISPATCHER_AUTHORIZATION_ACTIONS].sort());
 
     trusted.setNow("2026-08-30T12:00:05.000Z");
     const allowed = dispatcher.start({
@@ -231,7 +231,7 @@ test("schema creation and the Manual stage do not grant dispatch.run; only the c
       kind: "authorization.capability.renew", expiresAt: "2026-10-15T12:00:00.000Z",
     });
     assert.equal(renewed.ok, true, JSON.stringify(renewed));
-    assert.equal(renewed.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
+    assert.equal(renewed.value.capabilityCount, DISPATCHER_AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
     assert.equal(state.epochs.at(-1).vocabularyVersion, 4);
     const renewedEpoch = state.epochs.at(-1);
@@ -239,8 +239,8 @@ test("schema creation and the Manual stage do not grant dispatch.run; only the c
       grant.issuerGrantId === null && grant.sourceGrantId === null &&
       grant.notBefore === renewedEpoch.createdAt && grant.expiresAt === renewedEpoch.expiresAt
     );
-    assert.equal(renewedOriginGrants.length, AUTHORIZATION_ACTIONS.length);
-    assert.deepEqual(renewedOriginGrants.map((grant) => grant.action).sort(), [...AUTHORIZATION_ACTIONS].sort());
+    assert.equal(renewedOriginGrants.length, DISPATCHER_AUTHORIZATION_ACTIONS.length);
+    assert.deepEqual(renewedOriginGrants.map((grant) => grant.action).sort(), [...DISPATCHER_AUTHORIZATION_ACTIONS].sort());
     assert.equal(state.dispatcherRuns.length, 1);
     assert.match(applicationStateSha256(state), /^[0-9A-F]{64}$/u);
 

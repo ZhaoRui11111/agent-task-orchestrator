@@ -2,25 +2,72 @@
 
 ## Status and authority
 
-This file is the sole normative owner of planned completion-gate identity and
-freshness, run/workspace topology isolation, worktree ownership receipts,
-integration reservation, Git partial-success observation, contained regular
-path and no-follow/reparse checks, and cleanup refusal. No workspace, worktree,
-gate runner, Git integration, or cleanup implementation exists today.
+This file is the sole normative owner of current durable workspace-generation
+topology and planned completion-gate identity/freshness, physical worktree
+ownership receipts, integration reservation, Git partial-success observation,
+contained regular-path/no-follow/reparse checks, and cleanup eligibility. The
+pure `ato.workspace/v1` contract, typed application coordinator, and durable
+generation/operation/evidence lifecycle are implemented against an unexported
+test Fake. No production filesystem/Git workspace adapter, physical worktree,
+gate runner, Git integration, or product cleanup effect exists today.
 
 The implemented Phase 2B Manual completion decision is deliberately outside
 this planned gate owner. It consumes only a current verified local Manual
 `turn_succeeded` receipt plus distinct authorization and fresh confirmation; it
 does not evaluate ProjectPolicy, run or inspect a CompletionBackend gate, bind a
-workspace/HEAD, or make any rule in this file current implementation.
+workspace/HEAD, or make the planned gate/physical-workspace rules in this file
+current implementation.
 
-The presence of this future product contract does not authorize this
-repository's development process to create a worktree. Adapter call shapes are
+The presence of the planned physical sections in this product contract does not
+authorize this repository's development process to create a worktree. Adapter call shapes are
 owned by the [adapter contracts](adapter-contracts.md), durable external effects
 by the [reliability protocol](reliability-protocol.md), and permission by the
 [authorization contract](authorization-contract.md).
 
+## Implemented durable workspace foundation
+
+The current schema allocates one workspace generation to exactly one frozen
+Project resource/config/root identity, Task revision, dispatcher run/member/
+membership revisions, execution revision/attempt/fence, trusted workspace-root
+identity, adapter/contract version, creator operation, base reference, and
+optional cleaned predecessor generation/revision. The workspace ID is
+system-issued and stable; its positive generations are contiguous. A current
+generation is unique for one Project/Task/run/execution owner tuple, and only a
+cleaned predecessor may create generation `n+1` with the exact predecessor
+revision. Similar paths, branches, or content never establish identity.
+
+The complete durable generation status set is `allocated`, `reserved`,
+`creating`, `ready`, `cleaning`, `recovery_required`, and `cleaned`. Operation
+intents use `pending`, `executing`, `observed`, `verified`, `finalized`,
+`ambiguous`, or `failed`. Each operation has its own exact idempotency key and
+prepare/act/finalize authorization chain, ordered observation, optional verified
+receipt, one finalization, and bounded transition events. Reserve begins with
+an allocated generation; create requires reserved; cleanup requires ready;
+recover requires `recovery_required` and an exact nonempty, existing,
+same-workspace/generation, durably ambiguous, acyclic causal chain terminating
+in the original effect-capable `reserve`, `create`, or `cleanup` operation.
+The recover prepare and existing Act decision bind one revision `R`; every
+ambiguous node in that chain must record `recovery_required` at exactly `R`.
+An already resolved root from an older recovery episode is therefore invalid,
+while nested ambiguous recover nodes remain valid only within the same `R`.
+Inspect does not change the backend generation.
+
+An effect-possible reserve/create/cleanup state is never blindly replayed after
+restart or response loss. Known Fake state may be observed and finalized;
+unknown or conflicting state remains `recovery_required`/ambiguous until an
+explicit recover operation proves a current postcondition. A verified refusal
+or recovered absence can permit the same allocated generation to retry without
+allocating a duplicate; a cleaned predecessor is the only route to the next
+generation. These are current durable-library guarantees only. Canonical path,
+Git registration, branch/ref, HEAD, filesystem inventory, ownership, and path
+safety in a Fake receipt are contract-shaped test evidence, not a validated real
+worktree or cleanup claim.
+
 ## Run and workspace topology
+
+The durable identity/generation rules in this list are current. The physical
+path layout and containment rules are requirements for the future production
+adapter and are not evidence that those directories exist today.
 
 - A trusted configured `workspace_root` contains logical paths
   `runs/<run_id>/workspaces/<workspace_id>/g<generation>`.
@@ -40,6 +87,10 @@ by the [reliability protocol](reliability-protocol.md), and permission by the
   sibling or ancestor.
 
 ## Worktree ownership receipt
+
+This section remains a production-adapter requirement. The current Fake can
+return the closed receipt fields for contract and durable-protocol tests, but it
+does not establish a real Git/filesystem ownership receipt.
 
 Creation is not complete until an immutable ownership receipt binds:
 
@@ -95,6 +146,9 @@ not itself complete a Task.
 
 ## Integration reservation
 
+This section remains planned; EP-03A allocates no integration-reservation row
+or Git mutation authority.
+
 Execution workspaces may run concurrently. Mutation of one Project target ref
 is serialized by a durable integration reservation with:
 
@@ -137,6 +191,9 @@ mutation and routes observation/reconciliation.
 
 ## Git partial-success protocol
 
+This section remains planned for the production Git workspace/integration
+adapter.
+
 Every Git or remote step has its own persisted intent and observation. The
 system records actual state rather than pretending a multi-step sequence is
 atomic:
@@ -156,6 +213,10 @@ network permission; without it, the state remains explicitly blocked or
 ambiguous.
 
 ## Contained-path and no-follow checks
+
+This section remains a mandatory production-adapter safety requirement. The
+current pure port and Fake perform no filesystem mutation and do not validate a
+host platform's path primitives.
 
 Before every filesystem mutation or cleanup, the workspace adapter MUST:
 
@@ -179,6 +240,12 @@ Git command output and repository content are untrusted input and cannot supply
 the trusted root or ownership identity.
 
 ## Cleanup refusal
+
+The current application layer requires an exact ready generation, current
+workspace grant, fresh cleanup confirmation, current owner/revisions/fence, and
+verified port receipt, but only the test Fake can exercise that protocol. The
+additional real worktree checks below remain mandatory before any production
+cleanup effect can be implemented or claimed.
 
 Cleanup proceeds only when all of these are proven current:
 

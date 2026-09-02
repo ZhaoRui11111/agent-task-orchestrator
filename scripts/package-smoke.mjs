@@ -427,11 +427,19 @@ const expectedEntries = [
   "package/dist/project-registry.d.ts.map",
   "package/dist/project-registry.js",
   "package/dist/project-registry.js.map",
+  "package/dist/workspace-application.d.ts",
+  "package/dist/workspace-application.d.ts.map",
+  "package/dist/workspace-application.js",
+  "package/dist/workspace-application.js.map",
+  "package/dist/workspace-port.d.ts",
+  "package/dist/workspace-port.d.ts.map",
+  "package/dist/workspace-port.js",
+  "package/dist/workspace-port.js.map",
   "package/migrations/0001-current-baseline.sql",
   "package/package.json",
 ].sort();
 
-invariant(expectedEntries.length === 172, `packed expected inventory count drifted: ${expectedEntries.length}`);
+invariant(expectedEntries.length === 180, `packed expected inventory count drifted: ${expectedEntries.length}`);
 
 const packageManagerVersion = pnpm(["--version"], repoRoot).stdout.trim();
 invariant(packageManagerVersion === "11.19.0", `pnpm version drifted: ${packageManagerVersion}`);
@@ -557,13 +565,17 @@ export async function resolve(specifier, context, nextResolve) {
     path.join(consumer, "index.ts"),
     `import {
   AUTHORIZATION_ACTIONS,
+  WORKSPACE_CONTRACT_ID,
   createApplicationService,
   createExecutionApplicationService,
   createManualExecutionBackend,
   createProductRuntime,
   createReliableExecutionService,
+  createWorkspaceApplicationService,
   currentSchemaVersion,
   inspectProjectRoot,
+  parseWorkspaceBackendRequest,
+  parseWorkspaceBackendResult,
   type ApplicationIngress,
   type ExecutionClaimCommand,
   type ExecutionIngress,
@@ -573,6 +585,8 @@ export async function resolve(specifier, context, nextResolve) {
   type BackupManifest,
   type OpenPersistenceOptions,
   type ProductRuntime,
+  type WorkspaceBackend,
+  type WorkspaceBackendRequest,
   type RestoreReceipt,
   type RuntimeRootRequest,
 } from "agent-task-orchestrator";
@@ -591,12 +605,16 @@ void backupManifest;
 void restoreReceipt;
 void currentSchemaVersion();
 void AUTHORIZATION_ACTIONS;
+void WORKSPACE_CONTRACT_ID;
 void createApplicationService;
 void createExecutionApplicationService;
 void createManualExecutionBackend;
 void createProductRuntime;
 void createReliableExecutionService;
+void createWorkspaceApplicationService;
 void inspectProjectRoot;
+void parseWorkspaceBackendRequest;
+void parseWorkspaceBackendResult;
 const ingress = null as unknown as ApplicationIngress;
 void ingress;
 const executionIngress = null as unknown as ExecutionIngress;
@@ -607,10 +625,14 @@ const reliableIngress = null as unknown as ReliableExecutionIngress;
 const backend = null as unknown as ExecutionBackend;
 const outcomeControl = null as unknown as ManualOutcomeControl;
 const productRuntime = null as unknown as ProductRuntime;
+const workspaceBackend = null as unknown as WorkspaceBackend;
+const workspaceRequest = null as unknown as WorkspaceBackendRequest;
 void reliableIngress;
 void backend;
 void outcomeControl;
 void productRuntime;
+void workspaceBackend;
+void workspaceRequest;
 `,
     "utf8",
   );
@@ -717,10 +739,16 @@ void productRuntime;
         trustedMilliseconds = Date.parse(issuedAt) + 3000;
         const dispatcherUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
         if (!dispatcherUpgrade.ok || dispatcherUpgrade.value.epochRevision !== 3 ||
-            dispatcherUpgrade.value.capabilityCount !== m.AUTHORIZATION_ACTIONS.length) {
+            dispatcherUpgrade.value.capabilityCount !== m.DISPATCHER_AUTHORIZATION_ACTIONS.length) {
           throw new Error("package dispatcher capability upgrade was rejected");
         }
         trustedMilliseconds = Date.parse(issuedAt) + 4000;
+        const workspaceUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
+        if (!workspaceUpgrade.ok || workspaceUpgrade.value.epochRevision !== 4 ||
+            workspaceUpgrade.value.capabilityCount !== m.AUTHORIZATION_ACTIONS.length) {
+          throw new Error("package workspace capability upgrade was rejected");
+        }
+        trustedMilliseconds = Date.parse(issuedAt) + 5000;
         let manualBackend = m.createManualExecutionBackend(store, { ingress: trusted });
         let product = m.createProductRuntime(store, trusted, manualBackend, manualBackend);
         const dispatched = product.dispatchRun({
@@ -755,7 +783,7 @@ void productRuntime;
           throw new Error("package product inspection did not bind the dispatched execution");
         }
         const executionId = inspected.value.executionId;
-        trustedMilliseconds = Date.parse(issuedAt) + 5000;
+        trustedMilliseconds = Date.parse(issuedAt) + 6000;
         const reportCommand = {
           kind: "manual.outcome-report",
           ...publicCommon(executionId, "package-report"),
@@ -776,7 +804,7 @@ void productRuntime;
         product = m.createProductRuntime(store, trusted, manualBackend, manualBackend);
         const reportReplay = product.recordManualOutcome(reportCommand);
         if (!reportReplay.ok || !reportReplay.value.replayed) throw new Error("package Manual restart replay was not stable");
-        trustedMilliseconds = Date.parse(issuedAt) + 6000;
+        trustedMilliseconds = Date.parse(issuedAt) + 7000;
         const completed = product.acceptManualCompletion({
           kind: "execution.accept-manual-completion",
           ...publicCommon(executionId, "package-completion"),
@@ -798,6 +826,10 @@ void productRuntime;
           claim: inspected.value.fencingToken === 1 && inspected.value.taskRevision === 3,
           manual: inspected.value.lifecycle === "queued" && reported.value.lifecycle === "turn_succeeded" && completed.value.lifecycle === "completed",
           dispatcherExport: typeof m.createManualDispatcher === "function",
+          workspaceExport: m.WORKSPACE_CONTRACT_ID === "ato.workspace/v1" &&
+            typeof m.createWorkspaceApplicationService === "function" &&
+            typeof m.parseWorkspaceBackendRequest === "function" &&
+            typeof m.parseWorkspaceBackendResult === "function",
           schema: m.currentSchemaVersion(),
           backup: verified.generationId === backup.generationId,
         }));
@@ -823,6 +855,7 @@ void productRuntime;
       imported.claim === true &&
       imported.manual === true &&
       imported.dispatcherExport === true &&
+      imported.workspaceExport === true &&
       imported.schema === 1 &&
       imported.backup === true,
     "package operational export surface drifted",

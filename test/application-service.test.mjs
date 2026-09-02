@@ -6,6 +6,7 @@ import test from "node:test";
 import {
   AUTHORIZATION_ACTIONS,
   CLAIM_AUTHORIZATION_ACTIONS,
+  DISPATCHER_AUTHORIZATION_ACTIONS,
   MANUAL_AUTHORIZATION_ACTIONS,
   createApplicationService,
   currentSchemaVersion,
@@ -403,22 +404,34 @@ test("fresh bootstrap advances through each confirmed capability vocabulary exac
     });
     assert.equal(dispatcherUpgraded.ok, true);
     assert.equal(dispatcherUpgraded.value.epochRevision, 3);
-    assert.equal(dispatcherUpgraded.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
+    assert.equal(dispatcherUpgraded.value.capabilityCount, DISPATCHER_AUTHORIZATION_ACTIONS.length);
     state = readApplicationStateForOwner(store);
     assert.equal(state.epochs.at(-1)?.vocabularyVersion, 4);
     assert.equal(state.grants.some(
       (grant) => grant.actorId === "owner" && grant.action === "dispatch.run" && grant.revokedAt === null,
     ), true);
-    assert.equal(service.upgrade({
+    const workspaceUpgraded = service.upgrade({
       kind: "authorization.capability.upgrade",
       expiresAt: "2026-09-25T12:00:00.000Z",
+    });
+    assert.equal(workspaceUpgraded.ok, true);
+    assert.equal(workspaceUpgraded.value.epochRevision, 4);
+    assert.equal(workspaceUpgraded.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
+    state = readApplicationStateForOwner(store);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 5);
+    assert.equal(state.grants.some(
+      (grant) => grant.actorId === "owner" && grant.action === "workspace.reserve" && grant.revokedAt === null,
+    ), true);
+    assert.equal(service.upgrade({
+      kind: "authorization.capability.upgrade",
+      expiresAt: "2026-09-26T12:00:00.000Z",
     }).error.code, "CAPABILITY_UPGRADE_NOT_ELIGIBLE");
 
     await store.close();
     store = await openPersistence(fixture.layout, { applicationVersion: "fresh-upgrades-restart" });
     state = readApplicationStateForOwner(store);
     assert.equal(state.identity.actorId, "owner");
-    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 4);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 5);
     assert.equal(state.grants.some(
       (grant) => grant.actorId === "owner" && grant.action === "execution.claim" && grant.revokedAt === null,
     ), true);

@@ -2,6 +2,7 @@ import {
   AUTHORIZATION_ACTIONS,
   BASE_AUTHORIZATION_ACTIONS,
   CLAIM_AUTHORIZATION_ACTIONS,
+  DISPATCHER_AUTHORIZATION_ACTIONS,
   MANUAL_AUTHORIZATION_ACTIONS,
   actionsForVocabulary,
   canIssueGrant,
@@ -53,6 +54,7 @@ export function sameLocalIdentity(state: ApplicationState, identity: OperationId
 export const BASE_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(BASE_AUTHORIZATION_ACTIONS));
 export const CLAIM_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(CLAIM_AUTHORIZATION_ACTIONS));
 export const MANUAL_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(MANUAL_AUTHORIZATION_ACTIONS));
+export const DISPATCHER_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(DISPATCHER_AUTHORIZATION_ACTIONS));
 export const CURRENT_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
 
 export interface RenewalAssessment {
@@ -98,8 +100,8 @@ export function assessRenewal(
 
 export interface UpgradeAssessment {
   readonly nextEpochRevision: number;
-  readonly currentVocabularyVersion: 1 | 2 | 3;
-  readonly targetVocabularyVersion: 2 | 3 | 4;
+  readonly currentVocabularyVersion: 1 | 2 | 3 | 4;
+  readonly targetVocabularyVersion: 2 | 3 | 4 | 5;
 }
 
 export function assessCapabilityUpgrade(
@@ -114,7 +116,7 @@ export function assessCapabilityUpgrade(
   }
   const latestEpoch = state.epochs.at(-1);
   const currentVocabulary = latestEpoch?.vocabularyVersion ?? bootstrap.vocabularyVersion;
-  if (currentVocabulary !== 1 && currentVocabulary !== 2 && currentVocabulary !== 3) {
+  if (currentVocabulary !== 1 && currentVocabulary !== 2 && currentVocabulary !== 3 && currentVocabulary !== 4) {
     return "not_eligible";
   }
   const originCreatedAt = latestEpoch?.createdAt ?? bootstrap.createdAt;
@@ -135,7 +137,13 @@ export function assessCapabilityUpgrade(
   return Object.freeze({
     nextEpochRevision: (latestEpoch?.epochRevision ?? 0) + 1,
     currentVocabularyVersion: currentVocabulary,
-    targetVocabularyVersion: currentVocabulary === 1 ? 2 as const : currentVocabulary === 2 ? 3 as const : 4 as const,
+    targetVocabularyVersion: currentVocabulary === 1
+      ? 2 as const
+      : currentVocabulary === 2
+        ? 3 as const
+        : currentVocabulary === 3
+          ? 4 as const
+          : 5 as const,
   });
 }
 

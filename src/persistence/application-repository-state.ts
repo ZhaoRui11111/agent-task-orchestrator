@@ -4,6 +4,13 @@ import {
   isHighRiskAction,
 } from "../authorization.ts";
 import type { AuthorizationAction, AuthorizationGrant, AuthorizationScope } from "../authorization.ts";
+import {
+  workspaceFailureSemanticsAreValid,
+  workspaceGenerationStatusAfterFailure,
+  workspaceGenerationStatusAfterReceipt,
+  workspaceRecoveryCausationProof,
+  workspaceReceiptSemanticsAreValid,
+} from "../workspace-port.ts";
 import { runReadSnapshot } from "./database.ts";
 import type { SqliteDatabase } from "./database.ts";
 import { persistenceFailure } from "./errors.ts";
@@ -15,6 +22,7 @@ import type {
   AuthorizationDecisionRecord,
   DispatcherMemberOutcome,
   ApplicationState,
+  WorkspaceFinalizationRecord,
 } from "./application-repository-model.ts";
 import {
   readProjects,
@@ -52,6 +60,13 @@ import {
   readDispatcherMemberDenialDecisions,
   readDispatcherMemberDenialAudit,
   readDispatcherRunSummaries,
+  readWorkspaceGenerations,
+  readWorkspaceAuthorizationDecisions,
+  readWorkspaceIntents,
+  readWorkspaceObservations,
+  readWorkspaceReceipts,
+  readWorkspaceFinalizations,
+  readWorkspaceEvents,
   readGrantRelations,
 } from "./application-repository-readers.ts";
 import { readDomainSnapshotUntransactional } from "./repository.ts";
@@ -196,6 +211,412 @@ function grantRevisionWasUsableAt(
     (grant.revision === grantRevision + 1 && grant.revokedAt !== null && grant.revokedAt >= at);
 }
 
+function workspaceGenerationKey(workspaceId: string, generation: number): string {
+  return `${workspaceId}\u0000${generation}`;
+}
+
+function recoveredWorkspaceOperation(
+  intentByOperation: ReadonlyMap<string, ApplicationState["workspaceIntents"][number]>,
+  intent: ApplicationState["workspaceIntents"][number],
+  decisions: ReadonlyArray<ApplicationState["workspaceAuthorizationDecisions"][number]>,
+): ApplicationState["workspaceIntents"][number]["operationKind"] | null {
+  if (intent.operationKind !== "recover") return null;
+  const prepareDecision = decisions.find((decision) => decision.bindingRevision === 1 && decision.phase === "prepare");
+  const actDecision = decisions.find((decision) => decision.bindingRevision === 2 && decision.phase === "act");
+  if (
+    prepareDecision?.generationRevision === null || prepareDecision?.generationRevision === undefined ||
+    (actDecision !== undefined && actDecision.generationRevision !== prepareDecision.generationRevision)
+  ) return null;
+  return workspaceRecoveryCausationProof(
+    Object.freeze({
+      operationId: intent.operationId,
+      workspaceId: intent.workspaceId,
+      generation: intent.generation,
+      recoveryRevision: prepareDecision.generationRevision,
+      causationId: intent.causationId,
+      createdAt: intent.createdAt,
+    }),
+    (operationId) => intentByOperation.get(operationId),
+  )?.rootOperation ?? null;
+}
+
+function validateWorkspaceState(state: ApplicationState): void {
+  const generationByKey = new Map(
+    state.workspaceGenerations.map((record) => [workspaceGenerationKey(record.workspaceId, record.generation), record]),
+  );
+  const intentById = new Map(state.workspaceIntents.map((record) => [record.intentId, record]));
+  const intentByOperation = new Map(state.workspaceIntents.map((record) => [record.operationId, record]));
+  const decisionById = new Map(state.workspaceAuthorizationDecisions.map((record) => [record.decisionId, record]));
+  const observationById = new Map(state.workspaceObservations.map((record) => [record.observationId, record]));
+  const receiptById = new Map(state.workspaceReceipts.map((record) => [record.verifiedReceiptId, record]));
+  const finalizationByIntent = new Map(state.workspaceFinalizations.map((record) => [record.intentId, record]));
+  const currentOwners = new Set<string>();
+
+  for (const generation of state.workspaceGenerations) {
+    const project = state.projects.find((candidate) => candidate.projectId === generation.projectId);
+    const task = state.domain.tasks.find((candidate) => candidate.id === generation.taskId);
+    const run = state.dispatcherRuns.find((candidate) => candidate.runId === generation.runId);
+    const execution = state.executions.find((candidate) => candidate.executionId === generation.executionId);
+    const member = state.dispatcherMembers.find((candidate) => candidate.memberId === generation.memberId);
+    const predecessor = generation.predecessorGeneration === null
+      ? null
+      : generationByKey.get(workspaceGenerationKey(generation.workspaceId, generation.predecessorGeneration));
+    const ownerKey = `${generation.projectId}\u0000${generation.taskId}\u0000${generation.runId}\u0000${generation.executionId}`;
+    if (generation.status !== "cleaned") {
+      if (currentOwners.has(ownerKey)) {
+        throw persistenceFailure("CORRUPT_ROW", "Workspace generation current ownership is not unique");
+      }
+      currentOwners.add(ownerKey);
+    }
+    if (
+      project === undefined || project.rootKey !== generation.projectRootKey ||
+      project.resourceRevision < generation.projectResourceRevision ||
+      project.configRevision < generation.projectConfigRevision ||
+      task === undefined || task.projectId !== generation.projectId || task.revision < generation.taskRevision ||
+      run === undefined || run.runRevision < generation.runRevision ||
+      member === undefined || member.runId !== generation.runId || member.taskId !== generation.taskId ||
+      member.executionId !== generation.executionId || member.outcome !== "claimed" ||
+      member.membershipRevision !== generation.membershipRevision || member.revision < generation.memberRevision ||
+      execution === undefined || execution.taskId !== generation.taskId ||
+      execution.revision < generation.executionRevision ||
+      execution.attemptNumber !== generation.attemptNumber || execution.fencingToken !== generation.fencingToken ||
+      generation.updatedAt < generation.createdAt ||
+      (generation.generation === 1 && predecessor !== null) ||
+      (generation.generation > 1 && (
+        predecessor === undefined || predecessor === null || predecessor.status !== "cleaned" ||
+        predecessor.revision !== generation.predecessorRevision
+      ))
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Workspace generation ownership tuple or predecessor is inconsistent");
+    }
+  }
+
+  for (const decision of state.workspaceAuthorizationDecisions) {
+    const generation = decision.workspaceId === null || decision.generation === null
+      ? null
+      : generationByKey.get(workspaceGenerationKey(decision.workspaceId, decision.generation));
+    const project = state.projects.find((candidate) => candidate.projectId === decision.projectId);
+    const execution = state.executions.find((candidate) => candidate.executionId === decision.executionId);
+    const grant = decision.grantId === null
+      ? null
+      : state.grants.find((candidate) => candidate.grantId === decision.grantId) ?? null;
+    const tupleAbsent = decision.workspaceId === null && decision.generation === null && decision.generationRevision === null;
+    const tuplePresent = decision.workspaceId !== null && decision.generation !== null && decision.generationRevision !== null;
+    const grantIsUsable = grant !== null && grantRevisionWasUsableAt(
+      grant,
+      decision.actorId,
+      decision.action,
+      decision.createdAt,
+      decision.grantRevision,
+    ) && (grant.scope.kind === "runtime" || (
+      grant.scope.projectId === decision.projectId &&
+      grant.scope.resourceRevision === decision.projectResourceRevision &&
+      grant.scope.configRevision === decision.projectConfigRevision
+    ));
+    if (
+      (!tupleAbsent && !tuplePresent) ||
+      project === undefined || project.resourceRevision < decision.projectResourceRevision ||
+      project.configRevision < decision.projectConfigRevision ||
+      execution === undefined || execution.revision < decision.executionRevision ||
+      execution.fencingToken !== decision.fencingToken ||
+      (generation !== null && generation !== undefined && (
+        generation.projectId !== decision.projectId || generation.executionId !== decision.executionId ||
+        generation.revision < (decision.generationRevision ?? 0)
+      )) ||
+      (decision.result === "allow" && (!tuplePresent || decision.reason !== "allowed" || !grantIsUsable)) ||
+      (decision.result === "deny" && decision.reason === "allowed")
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Workspace authorization decision is inconsistent");
+    }
+  }
+
+  for (const intent of state.workspaceIntents) {
+    const generation = generationByKey.get(workspaceGenerationKey(intent.workspaceId, intent.generation));
+    const decisions = state.workspaceAuthorizationDecisions
+      .filter((record) => record.operationId === intent.operationId)
+      .sort((left, right) => left.bindingRevision - right.bindingRevision);
+    const currentDecision = decisionById.get(intent.currentAuthorizationDecisionId);
+    const observations = state.workspaceObservations
+      .filter((record) => record.intentId === intent.intentId)
+      .sort((left, right) => left.observationNumber - right.observationNumber);
+    const receipts = state.workspaceReceipts.filter((record) => record.intentId === intent.intentId);
+    const events = state.workspaceEvents.filter((record) => record.intentId === intent.intentId);
+    const verifiedEvents = events.filter((record) => record.eventKind === "workspace.operation.verified");
+    const terminalEvents = events.filter((record) =>
+      record.eventKind === "workspace.operation.finalized" || record.eventKind === "workspace.operation.reconciled"
+    );
+    const finalization = finalizationByIntent.get(intent.intentId);
+    const phases = decisions.map((record) => record.phase);
+    const exactPhaseSequence = (expected: readonly ("prepare" | "act" | "finalize")[]): boolean =>
+      phases.length === expected.length && phases.every((phase, index) => phase === expected[index]);
+    const phaseSequenceIsValid = intent.state === "pending"
+      ? exactPhaseSequence(["prepare"])
+      : intent.state === "executing" || intent.state === "observed" || intent.state === "verified"
+        ? exactPhaseSequence(["prepare", "act"])
+        : intent.state === "finalized"
+          ? exactPhaseSequence(["prepare", "act", "finalize"])
+          : intent.state === "failed"
+            ? exactPhaseSequence(["prepare"]) || exactPhaseSequence(["prepare", "act"])
+            : exactPhaseSequence(["prepare", "act"]) || exactPhaseSequence(["prepare", "act", "finalize"]);
+    const prepareDecision = decisions[0];
+    const actDecision = decisions[1];
+    const finalizeDecision = decisions[2];
+    const authorizationPatternIsValid = prepareDecision?.result === "allow" && (
+      intent.state === "pending"
+        ? decisions.length === 1
+        : intent.state === "executing" || intent.state === "observed" || intent.state === "verified"
+          ? decisions.length === 2 && actDecision?.result === "allow"
+          : intent.state === "finalized"
+            ? decisions.length === 3 && actDecision?.result === "allow" && finalizeDecision?.result === "allow"
+            : intent.state === "failed"
+              ? decisions.length === 1 || (decisions.length === 2 && (
+                  actDecision?.result === "allow" || actDecision?.result === "deny"
+                ))
+              : (decisions.length === 2 && actDecision?.result === "allow") || (
+                  decisions.length === 3 && actDecision?.result === "allow" && finalizeDecision?.result === "deny"
+                )
+    );
+    const recoveredOperation = recoveredWorkspaceOperation(intentByOperation, intent, decisions);
+    const causationIsValid = intent.operationKind === "recover"
+      ? recoveredOperation !== null
+      : intent.causationId === null;
+    const needsVerifiedReceipt = intent.state === "verified" || intent.state === "finalized";
+    const forbidsVerifiedReceipt = intent.state === "pending" || intent.state === "executing" ||
+      intent.state === "observed" || intent.state === "failed";
+    const expectedTerminalEventKind = intent.operationKind === "recover"
+      ? "workspace.operation.reconciled"
+      : "workspace.operation.finalized";
+    const terminalEvent = terminalEvents[0];
+    const failureTupleIsEmpty = intent.lastFailureCategory === null && intent.lastFailureCode === null &&
+      intent.lastFailureRetryable === null && intent.lastFailureAmbiguous === null;
+    const failureTupleIsComplete = intent.lastFailureCategory !== null && intent.lastFailureCode !== null &&
+      intent.lastFailureRetryable !== null && intent.lastFailureAmbiguous !== null;
+    const failureSemanticsAreValid = failureTupleIsComplete && workspaceFailureSemanticsAreValid(
+      intent.lastFailureCategory,
+      intent.lastFailureRetryable,
+      intent.lastFailureAmbiguous,
+    );
+    const unsuccessfulTerminal = intent.state === "failed" || intent.state === "ambiguous";
+    const terminalEvidenceCode = failureTupleIsComplete
+      ? intent.lastFailureCode
+      : observations.at(-1)?.code ?? null;
+    const terminalEvidenceEvents = finalization === undefined
+      ? []
+      : events.filter((record) =>
+          (record.eventKind === "workspace.operation.observed" || record.eventKind === "workspace.operation.denied") &&
+          record.reasonCode === finalization.code && record.workspaceId === intent.workspaceId &&
+          record.generation === intent.generation && record.generationRevision === finalization.resultingGenerationRevision
+        );
+    const expectedUnsuccessfulEventOutcome = currentDecision?.result === "deny"
+      ? "denied"
+      : finalization?.outcome;
+    if (
+      generation === undefined || intent.action !== `workspace.${intent.operationKind}` ||
+      generation.adapterId !== intent.adapterId || generation.adapterVersion !== intent.adapterVersion ||
+      intent.requestId !== decisions[0]?.requestId || intent.actorId !== decisions[0]?.actorId ||
+      decisions.length === 0 || decisions[0]?.bindingRevision !== 1 || decisions[0]?.phase !== "prepare" ||
+      decisions.some((record, index) => record.bindingRevision !== index + 1) ||
+      decisions.some((record) => record.actorId !== intent.actorId || record.action !== intent.action) ||
+      decisions.some((record) =>
+        record.workspaceId !== intent.workspaceId || record.generation !== intent.generation ||
+        record.generationRevision === null
+      ) ||
+      phases.some((phase, index) => index > 0 && phase === "prepare") ||
+      !phaseSequenceIsValid || !authorizationPatternIsValid || !causationIsValid ||
+      currentDecision === undefined || currentDecision.operationId !== intent.operationId ||
+      currentDecision.bindingRevision !== intent.authorizationBindingRevision ||
+      decisions.at(-1)?.decisionId !== currentDecision.decisionId ||
+      (currentDecision.result !== "allow" && !(
+        currentDecision.result === "deny" && finalization !== undefined &&
+        finalization.authorizationDecisionId === currentDecision.decisionId &&
+        (finalization.outcome === "ambiguous" || finalization.outcome === "failed")
+      )) ||
+      intent.expectedGenerationRevision > generation.revision ||
+      observations.length !== intent.lastObservationNumber ||
+      observations.some((record, index) => record.observationNumber !== index + 1) ||
+      (!failureTupleIsEmpty && !failureSemanticsAreValid) ||
+      (intent.state === "failed" && (!failureSemanticsAreValid || intent.lastFailureAmbiguous !== false)) ||
+      (intent.state === "ambiguous" && failureTupleIsComplete && (
+        !failureSemanticsAreValid || intent.lastFailureAmbiguous !== true
+      )) ||
+      (!unsuccessfulTerminal && !failureTupleIsEmpty) ||
+      (intent.state === "ambiguous" && failureTupleIsEmpty && observations.at(-1)?.outcome !== "ambiguous") ||
+      (needsVerifiedReceipt && receipts.length !== 1) ||
+      (forbidsVerifiedReceipt && receipts.length !== 0) ||
+      (needsVerifiedReceipt && verifiedEvents.length !== 1) ||
+      (forbidsVerifiedReceipt && verifiedEvents.length !== 0) ||
+      (intent.operationKind === "cleanup") !== (intent.confirmationId !== null) ||
+      (intent.state === "finalized") !== (finalization?.outcome === "succeeded" || finalization?.outcome === "refused") ||
+      (intent.state === "ambiguous") !== (finalization?.outcome === "ambiguous") ||
+      (intent.state === "failed") !== (finalization?.outcome === "failed") ||
+      (intent.state === "finalized" && (
+        terminalEvents.length !== 1 || terminalEvent?.eventKind !== expectedTerminalEventKind ||
+        terminalEvent.outcome !== (finalization?.outcome === "refused" ? "refused" : "accepted") ||
+        terminalEvent.reasonCode !== finalization?.code ||
+        terminalEvent.workspaceId !== intent.workspaceId || terminalEvent.generation !== intent.generation ||
+        terminalEvent.generationRevision !== finalization?.resultingGenerationRevision
+      )) ||
+      (unsuccessfulTerminal && (
+        finalization === undefined || finalization.code !== terminalEvidenceCode ||
+        terminalEvidenceEvents.length !== 1 ||
+        terminalEvidenceEvents[0]?.outcome !== expectedUnsuccessfulEventOutcome ||
+        terminalEvidenceEvents[0]?.observationNumber !== (
+          intent.lastObservationNumber === 0 ? null : intent.lastObservationNumber
+        )
+      )) ||
+      (intent.state !== "finalized" && terminalEvents.length !== 0) ||
+      (["pending", "executing", "observed", "verified"] as readonly string[]).includes(intent.state) && finalization !== undefined
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Workspace intent lineage is incomplete or inconsistent");
+    }
+  }
+
+  for (const observation of state.workspaceObservations) {
+    const intent = intentById.get(observation.intentId);
+    const decision = decisionById.get(observation.authorizationDecisionId);
+    if (
+      intent === undefined || decision === undefined || decision.operationId !== intent.operationId ||
+      decision.phase !== "act" || decision.bindingRevision !== 2 || decision.result !== "allow" ||
+      !workspaceReceiptSemanticsAreValid(
+        intent.operationKind,
+        observation.code,
+        observation.outcome,
+        observation.externalState,
+      ) ||
+      observation.modifiedCount > observation.trackedCount
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Workspace observation lineage is incomplete or inconsistent");
+    }
+  }
+
+  for (const receipt of state.workspaceReceipts) {
+    const intent = intentById.get(receipt.intentId);
+    const observation = observationById.get(receipt.observationId);
+    const generation = generationByKey.get(workspaceGenerationKey(receipt.workspaceId, receipt.generation));
+    if (
+      intent === undefined || observation === undefined || generation === undefined ||
+      observation.intentId !== intent.intentId || observation.observationNumber !== receipt.observationNumber ||
+      observation.adapterReceiptId !== receipt.adapterReceiptId || observation.receiptSha256 !== receipt.receiptSha256 ||
+      observation.externalState !== receipt.externalState || observation.outcome !== receipt.outcome ||
+      observation.code !== receipt.code || intent.workspaceId !== receipt.workspaceId ||
+      intent.generation !== receipt.generation || generation.revision < receipt.generationRevision ||
+      !workspaceReceiptSemanticsAreValid(
+        intent.operationKind,
+        receipt.code,
+        receipt.outcome,
+        receipt.externalState,
+      )
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Workspace verified receipt is inconsistent");
+    }
+  }
+
+  for (const finalization of state.workspaceFinalizations) {
+    const intent = intentById.get(finalization.intentId);
+    const decision = decisionById.get(finalization.authorizationDecisionId);
+    const receipt = finalization.verifiedReceiptId === null
+      ? null
+      : receiptById.get(finalization.verifiedReceiptId) ?? null;
+    const generation = intent === undefined
+      ? undefined : generationByKey.get(workspaceGenerationKey(intent.workspaceId, intent.generation));
+    const observations = intent === undefined
+      ? []
+      : state.workspaceObservations
+          .filter((record) => record.intentId === intent.intentId)
+          .sort((left, right) => left.observationNumber - right.observationNumber);
+    const lastObservation = observations.at(-1);
+    const recoveredOperation = intent === undefined
+      ? null
+      : recoveredWorkspaceOperation(
+          intentByOperation,
+          intent,
+          state.workspaceAuthorizationDecisions
+            .filter((record) => record.operationId === intent.operationId)
+            .sort((left, right) => left.bindingRevision - right.bindingRevision),
+        );
+    let expectedResultingStatus: WorkspaceFinalizationRecord["resultingGenerationStatus"] | null = null;
+    let expectedFinalizationCode: string | null = null;
+    if (intent !== undefined) {
+      if (receipt !== null) {
+        expectedResultingStatus = workspaceGenerationStatusAfterReceipt(
+          intent.operationKind,
+          receipt.code,
+          receipt.outcome,
+          receipt.externalState,
+          finalization.resultingGenerationStatus,
+          intent.operationKind === "recover" ? recoveredOperation : null,
+        );
+        expectedFinalizationCode = receipt.code;
+      } else if (
+        intent.lastFailureCategory !== null && intent.lastFailureCode !== null &&
+        intent.lastFailureRetryable !== null && intent.lastFailureAmbiguous !== null
+      ) {
+        expectedResultingStatus = workspaceGenerationStatusAfterFailure(
+          intent.operationKind,
+          finalization.resultingGenerationStatus,
+          intent.lastFailureCategory,
+          intent.lastFailureRetryable,
+          intent.lastFailureAmbiguous,
+        );
+        expectedFinalizationCode = intent.lastFailureCode;
+      } else if (lastObservation?.outcome === "ambiguous") {
+        expectedResultingStatus = workspaceGenerationStatusAfterReceipt(
+          intent.operationKind,
+          lastObservation.code,
+          lastObservation.outcome,
+          lastObservation.externalState,
+          finalization.resultingGenerationStatus,
+          intent.operationKind === "recover" ? recoveredOperation : null,
+        );
+        expectedFinalizationCode = lastObservation.code;
+      }
+    }
+    if (
+      intent === undefined || decision === undefined || generation === undefined ||
+      decision.operationId !== intent.operationId ||
+      finalization.authorizationDecisionId !== intent.currentAuthorizationDecisionId ||
+      ((finalization.outcome === "succeeded" || finalization.outcome === "refused") && decision.result !== "allow") ||
+      ((finalization.outcome === "succeeded" || finalization.outcome === "refused") &&
+        (decision.phase !== "finalize" || decision.bindingRevision !== intent.authorizationBindingRevision)) ||
+      ((finalization.outcome === "ambiguous" || finalization.outcome === "failed") &&
+        decision.result !== "allow" && decision.result !== "deny") ||
+      finalization.resultingGenerationRevision > generation.revision ||
+      finalization.resultingGenerationRevision !== intent.expectedGenerationRevision ||
+      finalization.resultingGenerationStatus !== intent.expectedGenerationStatus ||
+      (finalization.resultingGenerationRevision === generation.revision &&
+        finalization.resultingGenerationStatus !== generation.status) ||
+      expectedResultingStatus === null || expectedResultingStatus !== finalization.resultingGenerationStatus ||
+      expectedFinalizationCode === null || expectedFinalizationCode !== finalization.code ||
+      ((finalization.outcome === "succeeded" || finalization.outcome === "refused") !== (receipt !== null)) ||
+      (receipt !== null && (receipt.intentId !== intent.intentId || receipt.outcome !== finalization.outcome))
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Workspace finalization is inconsistent");
+    }
+  }
+
+  for (const event of state.workspaceEvents) {
+    const intent = event.intentId === null ? null : intentById.get(event.intentId);
+    const generation = event.workspaceId === null || event.generation === null
+      ? null : generationByKey.get(workspaceGenerationKey(event.workspaceId, event.generation));
+    if (
+      (event.intentId === null && event.eventKind !== "workspace.operation.denied") ||
+      (intent !== null && intent !== undefined && (
+        intent.operationId !== event.operationId || intent.actorId !== event.actorId ||
+        intent.correlationId !== event.correlationId || intent.causationId !== event.causationId
+      )) ||
+      (event.intentId !== null && intent === undefined) ||
+      (generation !== null && generation !== undefined && generation.revision < (event.generationRevision ?? 0)) ||
+      (event.workspaceId !== null && generation === undefined)
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Workspace event evidence is inconsistent");
+    }
+  }
+
+  if (state.workspaceGenerations.some((generation) => !intentByOperation.has(generation.creatorOperationId))) {
+    throw persistenceFailure("CORRUPT_ROW", "Workspace generation creator intent is absent");
+  }
+}
+
 
 export function readApplicationStateUntransactional(database: SqliteDatabase): ApplicationState {
   const domain = readDomainSnapshotUntransactional(database);
@@ -235,6 +656,13 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
   const dispatcherMemberDenialDecisions = readDispatcherMemberDenialDecisions(database);
   const dispatcherMemberDenialAudit = readDispatcherMemberDenialAudit(database);
   const dispatcherRunSummaries = readDispatcherRunSummaries(database);
+  const workspaceGenerations = readWorkspaceGenerations(database);
+  const workspaceAuthorizationDecisions = readWorkspaceAuthorizationDecisions(database);
+  const workspaceIntents = readWorkspaceIntents(database);
+  const workspaceObservations = readWorkspaceObservations(database);
+  const workspaceReceipts = readWorkspaceReceipts(database);
+  const workspaceFinalizations = readWorkspaceFinalizations(database);
+  const workspaceEvents = readWorkspaceEvents(database);
   const grantRelations = readGrantRelations(database);
   const domainProjectIds = new Set(domain.projects.map((project) => project.id));
   if (projects.some((project) => !domainProjectIds.has(project.projectId) || project.updatedAt < project.createdAt)) {
@@ -1260,8 +1688,11 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     dispatcherMemberships, dispatcherMembers,
     dispatcherMemberDenialRequests, dispatcherMemberDenialDecisions, dispatcherMemberDenialAudit,
     dispatcherRunSummaries,
+    workspaceGenerations, workspaceAuthorizationDecisions, workspaceIntents,
+    workspaceObservations, workspaceReceipts, workspaceFinalizations, workspaceEvents,
     lifecycle: Object.freeze([]) as readonly ApplicationLifecycleAuthorization[],
   });
+  validateWorkspaceState(stateWithoutLifecycle);
   for (const authorization of lifecycle) {
     const request = requestById.get(authorization.requestId);
     const decision = decisions.find((candidate) => candidate.decisionId === authorization.decisionId);

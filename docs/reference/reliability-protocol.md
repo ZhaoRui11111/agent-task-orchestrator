@@ -16,10 +16,13 @@ durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
 immutable finite membership, one terminal outcome per member, and
 completeness-gated summaries. One typed product facade exposes only these
 existing owners to the sole current `ato.api/v1`, deriving non-public operation lineage
-from current durable state. It has no SchedulerBackend or scheduled trigger,
-workspace/publication, Codex/Git effect, ProjectPolicy, CompletionBackend, or
-completion gate; those sections remain requirements for their implementing
-plans.
+from current durable state. The fresh-only workspace foundation additionally
+implements the pure `ato.workspace/v1` port plus durable generation,
+authorization, intent, observation, verification, finalization, response-loss,
+and restart handling against an unexported test Fake. It has no
+SchedulerBackend or scheduled trigger, production filesystem/Git workspace or
+publication effect, ProjectPolicy, CompletionBackend, or completion gate; those
+sections remain requirements for their implementing plans.
 
 Task-state meaning comes from the [domain contract](domain-contract.md), record
 layout from the [persistence contract](persistence-contract.md), permission from
@@ -92,6 +95,17 @@ execution/attempt/fence/observation. The stored tuple remains authoritative;
 the semantic key and idempotency key cannot hide drift. The implementation
 stores no workspace receipt, working directory, environment, prompt, source
 content, path, or credential value.
+
+Current workspace intents bind the exact reserve/create/inspect/recover/cleanup
+action, Project resource/config/root identity, Task revision, dispatcher run/
+member/membership revisions, execution revision/attempt/fence, system workspace
+ID/generation/revision, trusted workspace-root identity, creator operation,
+base reference, nullable cleaned predecessor, adapter/contract versions,
+correlation/causation, and expected generation status. A stable workspace ID
+does not weaken this tuple: reuse requires the same positive generation and
+revision, while replacement requires the exact cleaned predecessor and
+generation `n+1`. The backend receives this frozen subject, not an inferred path
+or a prior authorization decision.
 
 ## Claim, lease, and fencing
 
@@ -166,9 +180,12 @@ current state is reconciled explicitly.
 
 ## Intent, receipt, verification, and finalization
 
-The local Manual execution loop implements this section. Other
-adapters, publication, workspace, completion gates, and dispatcher fan-out do
-not inherit that evidence.
+The local Manual execution loop implements the generic state set and ordered
+protocol in this section. The workspace foundation uses the same durable
+prepare/effect-possible/observe/verify/finalize ownership rule through its
+specialized generation protocol below; it does not reuse Manual rows or invent
+Manual-only `retry_wait`. Publication, completion gates, and dispatcher fan-out
+do not inherit either evidence family.
 
 ### Intent state set
 
@@ -218,6 +235,89 @@ An adapter return value is evidence to inspect, not automatic proof. A receipt
 proves only what its verification verdict and bound identity say. An external
 effect is never performed before its durable intent, and a terminal domain
 result is never accepted before verified finalization.
+
+## Durable workspace generation protocol
+
+The current workspace coordinator owns a distinct closed intent set:
+`pending`, `executing`, `observed`, `verified`, `finalized`, `ambiguous`, and
+`failed`. Its generation state set is `allocated`, `reserved`, `creating`,
+`ready`, `cleaning`, `recovery_required`, and `cleaned`. Each reserve operation
+allocates its system workspace ID/generation and creator intent in the same
+prepare transaction; every later operation addresses that exact generation.
+The generation preserves creation-time lower bounds for the Project
+resource/config, Task, run, member, and execution revisions. A later operation
+uses exact current revisions that are no earlier than those bounds; its stable
+owner identities, membership revision, attempt, fence, workspace ID, and
+generation still match exactly. This permits ordinary owner revision advance
+without adopting a different owner or stranding the generation.
+
+The ordered workspace protocol is:
+
+1. **Prepare:** parse the complete command before trusted ingress, resolve the
+   current frozen owner tuple, evaluate the exact `workspace.*` grant, obtain a
+   cleanup confirmation when applicable, allocate reserve identity when
+   applicable, and atomically persist the prepare decision, intent, generation,
+   and prepared event.
+2. **Mark possible effect:** in a fresh short transaction, revalidate current
+   actor/root, Project/run/member/execution/fence/generation state and grant;
+   bind the `act` decision and CAS the intent to `executing`. Create moves the
+   generation to `creating`, cleanup to `cleaning`, and the other operations
+   retain their current generation status.
+3. **Call and observe:** invoke exactly one backend method outside every writer
+   transaction. Parse the exact hostile-input-safe result and semantically
+   compare contract/operation/idempotency/adapter/workspace/generation/root/
+   state/code/inventory relationships before persisting the next positive
+   observation number and receipt digest.
+4. **Verify:** for a non-ambiguous success or refusal, persist at most one
+   verified receipt bound to the exact observation and generation revision.
+   Ambiguous or malformed evidence never becomes verified success.
+5. **Finalize:** revalidate current authority, owner revisions, generation
+   revision, and fence in a final short transaction; bind `finalize`, write one
+   finalization/event, and transition reserve to `reserved` or `allocated`,
+   create to `ready` or `reserved`, cleanup to `cleaned` or `ready`, recover to
+   the independently proven state, and inspect without changing generation
+   state.
+
+Recover prepare names the current `recovery_required` generation revision `R`.
+Its prepare and existing Act decisions bind that same `R`, and every ambiguous
+node in its acyclic same-generation causal chain must also record
+`recovery_required` at `R` before the chain terminates in `reserve`, `create`,
+or `cleanup`. A nested ambiguous recover may extend the chain only at the same
+`R`; a root already resolved at an older revision cannot authorize a later
+recovery or same-generation reserve proof.
+
+Every transaction performs terminal combined-state readback before commit.
+Trusted identity/time/ID/confirmation providers, backend calls, receipt parsing,
+and external validation run outside writer transactions. An exception at any
+write seam rolls back that entire seam, leaving restart to resume from the last
+committed boundary.
+
+Workspace restart/recovery is exact:
+
+| Durable point | Current outcome |
+| --- | --- |
+| No intent | No backend call is inferred. |
+| `pending` | Reauthorize, CAS to `executing`, and call once. |
+| `executing` reserve/create/cleanup | The effect may have happened; record explicit ambiguity and require causal recovery rather than replaying the mutation. |
+| `executing` inspect/recover | Resume the read/reconciliation call with the same exact key; these operations cannot create the primary workspace effect. |
+| `observed` | Verify the already persisted receipt without a second backend call. |
+| `verified` | Re-run only current-authorized finalization CAS. |
+| `finalized` | Revalidate trusted identity/root and return the bounded durable result. |
+| Lost backend response | Independently known Fake state may be observed; otherwise the generation remains `recovery_required`/ambiguous. |
+
+A verified reserve refusal or recover-absent proof may return the same generation
+to `allocated` for an exact retry. A partial or conflicting observation cannot.
+The same narrow reuse is available after a terminal receipt-free reserve
+failure only when the failed intent has zero observations, explicitly records a
+non-ambiguous no-effect result, has one failed finalization with no verified
+receipt, leaves the generation `allocated` at the recorded revision, and no
+unfinished intent exists for that generation. The retry still creates fresh
+operation/request/decision/event identities and revalidates the complete current
+owner, root, generation, and authorization tuple before any backend call.
+Only `cleaned` may be the predecessor of generation `n+1`; no retry, restart,
+path discovery, or branch similarity allocates a duplicate or adopts external
+state. These guarantees cover the durable coordinator and test Fake only, not a
+production filesystem/Git effect.
 
 ## Private staging and publication
 

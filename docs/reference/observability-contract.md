@@ -7,7 +7,8 @@ operational events, diagnostic access, and the application of redaction to
 operational events. No logger, diagnostic command, event exporter, or telemetry
 pipeline exists today. Current schema-version-1 application, Manual-loop, dispatcher request/
 decision/audit, reconciliation, member, no-execution member-denial, and summary
-rows plus closed current `ato.api/v1` responses implement only a
+rows, plus the dedicated workspace transition-event relation and closed current
+`ato.api/v1` responses, implement only a
 bounded durable/display evidence subset; they are not log files or a general
 event sink.
 
@@ -59,6 +60,34 @@ The initial event-name families are `domain.command`, `authorization.decision`,
 Events describe observed facts. They do not claim an external effect succeeded
 unless a verified receipt/finalization exists, and they do not claim a Task
 completed based on an execution-turn event.
+
+## Current dedicated workspace transition evidence
+
+The current workspace foundation does not implement the general operational
+event envelope or a sink. It persists one dedicated append-only
+`workspace_events` relation as authoritative transition evidence. Its complete
+event-kind set is `workspace.operation.prepared`,
+`workspace.operation.denied`, `workspace.operation.executing`,
+`workspace.operation.observed`, `workspace.operation.verified`,
+`workspace.operation.finalized`, and `workspace.operation.reconciled`.
+
+Each row has exactly event, operation, nullable intent, event-kind, closed
+outcome/reason, actor, correlation, nullable causation, nullable workspace/
+generation/revision, nullable observation number, nullable opaque evidence
+reference, and trusted creation time. It contains no severity, component,
+arbitrary attributes, message, path, branch, Task/source body, environment,
+credential, raw adapter result/error, SQL, stack, or export destination.
+Evidence references are null or 1–128-character opaque identifiers matching
+`[A-Za-z0-9][A-Za-z0-9._:-]*`; paths, URLs with credential material, and free
+text are invalid. Events are inserted in the same short transaction as their
+durable transition and are verified by the combined decoder; they cannot
+authorize a later operation or substitute for observation, verified receipt,
+or finalization.
+
+No current CLI or diagnostic surface exports these rows. Adding a logger,
+general event envelope, retention worker, query/export API, telemetry sink, or
+remote disclosure remains a separate planned implementation and authorization
+decision.
 
 ## Operational-event redaction
 

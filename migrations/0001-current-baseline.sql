@@ -196,7 +196,7 @@ CREATE TABLE authorization_capability_epochs (
   epoch_revision INTEGER NOT NULL UNIQUE CHECK (epoch_revision > 0),
   actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
   runtime_root_key TEXT NOT NULL CHECK (length(runtime_root_key) > 0),
-  vocabulary_version INTEGER NOT NULL CHECK (vocabulary_version IN (1, 2, 3, 4)),
+  vocabulary_version INTEGER NOT NULL CHECK (vocabulary_version IN (1, 2, 3, 4, 5)),
   action_set_sha256 TEXT NOT NULL CHECK (length(action_set_sha256) = 64 AND action_set_sha256 NOT GLOB '*[^0-9A-F]*'),
   request_id TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL CHECK (length(created_at) > 0),
@@ -217,7 +217,8 @@ CREATE TABLE authorization_grants (
     'dependency.add', 'dependency.remove', 'authorization.grant.list', 'runtime.status',
     'runtime.backup', 'runtime.restore', 'execution.claim', 'execution.claim.inspect',
     'execution.lease.renew', 'execution.lease.takeover',
-    'execution.start', 'execution.inspect', 'execution.resume', 'execution.retry', 'execution.cancel', 'execution.completion.accept', 'dispatch.run'
+    'execution.start', 'execution.inspect', 'execution.resume', 'execution.retry', 'execution.cancel', 'execution.completion.accept', 'dispatch.run',
+    'workspace.reserve', 'workspace.create', 'workspace.inspect', 'workspace.recover', 'workspace.cleanup'
   )),
   scope_kind TEXT NOT NULL CHECK (scope_kind IN ('runtime', 'project')),
   scope_project_id TEXT,
@@ -1577,4 +1578,331 @@ WHEN NEW.expected_member_count<>(SELECT expected_member_count FROM dispatcher_me
   )
 BEGIN
   SELECT RAISE(ABORT, 'dispatcher run summary is incomplete or inconsistent');
+END;
+
+CREATE TABLE workspace_generations (
+  workspace_id TEXT NOT NULL CHECK (length(workspace_id) BETWEEN 1 AND 128),
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  status TEXT NOT NULL CHECK (status IN (
+    'allocated', 'reserved', 'creating', 'ready', 'cleaning', 'recovery_required', 'cleaned'
+  )),
+  project_id TEXT NOT NULL CHECK (length(project_id) > 0),
+  project_resource_revision INTEGER NOT NULL CHECK (project_resource_revision > 0),
+  project_config_revision INTEGER NOT NULL CHECK (project_config_revision > 0),
+  project_root_key TEXT NOT NULL CHECK (length(project_root_key) BETWEEN 1 AND 128),
+  task_id TEXT NOT NULL CHECK (length(task_id) > 0),
+  task_revision INTEGER NOT NULL CHECK (task_revision > 0),
+  run_id TEXT NOT NULL CHECK (length(run_id) BETWEEN 1 AND 128),
+  run_revision INTEGER NOT NULL CHECK (run_revision > 0),
+  member_id TEXT NOT NULL CHECK (length(member_id) BETWEEN 1 AND 128),
+  membership_revision INTEGER NOT NULL CHECK (membership_revision > 0),
+  member_revision INTEGER NOT NULL CHECK (member_revision > 0),
+  execution_id TEXT NOT NULL CHECK (length(execution_id) BETWEEN 1 AND 128),
+  execution_revision INTEGER NOT NULL CHECK (execution_revision > 0),
+  attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+  fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+  workspace_root_key TEXT NOT NULL CHECK (length(workspace_root_key) BETWEEN 1 AND 128),
+  creator_operation_id TEXT NOT NULL UNIQUE CHECK (length(creator_operation_id) BETWEEN 1 AND 128),
+  predecessor_generation INTEGER,
+  predecessor_revision INTEGER,
+  base_reference TEXT NOT NULL CHECK (length(base_reference) BETWEEN 1 AND 256),
+  contract_id TEXT NOT NULL CHECK (contract_id = 'ato.workspace/v1'),
+  adapter_id TEXT NOT NULL CHECK (length(adapter_id) BETWEEN 1 AND 128),
+  adapter_version TEXT NOT NULL CHECK (length(adapter_version) BETWEEN 1 AND 128),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+  PRIMARY KEY (workspace_id, generation),
+  CHECK (
+    (generation = 1 AND predecessor_generation IS NULL AND predecessor_revision IS NULL)
+    OR
+    (generation > 1 AND predecessor_generation = generation - 1 AND predecessor_revision > 0)
+  ),
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (run_id) REFERENCES dispatcher_runs(run_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (member_id) REFERENCES dispatcher_members(member_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
+
+CREATE UNIQUE INDEX workspace_generations_current_owner_index
+  ON workspace_generations(project_id, task_id, run_id, execution_id)
+  WHERE status <> 'cleaned';
+
+CREATE TABLE workspace_authorization_decisions (
+  decision_id TEXT PRIMARY KEY NOT NULL CHECK (length(decision_id) BETWEEN 1 AND 128),
+  request_id TEXT NOT NULL UNIQUE CHECK (length(request_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 128),
+  binding_revision INTEGER NOT NULL CHECK (binding_revision > 0),
+  phase TEXT NOT NULL CHECK (phase IN ('prepare', 'act', 'finalize')),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  action TEXT NOT NULL CHECK (action IN (
+    'workspace.reserve', 'workspace.create', 'workspace.inspect', 'workspace.recover', 'workspace.cleanup'
+  )),
+  result TEXT NOT NULL CHECK (result IN ('allow', 'deny')),
+  reason TEXT NOT NULL CHECK (reason IN (
+    'allowed', 'actor_mismatch', 'action_mismatch', 'scope_mismatch', 'scope_revision_stale',
+    'grant_expired', 'grant_not_yet_valid', 'grant_revoked', 'grant_missing', 'policy_denied',
+    'confirmation_required'
+  )),
+  policy_result TEXT NOT NULL CHECK (policy_result IN ('allow', 'deny', 'read_not_applicable')),
+  grant_id TEXT,
+  grant_revision INTEGER,
+  project_id TEXT NOT NULL CHECK (length(project_id) > 0),
+  project_resource_revision INTEGER NOT NULL CHECK (project_resource_revision > 0),
+  project_config_revision INTEGER NOT NULL CHECK (project_config_revision > 0),
+  execution_id TEXT NOT NULL CHECK (length(execution_id) BETWEEN 1 AND 128),
+  execution_revision INTEGER NOT NULL CHECK (execution_revision > 0),
+  fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+  workspace_id TEXT CHECK (workspace_id IS NULL OR length(workspace_id) BETWEEN 1 AND 128),
+  generation INTEGER CHECK (generation IS NULL OR generation > 0),
+  generation_revision INTEGER CHECK (generation_revision IS NULL OR generation_revision > 0),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  UNIQUE(operation_id, binding_revision),
+  CHECK ((result = 'allow' AND reason = 'allowed' AND grant_id IS NOT NULL AND grant_revision > 0
+      AND workspace_id IS NOT NULL AND generation > 0 AND generation_revision > 0)
+    OR (result = 'deny' AND reason <> 'allowed')),
+  CHECK ((grant_id IS NULL AND grant_revision IS NULL) OR (length(grant_id) > 0 AND grant_revision > 0)),
+  CHECK ((workspace_id IS NULL AND generation IS NULL AND generation_revision IS NULL)
+    OR (workspace_id IS NOT NULL AND generation > 0 AND generation_revision > 0)),
+  FOREIGN KEY (grant_id) REFERENCES authorization_grants(grant_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, generation) REFERENCES workspace_generations(workspace_id, generation) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE workspace_operation_intents (
+  intent_id TEXT PRIMARY KEY NOT NULL CHECK (length(intent_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL UNIQUE CHECK (length(operation_id) BETWEEN 1 AND 128),
+  idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+  operation_kind TEXT NOT NULL CHECK (operation_kind IN ('reserve', 'create', 'inspect', 'recover', 'cleanup')),
+  action TEXT NOT NULL CHECK (action = 'workspace.' || operation_kind),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'executing', 'observed', 'verified', 'finalized', 'ambiguous', 'failed')),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  request_id TEXT NOT NULL UNIQUE CHECK (length(request_id) BETWEEN 1 AND 128),
+  correlation_id TEXT NOT NULL CHECK (length(correlation_id) BETWEEN 1 AND 128),
+  causation_id TEXT CHECK (causation_id IS NULL OR length(causation_id) BETWEEN 1 AND 128),
+  current_authorization_decision_id TEXT NOT NULL UNIQUE CHECK (length(current_authorization_decision_id) BETWEEN 1 AND 128),
+  authorization_binding_revision INTEGER NOT NULL CHECK (authorization_binding_revision > 0),
+  confirmation_id TEXT CHECK (confirmation_id IS NULL OR length(confirmation_id) BETWEEN 1 AND 128),
+  workspace_id TEXT NOT NULL CHECK (length(workspace_id) BETWEEN 1 AND 128),
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  expected_generation_revision INTEGER NOT NULL CHECK (expected_generation_revision > 0),
+  expected_generation_status TEXT NOT NULL CHECK (expected_generation_status IN (
+    'allocated', 'reserved', 'creating', 'ready', 'cleaning', 'recovery_required', 'cleaned'
+  )),
+  last_observation_number INTEGER NOT NULL CHECK (last_observation_number >= 0),
+  last_failure_category TEXT CHECK (last_failure_category IS NULL OR length(last_failure_category) BETWEEN 1 AND 64),
+  last_failure_code TEXT CHECK (last_failure_code IS NULL OR length(last_failure_code) BETWEEN 1 AND 64),
+  last_failure_retryable INTEGER CHECK (last_failure_retryable IS NULL OR last_failure_retryable IN (0, 1)),
+  last_failure_ambiguous INTEGER CHECK (last_failure_ambiguous IS NULL OR last_failure_ambiguous IN (0, 1)),
+  contract_id TEXT NOT NULL CHECK (contract_id = 'ato.workspace/v1'),
+  adapter_id TEXT NOT NULL CHECK (length(adapter_id) BETWEEN 1 AND 128),
+  adapter_version TEXT NOT NULL CHECK (length(adapter_version) BETWEEN 1 AND 128),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+  CHECK (
+    (last_failure_category IS NULL AND last_failure_code IS NULL AND last_failure_retryable IS NULL AND last_failure_ambiguous IS NULL)
+    OR
+    (last_failure_category IS NOT NULL AND last_failure_code IS NOT NULL AND last_failure_retryable IN (0, 1) AND last_failure_ambiguous IN (0, 1))
+  ),
+  FOREIGN KEY (current_authorization_decision_id) REFERENCES workspace_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, generation) REFERENCES workspace_generations(workspace_id, generation) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE workspace_observations (
+  observation_id TEXT PRIMARY KEY NOT NULL CHECK (length(observation_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL CHECK (length(intent_id) BETWEEN 1 AND 128),
+  observation_number INTEGER NOT NULL CHECK (observation_number > 0),
+  adapter_receipt_id TEXT NOT NULL UNIQUE CHECK (length(adapter_receipt_id) BETWEEN 1 AND 128),
+  receipt_sha256 TEXT NOT NULL CHECK (length(receipt_sha256) = 64 AND receipt_sha256 NOT GLOB '*[^0-9A-F]*'),
+  authorization_decision_id TEXT NOT NULL CHECK (length(authorization_decision_id) BETWEEN 1 AND 128),
+  external_state TEXT NOT NULL CHECK (external_state IN ('absent', 'reserved', 'partial', 'complete', 'ambiguous', 'removed', 'refused')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('succeeded', 'refused', 'ambiguous')),
+  code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
+  path_safety TEXT NOT NULL CHECK (path_safety IN ('safe', 'unsafe', 'unknown')),
+  ownership_match INTEGER CHECK (ownership_match IS NULL OR ownership_match IN (0, 1)),
+  tracked_count INTEGER NOT NULL CHECK (tracked_count BETWEEN 0 AND 1000000),
+  modified_count INTEGER NOT NULL CHECK (modified_count BETWEEN 0 AND tracked_count),
+  untracked_count INTEGER NOT NULL CHECK (untracked_count BETWEEN 0 AND 1000000),
+  ignored_count INTEGER NOT NULL CHECK (ignored_count BETWEEN 0 AND 1000000),
+  evidence_reference TEXT CHECK (
+    evidence_reference IS NULL OR (
+      length(evidence_reference) BETWEEN 1 AND 128
+      AND substr(evidence_reference, 1, 1) GLOB '[A-Za-z0-9]'
+      AND evidence_reference NOT GLOB '*[^A-Za-z0-9._:-]*'
+    )
+  ),
+  observed_at TEXT NOT NULL CHECK (length(observed_at) > 0),
+  UNIQUE(intent_id, observation_number),
+  FOREIGN KEY (intent_id) REFERENCES workspace_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (authorization_decision_id) REFERENCES workspace_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE workspace_verified_receipts (
+  verified_receipt_id TEXT PRIMARY KEY NOT NULL CHECK (length(verified_receipt_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL UNIQUE CHECK (length(intent_id) BETWEEN 1 AND 128),
+  observation_id TEXT NOT NULL UNIQUE CHECK (length(observation_id) BETWEEN 1 AND 128),
+  observation_number INTEGER NOT NULL CHECK (observation_number > 0),
+  adapter_receipt_id TEXT NOT NULL UNIQUE CHECK (length(adapter_receipt_id) BETWEEN 1 AND 128),
+  receipt_sha256 TEXT NOT NULL CHECK (length(receipt_sha256) = 64 AND receipt_sha256 NOT GLOB '*[^0-9A-F]*'),
+  workspace_id TEXT NOT NULL CHECK (length(workspace_id) BETWEEN 1 AND 128),
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  generation_revision INTEGER NOT NULL CHECK (generation_revision > 0),
+  external_state TEXT NOT NULL CHECK (external_state IN ('absent', 'reserved', 'complete', 'removed', 'refused')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('succeeded', 'refused')),
+  code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
+  verified_at TEXT NOT NULL CHECK (length(verified_at) > 0),
+  FOREIGN KEY (intent_id) REFERENCES workspace_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (observation_id) REFERENCES workspace_observations(observation_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, generation) REFERENCES workspace_generations(workspace_id, generation) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE workspace_finalizations (
+  finalization_id TEXT PRIMARY KEY NOT NULL CHECK (length(finalization_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL UNIQUE CHECK (length(intent_id) BETWEEN 1 AND 128),
+  verified_receipt_id TEXT UNIQUE,
+  authorization_decision_id TEXT NOT NULL CHECK (length(authorization_decision_id) BETWEEN 1 AND 128),
+  outcome TEXT NOT NULL CHECK (outcome IN ('succeeded', 'refused', 'ambiguous', 'failed')),
+  code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
+  resulting_generation_status TEXT NOT NULL CHECK (resulting_generation_status IN (
+    'allocated', 'reserved', 'creating', 'ready', 'cleaning', 'recovery_required', 'cleaned'
+  )),
+  resulting_generation_revision INTEGER NOT NULL CHECK (resulting_generation_revision > 0),
+  finalized_at TEXT NOT NULL CHECK (length(finalized_at) > 0),
+  CHECK ((outcome IN ('succeeded', 'refused') AND verified_receipt_id IS NOT NULL)
+    OR (outcome IN ('ambiguous', 'failed') AND verified_receipt_id IS NULL)),
+  FOREIGN KEY (intent_id) REFERENCES workspace_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (verified_receipt_id) REFERENCES workspace_verified_receipts(verified_receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (authorization_decision_id) REFERENCES workspace_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE workspace_events (
+  event_id TEXT PRIMARY KEY NOT NULL CHECK (length(event_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 128),
+  intent_id TEXT CHECK (intent_id IS NULL OR length(intent_id) BETWEEN 1 AND 128),
+  event_kind TEXT NOT NULL CHECK (event_kind IN (
+    'workspace.operation.prepared', 'workspace.operation.denied', 'workspace.operation.executing',
+    'workspace.operation.observed', 'workspace.operation.verified', 'workspace.operation.finalized',
+    'workspace.operation.reconciled'
+  )),
+  outcome TEXT NOT NULL CHECK (outcome IN ('accepted', 'denied', 'refused', 'ambiguous', 'failed')),
+  reason_code TEXT NOT NULL CHECK (length(reason_code) BETWEEN 1 AND 64),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  correlation_id TEXT NOT NULL CHECK (length(correlation_id) BETWEEN 1 AND 128),
+  causation_id TEXT CHECK (causation_id IS NULL OR length(causation_id) BETWEEN 1 AND 128),
+  workspace_id TEXT CHECK (workspace_id IS NULL OR length(workspace_id) BETWEEN 1 AND 128),
+  generation INTEGER CHECK (generation IS NULL OR generation > 0),
+  generation_revision INTEGER CHECK (generation_revision IS NULL OR generation_revision > 0),
+  observation_number INTEGER CHECK (observation_number IS NULL OR observation_number > 0),
+  evidence_reference TEXT CHECK (
+    evidence_reference IS NULL OR (
+      length(evidence_reference) BETWEEN 1 AND 128
+      AND substr(evidence_reference, 1, 1) GLOB '[A-Za-z0-9]'
+      AND evidence_reference NOT GLOB '*[^A-Za-z0-9._:-]*'
+    )
+  ),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  CHECK ((workspace_id IS NULL AND generation IS NULL AND generation_revision IS NULL)
+    OR (workspace_id IS NOT NULL AND generation > 0 AND generation_revision > 0)),
+  FOREIGN KEY (intent_id) REFERENCES workspace_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, generation) REFERENCES workspace_generations(workspace_id, generation) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
+
+CREATE TRIGGER workspace_generations_update_guard
+BEFORE UPDATE ON workspace_generations
+WHEN NEW.workspace_id<>OLD.workspace_id OR NEW.generation<>OLD.generation
+  OR NEW.project_id<>OLD.project_id OR NEW.project_resource_revision<>OLD.project_resource_revision
+  OR NEW.project_config_revision<>OLD.project_config_revision OR NEW.project_root_key<>OLD.project_root_key
+  OR NEW.task_id<>OLD.task_id OR NEW.task_revision<>OLD.task_revision
+  OR NEW.run_id<>OLD.run_id OR NEW.run_revision<>OLD.run_revision
+  OR NEW.member_id<>OLD.member_id OR NEW.membership_revision<>OLD.membership_revision
+  OR NEW.member_revision<>OLD.member_revision
+  OR NEW.execution_id<>OLD.execution_id OR NEW.execution_revision<>OLD.execution_revision
+  OR NEW.attempt_number<>OLD.attempt_number OR NEW.fencing_token<>OLD.fencing_token
+  OR NEW.workspace_root_key<>OLD.workspace_root_key OR NEW.creator_operation_id<>OLD.creator_operation_id
+  OR NEW.predecessor_generation IS NOT OLD.predecessor_generation OR NEW.predecessor_revision IS NOT OLD.predecessor_revision
+  OR NEW.base_reference<>OLD.base_reference OR NEW.contract_id<>OLD.contract_id
+  OR NEW.adapter_id<>OLD.adapter_id OR NEW.adapter_version<>OLD.adapter_version
+  OR NEW.created_at<>OLD.created_at OR NEW.updated_at<=OLD.updated_at OR NEW.revision<>OLD.revision+1
+  OR NOT (
+    (OLD.status='allocated' AND NEW.status IN ('allocated', 'reserved', 'recovery_required'))
+    OR (OLD.status='reserved' AND NEW.status='creating')
+    OR (OLD.status='creating' AND NEW.status IN ('ready', 'reserved', 'recovery_required'))
+    OR (OLD.status='ready' AND NEW.status='cleaning')
+    OR (OLD.status='cleaning' AND NEW.status IN ('cleaned', 'ready', 'recovery_required'))
+    OR (OLD.status='recovery_required' AND NEW.status IN ('allocated', 'reserved', 'ready', 'cleaned'))
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'workspace generation update violates identity, revision or lifecycle');
+END;
+
+CREATE TRIGGER workspace_generations_no_delete BEFORE DELETE ON workspace_generations BEGIN
+  SELECT RAISE(ABORT, 'workspace generations cannot be deleted');
+END;
+
+CREATE TRIGGER workspace_authorization_decisions_no_update BEFORE UPDATE ON workspace_authorization_decisions BEGIN
+  SELECT RAISE(ABORT, 'workspace authorization decisions are immutable');
+END;
+
+CREATE TRIGGER workspace_authorization_decisions_no_delete BEFORE DELETE ON workspace_authorization_decisions BEGIN
+  SELECT RAISE(ABORT, 'workspace authorization decisions are immutable');
+END;
+
+CREATE TRIGGER workspace_operation_intents_update_guard
+BEFORE UPDATE ON workspace_operation_intents
+WHEN NEW.intent_id<>OLD.intent_id OR NEW.operation_id<>OLD.operation_id OR NEW.idempotency_key<>OLD.idempotency_key
+  OR NEW.operation_kind<>OLD.operation_kind OR NEW.action<>OLD.action OR NEW.actor_id<>OLD.actor_id
+  OR NEW.request_id<>OLD.request_id OR NEW.correlation_id<>OLD.correlation_id
+  OR NEW.causation_id IS NOT OLD.causation_id OR NEW.confirmation_id IS NOT OLD.confirmation_id
+  OR NEW.workspace_id<>OLD.workspace_id OR NEW.generation<>OLD.generation
+  OR NEW.contract_id<>OLD.contract_id OR NEW.adapter_id<>OLD.adapter_id OR NEW.adapter_version<>OLD.adapter_version
+  OR NEW.created_at<>OLD.created_at OR NEW.updated_at<=OLD.updated_at OR NEW.revision<>OLD.revision+1
+  OR NEW.authorization_binding_revision<OLD.authorization_binding_revision
+  OR NEW.last_observation_number<OLD.last_observation_number
+  OR NOT (
+    (OLD.state='pending' AND NEW.state IN ('executing', 'failed'))
+    OR (OLD.state='executing' AND NEW.state IN ('observed', 'ambiguous', 'failed'))
+    OR (OLD.state='observed' AND NEW.state IN ('verified', 'ambiguous', 'failed'))
+    OR (OLD.state='verified' AND NEW.state IN ('finalized', 'ambiguous'))
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'workspace intent update violates identity, revision or lifecycle');
+END;
+
+CREATE TRIGGER workspace_operation_intents_no_delete BEFORE DELETE ON workspace_operation_intents BEGIN
+  SELECT RAISE(ABORT, 'workspace intents cannot be deleted');
+END;
+
+CREATE TRIGGER workspace_observations_no_update BEFORE UPDATE ON workspace_observations BEGIN
+  SELECT RAISE(ABORT, 'workspace observations are immutable');
+END;
+
+CREATE TRIGGER workspace_observations_no_delete BEFORE DELETE ON workspace_observations BEGIN
+  SELECT RAISE(ABORT, 'workspace observations are immutable');
+END;
+
+CREATE TRIGGER workspace_verified_receipts_no_update BEFORE UPDATE ON workspace_verified_receipts BEGIN
+  SELECT RAISE(ABORT, 'workspace verified receipts are immutable');
+END;
+
+CREATE TRIGGER workspace_verified_receipts_no_delete BEFORE DELETE ON workspace_verified_receipts BEGIN
+  SELECT RAISE(ABORT, 'workspace verified receipts are immutable');
+END;
+
+CREATE TRIGGER workspace_finalizations_no_update BEFORE UPDATE ON workspace_finalizations BEGIN
+  SELECT RAISE(ABORT, 'workspace finalizations are immutable');
+END;
+
+CREATE TRIGGER workspace_finalizations_no_delete BEFORE DELETE ON workspace_finalizations BEGIN
+  SELECT RAISE(ABORT, 'workspace finalizations are immutable');
+END;
+
+CREATE TRIGGER workspace_events_no_update BEFORE UPDATE ON workspace_events BEGIN
+  SELECT RAISE(ABORT, 'workspace events are immutable');
+END;
+
+CREATE TRIGGER workspace_events_no_delete BEFORE DELETE ON workspace_events BEGIN
+  SELECT RAISE(ABORT, 'workspace events are immutable');
 END;

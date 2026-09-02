@@ -10,6 +10,12 @@ import type {
   AuthorizationReason,
   AuthorizationScope,
 } from "../authorization.ts";
+import {
+  WORKSPACE_EXTERNAL_STATES,
+  WORKSPACE_FAILURE_CATEGORIES,
+  WORKSPACE_RECEIPT_CODES,
+} from "../workspace-port.ts";
+import type { WorkspaceFailureCategory, WorkspaceReceiptCode } from "../workspace-port.ts";
 import { sqliteNullableText, sqliteText } from "./database.ts";
 import type { SqliteDatabase } from "./database.ts";
 import { persistenceFailure } from "./errors.ts";
@@ -18,6 +24,7 @@ import {
   DISPATCHER_AUDIT_CODES,
   DISPATCHER_MEMBER_CODES,
   DISPATCHER_RECONCILIATION_CODES,
+  WORKSPACE_EVENT_KINDS,
 } from "./application-repository-model.ts";
 import type {
   RegisteredProject,
@@ -64,6 +71,17 @@ import type {
   DispatcherMemberDenialDecisionRecord,
   DispatcherMemberDenialAuditRecord,
   DispatcherRunSummaryRecord,
+  WorkspaceGenerationRecord,
+  WorkspaceGenerationStatus,
+  WorkspaceAuthorizationDecisionRecord,
+  WorkspaceOperationIntentRecord,
+  WorkspaceIntentState,
+  WorkspaceObservationRecord,
+  WorkspaceExternalState,
+  WorkspaceVerifiedReceiptRecord,
+  WorkspaceFinalizationRecord,
+  WorkspaceOperationOutcome,
+  WorkspaceEventRecord,
 } from "./application-repository-model.ts";
 import { canonicalJson, exactRecord, isCanonicalUtcTimestamp, isNonemptyString } from "./values.ts";
 
@@ -1083,6 +1101,264 @@ export function readDispatcherRunSummaries(database: SqliteDatabase): readonly D
     ownerRevision: positive(row.owner_revision, "dispatcher_run_summaries.owner_revision"),
     runRevision: positive(row.run_revision, "dispatcher_run_summaries.run_revision"),
     createdAt: timestamp(row.created_at, "dispatcher_run_summaries.created_at"),
+  })));
+}
+
+const WORKSPACE_STATUSES = new Set<WorkspaceGenerationStatus>([
+  "allocated", "reserved", "creating", "ready", "cleaning", "recovery_required", "cleaned",
+]);
+const WORKSPACE_INTENT_STATES = new Set<WorkspaceIntentState>([
+  "pending", "executing", "observed", "verified", "finalized", "ambiguous", "failed",
+]);
+const WORKSPACE_EXTERNAL_STATE_SET = new Set<WorkspaceExternalState>([
+  ...WORKSPACE_EXTERNAL_STATES,
+]);
+const WORKSPACE_FAILURE_CATEGORY_SET = new Set<WorkspaceFailureCategory>(WORKSPACE_FAILURE_CATEGORIES);
+const WORKSPACE_RECEIPT_CODE_SET = new Set<WorkspaceReceiptCode>(WORKSPACE_RECEIPT_CODES);
+const WORKSPACE_OUTCOMES = new Set<WorkspaceOperationOutcome>(["succeeded", "refused", "ambiguous", "failed"]);
+const WORKSPACE_ACTIONS = new Set<WorkspaceAuthorizationDecisionRecord["action"]>([
+  "workspace.reserve", "workspace.create", "workspace.inspect", "workspace.recover", "workspace.cleanup",
+]);
+
+function sqliteBoolean(value: unknown, label: string): boolean {
+  const result = integer(value, label);
+  if (result !== 0 && result !== 1) throw persistenceFailure("CORRUPT_ROW", `${label} is not a SQLite boolean`);
+  return result === 1;
+}
+
+function sqliteNullableBoolean(value: unknown, label: string): boolean | null {
+  return value === null ? null : sqliteBoolean(value, label);
+}
+
+function boundedCode(value: unknown, label: string): string {
+  const result = sqliteText(value, label);
+  if (result.length > 64 || !/^[a-z][a-z0-9_]{0,63}$/u.test(result)) {
+    throw persistenceFailure("CORRUPT_ROW", `${label} is not a closed bounded code`);
+  }
+  return result;
+}
+
+function opaqueEvidenceReference(value: unknown, label: string): string | null {
+  if (value === null) return null;
+  const result = sqliteText(value, label);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(result)) {
+    throw persistenceFailure("CORRUPT_ROW", `${label} is not an opaque bounded reference`);
+  }
+  return result;
+}
+
+export function readWorkspaceGenerations(database: SqliteDatabase): readonly WorkspaceGenerationRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT workspace_id, generation, revision, status, project_id, project_resource_revision,
+      project_config_revision, project_root_key, task_id, task_revision, run_id, run_revision,
+      member_id, membership_revision, member_revision, execution_id, execution_revision,
+      attempt_number, fencing_token, workspace_root_key,
+      creator_operation_id, predecessor_generation, predecessor_revision, base_reference,
+      contract_id, adapter_id, adapter_version, created_at, updated_at
+    FROM workspace_generations ORDER BY workspace_id, generation`,
+  ).all().map((row) => Object.freeze({
+    workspaceId: sqliteText(row.workspace_id, "workspace_generations.workspace_id"),
+    generation: positive(row.generation, "workspace_generations.generation"),
+    revision: positive(row.revision, "workspace_generations.revision"),
+    status: enumText(row.status, "workspace_generations.status", WORKSPACE_STATUSES),
+    projectId: sqliteText(row.project_id, "workspace_generations.project_id"),
+    projectResourceRevision: positive(row.project_resource_revision, "workspace_generations.project_resource_revision"),
+    projectConfigRevision: positive(row.project_config_revision, "workspace_generations.project_config_revision"),
+    projectRootKey: sqliteText(row.project_root_key, "workspace_generations.project_root_key"),
+    taskId: sqliteText(row.task_id, "workspace_generations.task_id"),
+    taskRevision: positive(row.task_revision, "workspace_generations.task_revision"),
+    runId: sqliteText(row.run_id, "workspace_generations.run_id"),
+    runRevision: positive(row.run_revision, "workspace_generations.run_revision"),
+    memberId: sqliteText(row.member_id, "workspace_generations.member_id"),
+    membershipRevision: positive(row.membership_revision, "workspace_generations.membership_revision"),
+    memberRevision: positive(row.member_revision, "workspace_generations.member_revision"),
+    executionId: sqliteText(row.execution_id, "workspace_generations.execution_id"),
+    executionRevision: positive(row.execution_revision, "workspace_generations.execution_revision"),
+    attemptNumber: positive(row.attempt_number, "workspace_generations.attempt_number"),
+    fencingToken: positive(row.fencing_token, "workspace_generations.fencing_token"),
+    workspaceRootKey: sqliteText(row.workspace_root_key, "workspace_generations.workspace_root_key"),
+    creatorOperationId: sqliteText(row.creator_operation_id, "workspace_generations.creator_operation_id"),
+    predecessorGeneration: nullablePositive(row.predecessor_generation, "workspace_generations.predecessor_generation"),
+    predecessorRevision: nullablePositive(row.predecessor_revision, "workspace_generations.predecessor_revision"),
+    baseReference: sqliteText(row.base_reference, "workspace_generations.base_reference"),
+    contractId: enumText(row.contract_id, "workspace_generations.contract_id", new Set(["ato.workspace/v1"] as const)),
+    adapterId: sqliteText(row.adapter_id, "workspace_generations.adapter_id"),
+    adapterVersion: sqliteText(row.adapter_version, "workspace_generations.adapter_version"),
+    createdAt: timestamp(row.created_at, "workspace_generations.created_at"),
+    updatedAt: timestamp(row.updated_at, "workspace_generations.updated_at"),
+  })));
+}
+
+export function readWorkspaceAuthorizationDecisions(database: SqliteDatabase): readonly WorkspaceAuthorizationDecisionRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT decision_id, request_id, operation_id, binding_revision, phase, actor_id, action,
+      result, reason, policy_result, grant_id, grant_revision, project_id,
+      project_resource_revision, project_config_revision, execution_id, execution_revision,
+      fencing_token, workspace_id, generation, generation_revision, created_at
+    FROM workspace_authorization_decisions ORDER BY operation_id, binding_revision`,
+  ).all().map((row) => Object.freeze({
+    decisionId: sqliteText(row.decision_id, "workspace_authorization_decisions.decision_id"),
+    requestId: sqliteText(row.request_id, "workspace_authorization_decisions.request_id"),
+    operationId: sqliteText(row.operation_id, "workspace_authorization_decisions.operation_id"),
+    bindingRevision: positive(row.binding_revision, "workspace_authorization_decisions.binding_revision"),
+    phase: enumText(row.phase, "workspace_authorization_decisions.phase", new Set(["prepare", "act", "finalize"] as const)),
+    actorId: sqliteText(row.actor_id, "workspace_authorization_decisions.actor_id"),
+    action: enumText(row.action, "workspace_authorization_decisions.action", WORKSPACE_ACTIONS),
+    result: enumText(row.result, "workspace_authorization_decisions.result", DECISION_RESULTS),
+    reason: enumText(row.reason, "workspace_authorization_decisions.reason", AUTHORIZATION_REASONS),
+    policy: enumText(row.policy_result, "workspace_authorization_decisions.policy_result", POLICY_RESULTS),
+    grantId: sqliteNullableText(row.grant_id, "workspace_authorization_decisions.grant_id"),
+    grantRevision: nullablePositive(row.grant_revision, "workspace_authorization_decisions.grant_revision"),
+    projectId: sqliteText(row.project_id, "workspace_authorization_decisions.project_id"),
+    projectResourceRevision: positive(row.project_resource_revision, "workspace_authorization_decisions.project_resource_revision"),
+    projectConfigRevision: positive(row.project_config_revision, "workspace_authorization_decisions.project_config_revision"),
+    executionId: sqliteText(row.execution_id, "workspace_authorization_decisions.execution_id"),
+    executionRevision: positive(row.execution_revision, "workspace_authorization_decisions.execution_revision"),
+    fencingToken: positive(row.fencing_token, "workspace_authorization_decisions.fencing_token"),
+    workspaceId: sqliteNullableText(row.workspace_id, "workspace_authorization_decisions.workspace_id"),
+    generation: nullablePositive(row.generation, "workspace_authorization_decisions.generation"),
+    generationRevision: nullablePositive(row.generation_revision, "workspace_authorization_decisions.generation_revision"),
+    createdAt: timestamp(row.created_at, "workspace_authorization_decisions.created_at"),
+  })));
+}
+
+export function readWorkspaceIntents(database: SqliteDatabase): readonly WorkspaceOperationIntentRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT intent_id, operation_id, idempotency_key, operation_kind, action, state, revision,
+      actor_id, request_id, correlation_id, causation_id, current_authorization_decision_id,
+      authorization_binding_revision, confirmation_id, workspace_id, generation,
+      expected_generation_revision, expected_generation_status, last_observation_number,
+      last_failure_category, last_failure_code, last_failure_retryable, last_failure_ambiguous,
+      contract_id, adapter_id, adapter_version, created_at, updated_at
+    FROM workspace_operation_intents ORDER BY intent_id`,
+  ).all().map((row) => Object.freeze({
+    intentId: sqliteText(row.intent_id, "workspace_operation_intents.intent_id"),
+    operationId: sqliteText(row.operation_id, "workspace_operation_intents.operation_id"),
+    idempotencyKey: sqliteText(row.idempotency_key, "workspace_operation_intents.idempotency_key"),
+    operationKind: enumText(row.operation_kind, "workspace_operation_intents.operation_kind", new Set(["reserve", "create", "inspect", "recover", "cleanup"] as const)),
+    action: enumText(row.action, "workspace_operation_intents.action", WORKSPACE_ACTIONS),
+    state: enumText(row.state, "workspace_operation_intents.state", WORKSPACE_INTENT_STATES),
+    revision: positive(row.revision, "workspace_operation_intents.revision"),
+    actorId: sqliteText(row.actor_id, "workspace_operation_intents.actor_id"),
+    requestId: sqliteText(row.request_id, "workspace_operation_intents.request_id"),
+    correlationId: sqliteText(row.correlation_id, "workspace_operation_intents.correlation_id"),
+    causationId: sqliteNullableText(row.causation_id, "workspace_operation_intents.causation_id"),
+    currentAuthorizationDecisionId: sqliteText(row.current_authorization_decision_id, "workspace_operation_intents.current_authorization_decision_id"),
+    authorizationBindingRevision: positive(row.authorization_binding_revision, "workspace_operation_intents.authorization_binding_revision"),
+    confirmationId: sqliteNullableText(row.confirmation_id, "workspace_operation_intents.confirmation_id"),
+    workspaceId: sqliteText(row.workspace_id, "workspace_operation_intents.workspace_id"),
+    generation: positive(row.generation, "workspace_operation_intents.generation"),
+    expectedGenerationRevision: positive(row.expected_generation_revision, "workspace_operation_intents.expected_generation_revision"),
+    expectedGenerationStatus: enumText(row.expected_generation_status, "workspace_operation_intents.expected_generation_status", WORKSPACE_STATUSES),
+    lastObservationNumber: nonnegative(row.last_observation_number, "workspace_operation_intents.last_observation_number"),
+    lastFailureCategory: row.last_failure_category === null
+      ? null
+      : enumText(
+          row.last_failure_category,
+          "workspace_operation_intents.last_failure_category",
+          WORKSPACE_FAILURE_CATEGORY_SET,
+        ),
+    lastFailureCode: sqliteNullableText(row.last_failure_code, "workspace_operation_intents.last_failure_code"),
+    lastFailureRetryable: sqliteNullableBoolean(row.last_failure_retryable, "workspace_operation_intents.last_failure_retryable"),
+    lastFailureAmbiguous: sqliteNullableBoolean(row.last_failure_ambiguous, "workspace_operation_intents.last_failure_ambiguous"),
+    contractId: enumText(row.contract_id, "workspace_operation_intents.contract_id", new Set(["ato.workspace/v1"] as const)),
+    adapterId: sqliteText(row.adapter_id, "workspace_operation_intents.adapter_id"),
+    adapterVersion: sqliteText(row.adapter_version, "workspace_operation_intents.adapter_version"),
+    createdAt: timestamp(row.created_at, "workspace_operation_intents.created_at"),
+    updatedAt: timestamp(row.updated_at, "workspace_operation_intents.updated_at"),
+  })));
+}
+
+export function readWorkspaceObservations(database: SqliteDatabase): readonly WorkspaceObservationRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT observation_id, intent_id, observation_number, adapter_receipt_id, receipt_sha256,
+      authorization_decision_id, external_state, outcome, code, path_safety, ownership_match,
+      tracked_count, modified_count, untracked_count, ignored_count, evidence_reference, observed_at
+    FROM workspace_observations ORDER BY intent_id, observation_number`,
+  ).all().map((row) => Object.freeze({
+    observationId: sqliteText(row.observation_id, "workspace_observations.observation_id"),
+    intentId: sqliteText(row.intent_id, "workspace_observations.intent_id"),
+    observationNumber: positive(row.observation_number, "workspace_observations.observation_number"),
+    adapterReceiptId: sqliteText(row.adapter_receipt_id, "workspace_observations.adapter_receipt_id"),
+    receiptSha256: uppercaseSha256(row.receipt_sha256, "workspace_observations.receipt_sha256"),
+    authorizationDecisionId: sqliteText(row.authorization_decision_id, "workspace_observations.authorization_decision_id"),
+    externalState: enumText(row.external_state, "workspace_observations.external_state", WORKSPACE_EXTERNAL_STATE_SET),
+    outcome: enumText(row.outcome, "workspace_observations.outcome", new Set(["succeeded", "refused", "ambiguous"] as const)),
+    code: enumText(row.code, "workspace_observations.code", WORKSPACE_RECEIPT_CODE_SET),
+    pathSafety: enumText(row.path_safety, "workspace_observations.path_safety", new Set(["safe", "unsafe", "unknown"] as const)),
+    ownershipMatch: sqliteNullableBoolean(row.ownership_match, "workspace_observations.ownership_match"),
+    trackedCount: nonnegative(row.tracked_count, "workspace_observations.tracked_count"),
+    modifiedCount: nonnegative(row.modified_count, "workspace_observations.modified_count"),
+    untrackedCount: nonnegative(row.untracked_count, "workspace_observations.untracked_count"),
+    ignoredCount: nonnegative(row.ignored_count, "workspace_observations.ignored_count"),
+    evidenceReference: opaqueEvidenceReference(row.evidence_reference, "workspace_observations.evidence_reference"),
+    observedAt: timestamp(row.observed_at, "workspace_observations.observed_at"),
+  })));
+}
+
+export function readWorkspaceReceipts(database: SqliteDatabase): readonly WorkspaceVerifiedReceiptRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT verified_receipt_id, intent_id, observation_id, observation_number, adapter_receipt_id,
+      receipt_sha256, workspace_id, generation, generation_revision, external_state, outcome, code, verified_at
+    FROM workspace_verified_receipts ORDER BY verified_receipt_id`,
+  ).all().map((row) => Object.freeze({
+    verifiedReceiptId: sqliteText(row.verified_receipt_id, "workspace_verified_receipts.verified_receipt_id"),
+    intentId: sqliteText(row.intent_id, "workspace_verified_receipts.intent_id"),
+    observationId: sqliteText(row.observation_id, "workspace_verified_receipts.observation_id"),
+    observationNumber: positive(row.observation_number, "workspace_verified_receipts.observation_number"),
+    adapterReceiptId: sqliteText(row.adapter_receipt_id, "workspace_verified_receipts.adapter_receipt_id"),
+    receiptSha256: uppercaseSha256(row.receipt_sha256, "workspace_verified_receipts.receipt_sha256"),
+    workspaceId: sqliteText(row.workspace_id, "workspace_verified_receipts.workspace_id"),
+    generation: positive(row.generation, "workspace_verified_receipts.generation"),
+    generationRevision: positive(row.generation_revision, "workspace_verified_receipts.generation_revision"),
+    externalState: enumText(row.external_state, "workspace_verified_receipts.external_state", WORKSPACE_EXTERNAL_STATE_SET),
+    outcome: enumText(row.outcome, "workspace_verified_receipts.outcome", new Set(["succeeded", "refused"] as const)),
+    code: enumText(row.code, "workspace_verified_receipts.code", WORKSPACE_RECEIPT_CODE_SET),
+    verifiedAt: timestamp(row.verified_at, "workspace_verified_receipts.verified_at"),
+  })));
+}
+
+export function readWorkspaceFinalizations(database: SqliteDatabase): readonly WorkspaceFinalizationRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT finalization_id, intent_id, verified_receipt_id, authorization_decision_id,
+      outcome, code, resulting_generation_status, resulting_generation_revision, finalized_at
+    FROM workspace_finalizations ORDER BY finalization_id`,
+  ).all().map((row) => Object.freeze({
+    finalizationId: sqliteText(row.finalization_id, "workspace_finalizations.finalization_id"),
+    intentId: sqliteText(row.intent_id, "workspace_finalizations.intent_id"),
+    verifiedReceiptId: sqliteNullableText(row.verified_receipt_id, "workspace_finalizations.verified_receipt_id"),
+    authorizationDecisionId: sqliteText(row.authorization_decision_id, "workspace_finalizations.authorization_decision_id"),
+    outcome: enumText(row.outcome, "workspace_finalizations.outcome", WORKSPACE_OUTCOMES),
+    code: boundedCode(row.code, "workspace_finalizations.code"),
+    resultingGenerationStatus: enumText(row.resulting_generation_status, "workspace_finalizations.resulting_generation_status", WORKSPACE_STATUSES),
+    resultingGenerationRevision: positive(row.resulting_generation_revision, "workspace_finalizations.resulting_generation_revision"),
+    finalizedAt: timestamp(row.finalized_at, "workspace_finalizations.finalized_at"),
+  })));
+}
+
+export function readWorkspaceEvents(database: SqliteDatabase): readonly WorkspaceEventRecord[] {
+  const eventKinds = new Set<WorkspaceEventRecord["eventKind"]>(WORKSPACE_EVENT_KINDS);
+  return Object.freeze(database.prepare(
+    `SELECT event_id, operation_id, intent_id, event_kind, outcome, reason_code, actor_id,
+      correlation_id, causation_id, workspace_id, generation, generation_revision,
+      observation_number, evidence_reference, created_at
+    FROM workspace_events ORDER BY event_id`,
+  ).all().map((row) => Object.freeze({
+    eventId: sqliteText(row.event_id, "workspace_events.event_id"),
+    operationId: sqliteText(row.operation_id, "workspace_events.operation_id"),
+    intentId: sqliteNullableText(row.intent_id, "workspace_events.intent_id"),
+    eventKind: enumText(row.event_kind, "workspace_events.event_kind", eventKinds),
+    outcome: enumText(row.outcome, "workspace_events.outcome", new Set(["accepted", "denied", "refused", "ambiguous", "failed"] as const)),
+    reasonCode: boundedCode(row.reason_code, "workspace_events.reason_code"),
+    actorId: sqliteText(row.actor_id, "workspace_events.actor_id"),
+    correlationId: sqliteText(row.correlation_id, "workspace_events.correlation_id"),
+    causationId: sqliteNullableText(row.causation_id, "workspace_events.causation_id"),
+    workspaceId: sqliteNullableText(row.workspace_id, "workspace_events.workspace_id"),
+    generation: nullablePositive(row.generation, "workspace_events.generation"),
+    generationRevision: nullablePositive(row.generation_revision, "workspace_events.generation_revision"),
+    observationNumber: nullablePositive(row.observation_number, "workspace_events.observation_number"),
+    evidenceReference: opaqueEvidenceReference(row.evidence_reference, "workspace_events.evidence_reference"),
+    createdAt: timestamp(row.created_at, "workspace_events.created_at"),
   })));
 }
 

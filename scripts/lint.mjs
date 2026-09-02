@@ -79,7 +79,7 @@ if (tsconfig.compilerOptions?.rewriteRelativeImportExtensions !== true) {
 if (tsconfig.compilerOptions?.noUnusedLocals !== true || tsconfig.compilerOptions?.noUnusedParameters !== true) {
   failures.push("TypeScript unused declaration enforcement drifted");
 }
-if (EXPECTED_PRODUCTION_SOURCE_FILES.length !== 43) {
+if (EXPECTED_PRODUCTION_SOURCE_FILES.length !== 45) {
   failures.push("production source count drifted");
 }
 failures.push(

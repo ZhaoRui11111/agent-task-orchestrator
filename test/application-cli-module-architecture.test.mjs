@@ -382,7 +382,7 @@ test("CLI modules have the exact DAG, facade, tables, and sole effect owner", ()
 });
 
 test("CLI Node built-ins equal the exact per-file map and repo-utils rejects family-wide exceptions", () => {
-  assert.equal(EXPECTED_PRODUCTION_SOURCE_FILES.length, 43);
+  assert.equal(EXPECTED_PRODUCTION_SOURCE_FILES.length, 45);
   assert.deepEqual(EXPECTED_CLI_NODE_BUILTINS, EXPECTED_CLI_BUILTINS);
   for (const [relative, expected] of Object.entries(EXPECTED_CLI_BUILTINS)) {
     assert.deepEqual(nodeBuiltins(relative), expected, `${relative} Node built-ins drifted`);

@@ -13,9 +13,12 @@ runtime authorization model, one typed Project/Task/dependency application
 service, current schema-version-1 SQLite persistence, a composable local Phase 1 `ato` product
 CLI, a typed reliable Manual execution loop, a reconcile-first Manual
 dispatcher, and a sole current `ato.api/v1` local Manual product surface. The
-three backup/restore JSON artifacts each use an independent exact current
+package also exposes a fresh-only durable workspace foundation: the pure exact
+`ato.workspace/v1` contract and a typed application/persistence coordinator
+tested only against an unexported Fake backend. The three backup/restore JSON
+artifacts each use an independent exact current
 schema version `1`; that number does not couple them to the database schema.
-application owner remains the sole business command/query owner and atomically
+The application owner remains the sole business command/query owner and atomically
 coordinates Domain snapshots, registry/grant changes, authorization decisions,
 execution attempts, leases/fences, durable operation evidence, and sanitized audit. The CLI provides initialization,
 finite grant management, Project/Task/dependency management, status, backup,
@@ -33,9 +36,11 @@ candidate set, claims and prepares permitted Tasks through the existing owners,
 resolves every member, and publishes a completeness-checked summary. The real
 `manual-local` backend records no-workspace Manual lifecycle facts; it does not
 execute Task content or touch a Project repository. The repository still has
-no MCP server, plugin, SchedulerBackend or scheduled trigger,
-Codex/Git/workspace adapter, ProjectPolicy or CompletionBackend gate, supported
-release, or validated product platform integration.
+no MCP server, plugin, SchedulerBackend or scheduled trigger, production
+Codex/Git/filesystem workspace adapter, ProjectPolicy or CompletionBackend
+gate, supported release, or validated product platform integration. The
+workspace foundation has no public CLI command and performs no production
+Project/workspace effect.
 
 Unimplemented planned capabilities are not current capabilities. Design
 proposals and roadmaps must remain clearly labeled until their implementations
@@ -131,6 +136,28 @@ development evidence is not a platform-support claim. The exact rules are owned 
 [persistence contract](docs/reference/persistence-contract.md), and
 [reliability protocol](docs/reference/reliability-protocol.md).
 
+## Durable workspace foundation
+
+The package root exports the exact five-operation `ato.workspace/v1` contract
+(`reserve`, `create`, `inspect`, `recover`, and `cleanup`) and a typed workspace
+application service. One system-issued workspace ID has positive, contiguous
+generations bound to the exact Project, Task, dispatcher run/member, execution
+revision/attempt/fence, trusted workspace-root identity, adapter version,
+creator operation, and optional cleaned predecessor. The sole current
+schema-version-1 baseline stores generation state plus operation-specific
+authorization, intent, ordered observation, verified receipt, finalization, and
+bounded redacted transition evidence. Restart resumes committed
+prepare/observe/verify/finalize boundaries; an effect-possible mutation without
+proof becomes explicit recovery-required ambiguity rather than blind replay.
+
+Authorization vocabulary version 5 cumulatively adds exactly the five
+`workspace.*` actions after the existing four stages. Each stage still needs a
+separate confirmed upgrade, bootstrap and renewal never advance the vocabulary,
+and `workspace.cleanup` alone is newly high risk. This foundation is a package
+library boundary only: its backend is an unexported test Fake, the sole current
+`ato.api/v1` command/error grammar is unchanged, and no production
+filesystem/Git adapter, path mutation, cleanup, or platform claim exists.
+
 ## Reconcile-first Manual dispatcher
 
 Fresh schema creation, bootstrap, and vocabulary-version-3 renewal do not create
@@ -152,7 +179,8 @@ is withheld until every sealed member and every claimed intent is complete.
 
 The package and sole current `ato.api/v1` product surface expose this one Manual
 trigger and durable run resume. They add no scheduler cadence or
-SchedulerBackend, daemon, MCP, Codex/Git/workspace behavior, completion gates,
+SchedulerBackend, daemon, MCP, production Codex/Git/workspace behavior,
+completion gates,
 release, or platform-support claim. The dispatcher—not CLI code—owns candidate
 selection, reconciliation, fan-out, and summary completeness. Its ordering and
 fan-out rules are owned by the
@@ -199,8 +227,10 @@ unsupported major fail before runtime construction or protected mutation; no
 compatibility fallback exists. Use `--format json` for the versioned single-line
 machine surface. The exhaustive 33-command tree, `COMMON` execution tuple,
 closed projections, and 37-code public error/exit table are in the
-[CLI/API contract](docs/reference/cli-contract.md). This
-development package is not a release or platform-support claim.
+[CLI/API contract](docs/reference/cli-contract.md). The tree can perform a
+fourth confirmed upgrade to vocabulary version 5 and manage grants for all 35
+actions, but it exposes no workspace operation command. This development
+package is not a release or platform-support claim.
 
 ## Maintainer development workflow
 
@@ -214,8 +244,8 @@ material.
 
 The authoritative lifecycle, recovery, and safety rules are in the
 [local agent Git workflow](docs/reference/local-agent-git-flow.md). This is
-current repository governance, not evidence that the planned orchestrator has
-implemented worktree or completion adapters.
+current repository governance, not evidence that the product's pure workspace
+contract has a production worktree adapter or CompletionBackend.
 
 ## Data boundary
 

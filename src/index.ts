@@ -44,6 +44,32 @@ export * from "./manual-execution-backend.ts";
 export * from "./execution-loop.ts";
 export * from "./dispatcher-application.ts";
 export * from "./dispatcher.ts";
+export {
+  WORKSPACE_CONTRACT_ID,
+  WORKSPACE_OPERATIONS,
+  WORKSPACE_EXTERNAL_STATES,
+  WORKSPACE_RECEIPT_CODES,
+  WORKSPACE_FAILURE_CATEGORIES,
+  parseWorkspaceBackendRequest,
+  parseWorkspaceBackendResult,
+  invokeWorkspaceBackend,
+} from "./workspace-port.ts";
+export type {
+  WorkspaceOperation,
+  WorkspaceExternalState,
+  WorkspaceReceiptCode,
+  WorkspaceFailureCategory,
+  WorkspaceReceiptOutcome,
+  WorkspacePathSafety,
+  WorkspaceSubject,
+  WorkspaceBackendRequest,
+  WorkspaceInventorySummary,
+  WorkspaceBackendReceipt,
+  WorkspaceBackendFailure,
+  WorkspaceBackendResult,
+  WorkspaceBackend,
+} from "./workspace-port.ts";
+export * from "./workspace-application.ts";
 export * from "./product-runtime.ts";
 export * from "./persistence/index.ts";
 export {

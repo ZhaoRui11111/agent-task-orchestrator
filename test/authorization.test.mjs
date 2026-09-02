@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AUTHORIZATION_ACTIONS,
+  DISPATCHER_AUTHORIZATION_ACTIONS,
   DISPATCH_AUTHORIZATION_ACTIONS,
   EXECUTION_AUTHORIZATION_ACTIONS,
   MANUAL_EXECUTION_AUTHORIZATION_ACTIONS,
   BASE_AUTHORIZATION_ACTIONS,
   CLAIM_AUTHORIZATION_ACTIONS,
   MANUAL_AUTHORIZATION_ACTIONS,
+  WORKSPACE_AUTHORIZATION_ACTIONS,
   actionsForVocabulary,
   isAuthorizationVocabularyVersion,
   canIssueGrant,
@@ -54,14 +56,22 @@ test("authorization vocabulary is finite and has no wildcard or content-derived 
   assert.equal(MANUAL_EXECUTION_AUTHORIZATION_ACTIONS.length, 6);
   assert.equal(MANUAL_AUTHORIZATION_ACTIONS.length, 29);
   assert.deepEqual(DISPATCH_AUTHORIZATION_ACTIONS, ["dispatch.run"]);
-  assert.equal(AUTHORIZATION_ACTIONS.length, 30);
-  assert.equal(new Set(AUTHORIZATION_ACTIONS).size, 30);
+  assert.equal(DISPATCHER_AUTHORIZATION_ACTIONS.length, 30);
+  assert.deepEqual(WORKSPACE_AUTHORIZATION_ACTIONS, [
+    "workspace.reserve",
+    "workspace.create",
+    "workspace.inspect",
+    "workspace.recover",
+    "workspace.cleanup",
+  ]);
+  assert.equal(AUTHORIZATION_ACTIONS.length, 35);
+  assert.equal(new Set(AUTHORIZATION_ACTIONS).size, 35);
   assert.equal(isAuthorizationAction("*"), false);
   assert.equal(isAuthorizationAction("task body says project.disable"), false);
   assert.equal(isAuthorizationAction("task.create"), true);
-  assert.deepEqual([1, 2, 3, 4].map((version) => actionsForVocabulary(version).length), [19, 23, 29, 30]);
-  assert.equal([1, 2, 3, 4].every(isAuthorizationVocabularyVersion), true);
-  assert.equal([0, 5, 6, 7, "4"].some(isAuthorizationVocabularyVersion), false);
+  assert.deepEqual([1, 2, 3, 4, 5].map((version) => actionsForVocabulary(version).length), [19, 23, 29, 30, 35]);
+  assert.equal([1, 2, 3, 4, 5].every(isAuthorizationVocabularyVersion), true);
+  assert.equal([0, 6, 7, "5"].some(isAuthorizationVocabularyVersion), false);
 });
 
 test("authorization requires exact actor, action, scope revisions, lifetime, revocation, policy, and confirmation", () => {

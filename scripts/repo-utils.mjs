@@ -62,6 +62,8 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/persistence/values.ts",
   "src/product-runtime.ts",
   "src/project-registry.ts",
+  "src/workspace-application.ts",
+  "src/workspace-port.ts",
 ]);
 
 export const EXPECTED_MIGRATION_FILES = Object.freeze([

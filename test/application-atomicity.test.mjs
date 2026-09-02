@@ -3,7 +3,7 @@ import { mkdirSync, renameSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { createApplicationService, openPersistence } from "../src/index.ts";
+import { AUTHORIZATION_ACTIONS, WORKSPACE_AUTHORIZATION_ACTIONS, createApplicationService, openPersistence } from "../src/index.ts";
 import { createApplicationServiceWithHooks } from "../src/application.ts";
 import { readApplicationStateForOwner } from "../src/persistence/application-repository.ts";
 import {
@@ -136,6 +136,63 @@ for (const stage of renewalStages) {
     }
   });
 }
+
+test("workspace vocabulary stage-5 upgrade rolls back every request, epoch, grant, decision, and audit failpoint", async () => {
+  const fixture = createPersistenceFixture("workspace-vocabulary-atomicity");
+  let store;
+  try {
+    store = await openPersistence(fixture.layout, { applicationVersion: "workspace-vocabulary-atomicity" });
+    let trustedMilliseconds = Date.parse("2026-08-29T12:00:00.000Z");
+    const trusted = {
+      ...ingress("workspace-vocabulary-atomicity"),
+      now: () => new Date(trustedMilliseconds += 1000).toISOString(),
+    };
+    const setup = createApplicationService(store, trusted);
+    assert.equal(setup.bootstrap({ kind: "authorization.bootstrap", expiresAt: "2026-09-20T12:00:00.000Z" }).ok, true);
+    for (let version = 2; version <= 4; version += 1) {
+      assert.equal(setup.upgrade({
+        kind: "authorization.capability.upgrade", expiresAt: "2026-09-20T12:00:00.000Z",
+      }).ok, true);
+    }
+    const exactDispatcherStage = structuredClone(readApplicationStateForOwner(store));
+    assert.equal(exactDispatcherStage.epochs.at(-1).vocabularyVersion, 4);
+    const stages = [
+      "request",
+      "epoch",
+      ...AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`),
+      "decision",
+      "audit",
+    ];
+    for (const stage of stages) {
+      const faulting = createApplicationServiceWithHooks(store, trusted, {
+        afterStage(current) {
+          if (current === stage) throw new Error(`failpoint:${stage}`);
+        },
+      });
+      assert.throws(
+        () => faulting.upgrade({
+          kind: "authorization.capability.upgrade", expiresAt: "2026-09-20T12:00:00.000Z",
+        }),
+        (error) => expectFailpoint(error, stage),
+        stage,
+      );
+      assert.deepEqual(readApplicationStateForOwner(store), exactDispatcherStage, stage);
+    }
+    const upgraded = setup.upgrade({
+      kind: "authorization.capability.upgrade", expiresAt: "2026-09-20T12:00:00.000Z",
+    });
+    assert.equal(upgraded.ok, true, JSON.stringify(upgraded));
+    assert.equal(upgraded.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
+    const current = readApplicationStateForOwner(store);
+    assert.equal(current.epochs.at(-1).vocabularyVersion, 5);
+    assert.equal(WORKSPACE_AUTHORIZATION_ACTIONS.every((action) => current.grants.some(
+      (grant) => grant.action === action && grant.revokedAt === null,
+    )), true);
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
 
 test("a competing capability renewal wins once and makes the stale preflight a no-write rejection", async () => {
   const fixture = createPersistenceFixture("renewal-cas-winner");

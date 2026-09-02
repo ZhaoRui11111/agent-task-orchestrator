@@ -7,7 +7,8 @@ versioning; forward migration and downgrade-by-restore policy; and the evidence
 required for a platform or external API support claim. The project now has one
 internal current SQLite baseline at schema version `1`, a provisional package-root
   Domain/ProjectRegistry/authorization/application/claim/Manual-loop/dispatcher/
-  persistence surface, an implemented closed `ato.execution/v1` local port, and
+  workspace/persistence surface, implemented closed pure `ato.execution/v1` and
+`ato.workspace/v1` local ports, and
 one implemented provisional `ato.api/v1` local explicit-Manual product CLI major.
 It still has no released product,
 validated platform, or supported external API.
@@ -24,8 +25,9 @@ create or change this policy.
   `0` means a genuinely fresh database with no application object and shipped
   versions begin at `1`. The current and only accepted target is `1`.
   `0001-current-baseline.sql` directly owns the complete implemented local
-  explicit-Manual Phase 2 storage shape, including lifecycle state-digest
-  version 1 and authorization vocabularies 1 through 4. Schema version and
+  explicit-Manual Phase 2 plus durable workspace-foundation storage shape,
+  including lifecycle state-digest version 1 and authorization vocabularies 1
+  through 5. Schema version and
   authorization vocabulary are independent counters. Exact migration
   identity, checksum, allocation, and mechanics are owned by the
   [persistence contract](persistence-contract.md#migration-identity-and-atomicity).
@@ -65,6 +67,9 @@ It contains exactly the complete local explicit-Manual Phase 2 product documente
 there. Omitting the version and selecting `ato.api/v1` explicitly are identical;
 all other majors are unsupported before runtime construction or protected state
 evaluation. This major is not a released stability or platform-support promise.
+The package may expose independent library ports and services without adding a
+CLI command: `ato.workspace/v1` and the workspace application service therefore
+do not change the closed 33-command/37-error `ato.api/v1` grammar.
 
 ### Unreleased current-v1 reset
 
@@ -106,6 +111,17 @@ receipt, or consumer existed, so no compatible reader or artifact was changed.
 The corrected v1 is now implemented and closed. A later required-field,
 authorization, side-effect, lifecycle, receipt, or error-meaning change requires
 `ato.execution/v2`; an adapter version bump alone cannot reinterpret v1.
+
+EP-03A is the first implementation of `ato.workspace/v1`. The package was still
+private and unreleased, and no earlier workspace implementation, export,
+negotiation, persisted receipt, or supported adapter existed. Its exact
+five-operation request/subject/receipt/failure shapes are now closed: changing a
+required field, identity/revision/fence relationship, operation side effect,
+receipt code/state/outcome relationship, evidence-reference rule, or error
+meaning requires `ato.workspace/v2`. A backend version bump cannot reinterpret
+v1. The unexported test Fake proves only the local contract and durable
+coordinator; no production filesystem/Git adapter or platform compatibility is
+claimed.
 
 ## Forward migration
 

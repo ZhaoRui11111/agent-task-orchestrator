@@ -5,16 +5,18 @@
 This file is the sole normative owner of port directions, current port
 identifiers and versions, operation shapes, receipt envelopes, and adapter
 error taxonomy. The package implements the pure `ato.execution/v1` contract
-kit, one production `manual-local` adapter backed by the current schema-version-1 local Manual
-journal, and its narrow `ato.manual-outcome-control/v1` control. The Fake
-backend is test-only and unexported. The Manual dispatcher composes that
+kit, the pure `ato.workspace/v1` contract kit, one production `manual-local`
+adapter backed by the current schema-version-1 local Manual journal, and its
+narrow `ato.manual-outcome-control/v1` control. Fake backends are test-only and
+unexported. The Manual dispatcher composes that
 unchanged execution port and adds no adapter contract. The sole current
 `ato.api/v1` product facade can invoke the dispatcher and reliable loop, but it
 does not change `ato.execution/v1`, turn the local journal into Task-content
-execution, or add an adapter. Workspace,
-Scheduler, ProjectPolicy, and Completion ports remain planned. No vendor,
-operating system, external API, or released product platform is currently
-supported.
+execution, or add an adapter. The typed workspace application service composes
+`ato.workspace/v1`, but no production filesystem/Git workspace adapter or CLI
+workspace command exists. Scheduler, ProjectPolicy, and Completion ports remain
+planned. No vendor, operating system, external API, or released product
+platform is currently supported.
 
 Business rules remain with their linked owners. An adapter translates a
 versioned port and cannot change Task state semantics, authorize an operation,
@@ -23,7 +25,7 @@ declare an unverified external effect successful, or write SQLite directly.
 | Port | Direction relative to core | Current contract ID | Responsibility boundary |
 | --- | --- | --- | --- |
 | Execution | Outbound: reliable application loop calls adapter; the implemented Manual dispatcher calls that loop | `ato.execution/v1` | Start, resume, inspect, or request cancellation of one no-workspace execution turn |
-| Workspace | Outbound: dispatcher calls adapter | `ato.workspace/v1` | Reserve, create, inspect, recover, or request cleanup of an isolated workspace |
+| Workspace | Outbound: workspace application coordinator calls injected backend | `ato.workspace/v1` | Reserve, create, inspect, recover, or request cleanup of one exactly bound workspace generation; current backend is test-only Fake |
 | Scheduler | Outbound lifecycle plus inbound trigger delivery | `ato.scheduler/v1` | Register/inspect/remove a schedule and deliver a bounded dispatch trigger |
 | ProjectPolicy | Outbound: application calls adapter | `ato.project-policy/v1` | Evaluate mutation, completion requirements, integration, and cleanup policy |
 | Completion | Outbound: application calls adapter | `ato.completion/v1` | Run and inspect named completion gates and return bound gate evidence |
@@ -34,11 +36,16 @@ compatible. This file owns the current shapes.
 
 ## Operation-class envelopes
 
-Every call contains its exact `contract_id`, adapter ID/version, correlation ID,
-requested deadline, and only opaque references to sensitive input. It then uses
-exactly one class below; fields from another class are not required null
-placeholders. Each operation section states which Project, Task, execution, run,
-trigger, workspace, or schedule identities are applicable.
+Each implemented port section below owns one exact closed call shape; unknown,
+missing, accessor-backed, or cross-class fields are rejected. The generic
+classes describe responsibility boundaries shared by current and later ports,
+not a field union that an implemented v1 call may extend. In particular,
+`ato.workspace/v1` uses the exact specialized envelope documented in its
+section and keeps actor, authorization-decision, confirmation, and policy facts
+inside the durable application owner rather than forwarding them to the
+backend. Fields from another class are never accepted as nullable placeholders.
+Each operation section states which Project, Task, execution, run, trigger,
+workspace, or schedule identities are applicable.
 
 ### Mutating external-effect call
 
@@ -188,23 +195,67 @@ prepare-only decision.
 
 ## WorkspaceBackend: `ato.workspace/v1`
 
-Operations are:
+This pure closed contract kit is implemented and exported. It contains no
+filesystem, Git, child-process, vendor, scheduler, policy, or CLI code. The only
+current implementation of `WorkspaceBackend` is an unexported disposable test
+Fake, so its contract and durable protocol are current while real path/Git
+effects and platform behavior are not.
 
-- `reserve` (mutating-effect, `workspace.reserve`): binds Project repository identity, execution, requested generation,
-  base object ID, and trusted workspace-root identity;
-- `create` (mutating-effect, `workspace.create`): consumes the reservation and returns canonical path, workspace ID,
-  generation, repository identity, branch/ref, base/head object IDs, inventory,
-  and ownership receipt;
-- `inspect` (read/inspection, `workspace.inspect`): returns current canonical path, Git registration, branch/ref,
-  base/head, dirty/untracked/ignored summary, path-safety verdict, and ownership
-  match without mutation;
-- `recover` (mutating-effect, `workspace.recover`): consumes an unfinished workspace intent and returns observed
-  absent/partial/complete/ambiguous state plus the same identity fields; and
-- `cleanup` (mutating-effect, `workspace.cleanup`): consumes a current cleanup allow decision and ownership receipt and
-  reports refused/removed/partial with an exact observed inventory.
+Every request has exactly `contractId`, `operation`, `operationId`,
+`idempotencyKey`, `correlationId`, nullable `causationId`, `adapterId`,
+`adapterVersion`, and `subject`. The exact subject binds:
+
+- Project ID, resource/config revisions, and opaque canonical root identity;
+- Task ID/revision;
+- dispatcher run ID/revision, member ID/revision, and membership revision;
+- execution ID/revision, attempt number, and fencing token;
+- workspace ID, positive generation/revision, trusted workspace-root identity,
+  and creator operation ID; and
+- one bounded base reference.
+
+All identifiers and references are bounded NFC strings; all revisions,
+generation, attempt, and fence values are positive safe integers. Unknown,
+missing, accessor-backed, proxy-throwing, extra, or differently cased fields
+fail before backend dispatch. The operation is exactly one of:
+
+- `reserve` for `workspace.reserve`, binding the allocated generation and base
+  reference;
+- `create` for `workspace.create`, consuming that exact reserved generation;
+- `inspect` for `workspace.inspect`, observing without backend mutation;
+- `recover` for `workspace.recover`, causally reconciling one durable ambiguous
+  operation; or
+- `cleanup` for `workspace.cleanup`, requesting removal only after the
+  application owner has obtained its separate confirmation and current allow.
+
+A successful backend result contains only `ok: true` plus one exact receipt.
+The receipt repeats contract/operation/idempotency/adapter/workspace/root
+identity, reports external state `absent`, `reserved`, `partial`, `complete`,
+`ambiguous`, `removed`, or `refused`; outcome `succeeded`, `refused`, or
+`ambiguous`; one operation-specific
+closed code, nullable canonical path/repository/registration/branch/base/HEAD
+observations, path-safety and ownership verdicts, bounded tracked/modified/
+untracked/ignored counts, nullable opaque evidence reference, and canonical UTC
+observation time. Complete state requires canonical path, repository and
+registration identities, base/HEAD identities, `safe`, and ownership match;
+absent, removed, and refused states cannot smuggle a path/registration/branch/
+HEAD value. Receipt code, outcome, and state must form one allowed combination.
+
+A failed result contains only `ok: false` plus category, bounded stable code,
+retryable/ambiguous flags, nullable canonical retry time, and nullable opaque
+evidence reference. The workspace-v1 category set is exactly
+`invalid_request`, `incompatible_contract`, `unauthorized`, `policy_denied`,
+`not_found`, `conflict`, `stale_revision`, `busy`, `rate_limited`,
+`resource_exhausted`, `transient_external`, `permanent_external`,
+`ambiguous_external_state`, `cancelled`, and `integrity_failure`; categories belonging only to
+other ports are rejected. Evidence references are null or 1–128 characters
+matching `[A-Za-z0-9][A-Za-z0-9._:-]*`; a raw path, URL credential, message,
+payload, SQL, stack, or secret is invalid.
 
 The [completion and workspace contract](completion-workspace-contract.md) owns
-topology, receipt meaning, path/reparse checks, and cleanup eligibility.
+the implemented durable generation topology and the still-planned real
+path/reparse, ownership-receipt, Git integration, and cleanup-eligibility rules.
+The [reliability protocol](reliability-protocol.md) owns intent, observation,
+verification, finalization, response-loss, and restart handling.
 
 ## SchedulerBackend: `ato.scheduler/v1`
 

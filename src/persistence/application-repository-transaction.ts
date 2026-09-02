@@ -1,4 +1,5 @@
 import type { DomainMutation, DomainSnapshot, ProjectDomainMutation } from "../domain.ts";
+import type { WorkspaceFailureCategory } from "../workspace-port.ts";
 import { runWriteTransaction } from "./database.ts";
 import type { SqliteDatabase } from "./database.ts";
 import { normalizeSqliteFailure, persistenceFailure } from "./errors.ts";
@@ -38,6 +39,15 @@ import type {
   DispatcherMemberDenialDecisionRecord,
   DispatcherMemberDenialAuditRecord,
   DispatcherRunSummaryRecord,
+  WorkspaceGenerationRecord,
+  WorkspaceGenerationStatus,
+  WorkspaceAuthorizationDecisionRecord,
+  WorkspaceOperationIntentRecord,
+  WorkspaceIntentState,
+  WorkspaceObservationRecord,
+  WorkspaceVerifiedReceiptRecord,
+  WorkspaceFinalizationRecord,
+  WorkspaceEventRecord,
   ApplicationState,
   NewGrantRecord,
   NewLocalIdentityRecord,
@@ -569,6 +579,265 @@ export class ApplicationTransaction {
       record.verifiedReceiptId, record.finalizationId, record.preTaskRevision,
       record.postTaskRevision, record.requestId, record.decisionId, record.auditId,
       record.confirmationId, record.createdAt,
+    );
+  }
+
+  insertWorkspaceGeneration(record: WorkspaceGenerationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO workspace_generations(
+        workspace_id, generation, revision, status, project_id, project_resource_revision,
+        project_config_revision, project_root_key, task_id, task_revision, run_id, run_revision,
+        member_id, membership_revision, member_revision, execution_id, execution_revision,
+        attempt_number, fencing_token, workspace_root_key,
+        creator_operation_id, predecessor_generation, predecessor_revision, base_reference,
+        contract_id, adapter_id, adapter_version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+    ).run(
+      record.workspaceId, record.generation, record.revision, record.status, record.projectId,
+      record.projectResourceRevision, record.projectConfigRevision, record.projectRootKey,
+      record.taskId, record.taskRevision, record.runId, record.runRevision,
+      record.memberId, record.membershipRevision, record.memberRevision, record.executionId,
+      record.executionRevision, record.attemptNumber, record.fencingToken, record.workspaceRootKey,
+      record.creatorOperationId, record.predecessorGeneration, record.predecessorRevision,
+      record.baseReference, record.contractId, record.adapterId, record.adapterVersion,
+      record.createdAt, record.updatedAt,
+    );
+  }
+
+  transitionWorkspaceGeneration(
+    workspaceId: string,
+    generation: number,
+    expectedRevision: number,
+    expectedStatus: WorkspaceGenerationStatus,
+    nextStatus: WorkspaceGenerationStatus,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE workspace_generations
+       SET status=?, revision=revision+1, updated_at=?
+       WHERE workspace_id=? AND generation=? AND revision=? AND status=?`,
+    ).run(nextStatus, updatedAt, workspaceId, generation, expectedRevision, expectedStatus);
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Workspace generation lifecycle CAS failed", { workspaceId, generation });
+    }
+  }
+
+  insertWorkspaceAuthorizationDecision(record: WorkspaceAuthorizationDecisionRecord): void {
+    this.#database.prepare(
+      `INSERT INTO workspace_authorization_decisions(
+        decision_id, request_id, operation_id, binding_revision, phase, actor_id, action,
+        result, reason, policy_result, grant_id, grant_revision, project_id,
+        project_resource_revision, project_config_revision, execution_id, execution_revision,
+        fencing_token, workspace_id, generation, generation_revision, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+    ).run(
+      record.decisionId, record.requestId, record.operationId, record.bindingRevision, record.phase,
+      record.actorId, record.action, record.result, record.reason, record.policy, record.grantId,
+      record.grantRevision, record.projectId, record.projectResourceRevision,
+      record.projectConfigRevision, record.executionId, record.executionRevision,
+      record.fencingToken, record.workspaceId, record.generation, record.generationRevision,
+      record.createdAt,
+    );
+  }
+
+  insertWorkspaceIntent(record: WorkspaceOperationIntentRecord): void {
+    this.#database.prepare(
+      `INSERT INTO workspace_operation_intents(
+        intent_id, operation_id, idempotency_key, operation_kind, action, state, revision,
+        actor_id, request_id, correlation_id, causation_id, current_authorization_decision_id,
+        authorization_binding_revision, confirmation_id, workspace_id, generation,
+        expected_generation_revision, expected_generation_status, last_observation_number,
+        last_failure_category, last_failure_code, last_failure_retryable, last_failure_ambiguous,
+        contract_id, adapter_id, adapter_version, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+    ).run(
+      record.intentId, record.operationId, record.idempotencyKey, record.operationKind,
+      record.action, record.state, record.revision, record.actorId, record.requestId,
+      record.correlationId, record.causationId, record.currentAuthorizationDecisionId,
+      record.authorizationBindingRevision, record.confirmationId, record.workspaceId,
+      record.generation, record.expectedGenerationRevision, record.expectedGenerationStatus,
+      record.lastObservationNumber, record.lastFailureCategory, record.lastFailureCode,
+      record.lastFailureRetryable === null ? null : record.lastFailureRetryable ? 1 : 0,
+      record.lastFailureAmbiguous === null ? null : record.lastFailureAmbiguous ? 1 : 0,
+      record.contractId, record.adapterId, record.adapterVersion, record.createdAt, record.updatedAt,
+    );
+  }
+
+  startWorkspaceIntent(
+    intentId: string,
+    expectedRevision: number,
+    expectedDecisionId: string,
+    expectedBindingRevision: number,
+    actDecisionId: string,
+    actBindingRevision: number,
+    generationRevision: number,
+    generationStatus: WorkspaceGenerationStatus,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE workspace_operation_intents
+       SET state='executing', current_authorization_decision_id=?, authorization_binding_revision=?,
+         expected_generation_revision=?, expected_generation_status=?, revision=revision+1, updated_at=?
+       WHERE intent_id=? AND state='pending' AND revision=?
+         AND current_authorization_decision_id=? AND authorization_binding_revision=?`,
+    ).run(
+      actDecisionId, actBindingRevision, generationRevision, generationStatus, updatedAt,
+      intentId, expectedRevision, expectedDecisionId, expectedBindingRevision,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Workspace intent act-binding CAS failed", { intentId });
+    }
+  }
+
+  observeWorkspaceIntent(
+    intentId: string,
+    expectedRevision: number,
+    nextState: Extract<WorkspaceIntentState, "observed" | "ambiguous" | "failed">,
+    observationNumber: number,
+    generationRevision: number,
+    generationStatus: WorkspaceGenerationStatus,
+    failure: Readonly<{ category: WorkspaceFailureCategory; code: string; retryable: boolean; ambiguous: boolean }> | null,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE workspace_operation_intents
+       SET state=?, last_observation_number=?, last_failure_category=?, last_failure_code=?,
+         last_failure_retryable=?, last_failure_ambiguous=?, expected_generation_revision=?,
+         expected_generation_status=?, revision=revision+1, updated_at=?
+       WHERE intent_id=? AND state='executing' AND revision=? AND last_observation_number=?`,
+    ).run(
+      nextState, observationNumber, failure?.category ?? null, failure?.code ?? null,
+      failure === null ? null : failure.retryable ? 1 : 0,
+      failure === null ? null : failure.ambiguous ? 1 : 0,
+      generationRevision, generationStatus, updatedAt, intentId, expectedRevision, observationNumber - 1,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Workspace observation CAS failed", { intentId });
+    }
+  }
+
+  verifyWorkspaceIntent(intentId: string, expectedRevision: number, updatedAt: string): void {
+    const result = this.#database.prepare(
+      `UPDATE workspace_operation_intents SET state='verified', revision=revision+1, updated_at=?
+       WHERE intent_id=? AND state='observed' AND revision=?`,
+    ).run(updatedAt, intentId, expectedRevision);
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Workspace verification CAS failed", { intentId });
+    }
+  }
+
+  terminateWorkspaceIntent(
+    intentId: string,
+    expectedRevision: number,
+    expectedState: Extract<WorkspaceIntentState, "pending" | "executing" | "observed" | "verified">,
+    nextState: Extract<WorkspaceIntentState, "ambiguous" | "failed">,
+    expectedDecisionId: string,
+    expectedBindingRevision: number,
+    terminalDecisionId: string,
+    terminalBindingRevision: number,
+    generationRevision: number,
+    generationStatus: WorkspaceGenerationStatus,
+    failure: Readonly<{ category: WorkspaceFailureCategory; code: string; retryable: boolean; ambiguous: boolean }>,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE workspace_operation_intents
+       SET state=?, current_authorization_decision_id=?, authorization_binding_revision=?,
+         expected_generation_revision=?, expected_generation_status=?,
+         last_failure_category=?, last_failure_code=?, last_failure_retryable=?,
+         last_failure_ambiguous=?, revision=revision+1, updated_at=?
+       WHERE intent_id=? AND state=? AND revision=?
+         AND current_authorization_decision_id=? AND authorization_binding_revision=?`,
+    ).run(
+      nextState, terminalDecisionId, terminalBindingRevision, generationRevision, generationStatus,
+      failure.category, failure.code, failure.retryable ? 1 : 0, failure.ambiguous ? 1 : 0,
+      updatedAt, intentId, expectedState, expectedRevision, expectedDecisionId, expectedBindingRevision,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Workspace terminal intent CAS failed", { intentId });
+    }
+  }
+
+  finalizeWorkspaceIntent(
+    intentId: string,
+    expectedRevision: number,
+    expectedDecisionId: string,
+    expectedBindingRevision: number,
+    finalizeDecisionId: string,
+    finalizeBindingRevision: number,
+    generationRevision: number,
+    generationStatus: WorkspaceGenerationStatus,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE workspace_operation_intents
+       SET state='finalized', current_authorization_decision_id=?, authorization_binding_revision=?,
+         expected_generation_revision=?, expected_generation_status=?, revision=revision+1, updated_at=?
+       WHERE intent_id=? AND state='verified' AND revision=?
+         AND current_authorization_decision_id=? AND authorization_binding_revision=?`,
+    ).run(
+      finalizeDecisionId, finalizeBindingRevision, generationRevision, generationStatus, updatedAt,
+      intentId, expectedRevision, expectedDecisionId, expectedBindingRevision,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Workspace finalization binding CAS failed", { intentId });
+    }
+  }
+
+  insertWorkspaceObservation(record: WorkspaceObservationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO workspace_observations(
+        observation_id, intent_id, observation_number, adapter_receipt_id, receipt_sha256,
+        authorization_decision_id, external_state, outcome, code, path_safety, ownership_match,
+        tracked_count, modified_count, untracked_count, ignored_count, evidence_reference, observed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+    ).run(
+      record.observationId, record.intentId, record.observationNumber, record.adapterReceiptId,
+      record.receiptSha256, record.authorizationDecisionId, record.externalState, record.outcome,
+      record.code, record.pathSafety, record.ownershipMatch === null ? null : record.ownershipMatch ? 1 : 0,
+      record.trackedCount, record.modifiedCount, record.untrackedCount, record.ignoredCount,
+      record.evidenceReference, record.observedAt,
+    );
+  }
+
+  insertWorkspaceReceipt(record: WorkspaceVerifiedReceiptRecord): void {
+    this.#database.prepare(
+      `INSERT INTO workspace_verified_receipts(
+        verified_receipt_id, intent_id, observation_id, observation_number, adapter_receipt_id,
+        receipt_sha256, workspace_id, generation, generation_revision, external_state, outcome, code, verified_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+    ).run(
+      record.verifiedReceiptId, record.intentId, record.observationId, record.observationNumber,
+      record.adapterReceiptId, record.receiptSha256, record.workspaceId, record.generation,
+      record.generationRevision, record.externalState, record.outcome, record.code, record.verifiedAt,
+    );
+  }
+
+  insertWorkspaceFinalization(record: WorkspaceFinalizationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO workspace_finalizations(
+        finalization_id, intent_id, verified_receipt_id, authorization_decision_id,
+        outcome, code, resulting_generation_status, resulting_generation_revision, finalized_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+    ).run(
+      record.finalizationId, record.intentId, record.verifiedReceiptId,
+      record.authorizationDecisionId, record.outcome, record.code,
+      record.resultingGenerationStatus, record.resultingGenerationRevision, record.finalizedAt,
+    );
+  }
+
+  insertWorkspaceEvent(record: WorkspaceEventRecord): void {
+    this.#database.prepare(
+      `INSERT INTO workspace_events(
+        event_id, operation_id, intent_id, event_kind, outcome, reason_code, actor_id,
+        correlation_id, causation_id, workspace_id, generation, generation_revision,
+        observation_number, evidence_reference, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+    ).run(
+      record.eventId, record.operationId, record.intentId, record.eventKind, record.outcome,
+      record.reasonCode, record.actorId, record.correlationId, record.causationId,
+      record.workspaceId, record.generation, record.generationRevision,
+      record.observationNumber, record.evidenceReference, record.createdAt,
     );
   }
 

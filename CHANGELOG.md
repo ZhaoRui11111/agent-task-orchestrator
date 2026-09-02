@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Added the fresh-only Phase 3 durable workspace foundation: one cumulative,
+  separately confirmed authorization vocabulary version 5 with exactly
+  `workspace.reserve`, `workspace.create`, `workspace.inspect`,
+  `workspace.recover`, and high-risk `workspace.cleanup`; the pure exact
+  `ato.workspace/v1` contract kit; a typed application coordinator; and one
+  schema-version-1 generation/authorization/intent/observation/verified-receipt/
+  finalization/redacted-event lineage. Restart and failpoint evidence preserve
+  exact Project/Task/dispatcher-member/execution/fence/generation bindings and
+  refuse blind replay after effect-possible ambiguity. Only an unexported test
+  Fake implements the port; the current `ato.api/v1` grammar is unchanged and
+  no production filesystem/Git workspace adapter, ProjectPolicy,
+  CompletionBackend, release, deployment, or platform-support claim was added.
 - Reset the unreleased backup manifest, restore intent, restore receipt, and
   restore-intent manifest binding to independent current schema version 1
   formats. Their exact authorization-bound field sets and recovery protocol are

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
 import {
   CLAIM_AUTHORIZATION_ACTIONS,
+  DISPATCHER_AUTHORIZATION_ACTIONS,
   MANUAL_AUTHORIZATION_ACTIONS,
   AUTHORIZATION_ACTIONS,
   openPersistence,
@@ -172,6 +173,7 @@ test("source ato.api/v1 closes the real local Manual dispatch-to-completion loop
     for (const expected of [
       CLAIM_AUTHORIZATION_ACTIONS.length,
       MANUAL_AUTHORIZATION_ACTIONS.length,
+      DISPATCHER_AUTHORIZATION_ACTIONS.length,
       AUTHORIZATION_ACTIONS.length,
     ]) {
       const upgraded = invoke(runtimeRoot, [
@@ -337,6 +339,7 @@ test("source ato.api/v1 opens the exact current baseline and completes one resta
         for (const expected of [
           CLAIM_AUTHORIZATION_ACTIONS.length,
           MANUAL_AUTHORIZATION_ACTIONS.length,
+          DISPATCHER_AUTHORIZATION_ACTIONS.length,
           AUTHORIZATION_ACTIONS.length,
         ]) {
           const upgraded = invoke(runtimeRoot, [
