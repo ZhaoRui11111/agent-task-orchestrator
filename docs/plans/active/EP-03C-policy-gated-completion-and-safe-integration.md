@@ -6,9 +6,9 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
 {
   "schema_version": 3,
   "lifecycle": {
-    "status": "completed",
+    "status": "active",
     "created_at": "2026-09-02 20:50:53+08:00",
-    "updated_at": "2026-09-03 13:41:01+08:00",
+    "updated_at": "2026-09-03 13:44:45+08:00",
     "authorization": {
       "implementation": {
         "authorized": true,
@@ -578,8 +578,7 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
       {"id": "M2", "status": "complete", "updated_at": "2026-09-03 13:06:19+08:00"},
       {"id": "M3", "status": "complete", "updated_at": "2026-09-03 13:06:19+08:00"},
       {"id": "M4", "status": "complete", "updated_at": "2026-09-03 13:06:19+08:00"},
-      {"id": "M5", "status": "complete", "updated_at": "2026-09-03 13:06:19+08:00"},
-      {"id": "M6", "status": "complete", "updated_at": "2026-09-03 13:41:01+08:00"}
+      {"id": "M5", "status": "complete", "updated_at": "2026-09-03 13:06:19+08:00"}
     ],
     "validation_results": [
       {
@@ -706,13 +705,6 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         "status": "not_applicable",
         "method": "authorization review and offline dependency-shape evidence only",
         "evidence": "The controlling request prohibits registry and advisory-query network access, so pnpm dependency:audit and every registry/network vulnerability query were not run. Offline validation proved zero production dependencies, exactly TypeScript 5.9.3 as the sole development dependency, no install script or credential source, and made no vulnerability-status claim. The final coordinator ordinary origin/master push is the sole separate network exception.",
-        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
-      },
-      {
-        "id": "V19",
-        "status": "passed",
-        "method": "fresh exact-state A1, extra user-required independent A2, full documentation gardening, diff hygiene, exact inventory, and terminal pre-commit handoff review",
-        "evidence": "Fresh independent A1 attempt 4 reviewed git-sha1:b715d8123afe02920876a0b1ba366fba954f716c and found no residual after independently rechecking every historical A1/A2 root and F-A1-EP03C-010. Because schema-v3 forbids a current A2 closure record when current A1 findings=[], the separately user- and plan-required fresh independent A2 attempt 6 is preserved as an accepted audit attempt; it bound the same exact state, found no residual and reported closure_safe=true. Full doc-gardener scanned 146 documents with HIGH=0, MEDIUM=0, LOW=0, candidates=0 and unverified=0; current docs check passed 146/262/22/0 and git diff --check passed. The exact 16-path candidate inventory is entirely declared regular non-reparse task material with no runtime, secret, generated, outside-scope, overlapping or pre-existing-dirty member. This completed candidate delegates the still-unperformed repair result commit, current-head pathless prune, 22 exact-head gates, readiness, FF-only integration, standing-authorized ordinary origin/master push and final master verification to the Git-flow coordinator. Cleanup remains unauthorized and every other external action remains intentionally unrun.",
         "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       }
     ],
@@ -938,6 +930,14 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         "at": "2026-09-03 12:42:29+08:00",
         "evidence": "The first complete 574-test run after the cross-owner repair at git-sha1:fe2421635139bf6b8211fa646556388e6ebe26f6 passed 573/574 and exposed one exact public-boundary defect: export * from project-registry leaked the internal BigInt conversion helper through the package root. The parent replaced only that wildcard with an explicit whitelist of the pre-existing public ProjectRegistry values and types; focused public-export plus identity tests then passed 34/34 and the complete current suite passed 574/574 with unchanged ato.api/v1 and package-root names.",
         "state_id": "git-sha1:fe2421635139bf6b8211fa646556388e6ebe26f6"
+      },
+      {
+        "validation_id": "V19",
+        "attempt": 2,
+        "classification": "deterministic_failure",
+        "at": "2026-09-03 13:44:45+08:00",
+        "evidence": "After repair result commit 1061f02a19967cc7b7b469f49833f4ed47e5d76c, terminal-resolve correctly rejected the completed plan because that path already existed in parent result commit ad6f6c791fd061a1fb83afa51532a7a0ae33a3c6; its exact current blob therefore was not newly added and no unique terminal commit existed. No material byte or external state changed. The same plan is reopened through the declared active path in a dedicated history-preserving commit, after which the unchanged exact-state terminal evidence will be re-persisted by the normal active-to-completed addition and terminal-resolve rerun; neither result commit is amended or erased.",
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       }
     ],
     "contract_revisions": [
@@ -972,7 +972,7 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         "previous_approval_sha256": "35A308CAA02690A0832FC1C112A3BCD14ACD4259F4AEFE58B5519711BD617065"
       }
     ],
-    "final_summary": "EP-03C closes only the approved fresh-only local library boundary for ProjectPolicy, completion gates, durable integration reservation/recovery, configured disposable local-Git fast-forward/local-file push, policy-gated Task completion, preservation derivation, and separately authorized ownership-safe workspace cleanup through explicitly injected adapters; the default product runtime and CLI still construct none of those adapters. Exact material state git-sha1:b715d8123afe02920876a0b1ba366fba954f716c passes pnpm verify:offline through lint 283/53, strict typecheck, build, 575/575 tests with zero fail/skip/todo, docs 146/262/22/0, offline zero-production-dependency shape, 212-file package smoke, Windows SQLite with zero survivors, truthful blocked-only Codex evidence and artifact hygiene baseline/terminal zero; focused persistence path tests pass 12/12. Full documentation gardening reports zero HIGH/MEDIUM/LOW issues, candidates or unverified items. Fresh A0 approved the final 67435-byte contract; fresh exact-state A1 found no residual; the extra user-required independent A2 also found no residual and is recorded as accepted history because current A1 requires no schema closure edge. First result commit ad6f6c791fd061a1fb83afa51532a7a0ae33a3c6 was correctly reopened after V19 exposed lossy Windows inode handling and remains preserved as history. The terminal repair result commit, current-head pathless artifact prune, 22 exact-head Git-flow gates, readiness, FF-only integration, standing-authorized ordinary origin/master push and final master gates remain authorized coordinator consumers of this completed candidate; coordinator cleanup remains separately unauthorized. No dependency advisory query ran and no vulnerability-status claim is made. No real external Project, product/fixture network, credential, Codex adapter/E2E support, scheduler, MCP, PR, release or deployment is implemented or performed."
+    "final_summary": null
   }
 }
 ```
