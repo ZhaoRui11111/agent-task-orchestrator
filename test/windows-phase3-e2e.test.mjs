@@ -4,6 +4,7 @@ import {
   appendFileSync,
   existsSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -53,6 +54,10 @@ const SHA256_B = "B".repeat(64);
 const SHA256_C = "C".repeat(64);
 const BASE_TIME = "2026-08-30T12:00:00.000Z";
 const SOURCE_HEAD = "b".repeat(40);
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex").toUpperCase();
+}
 
 function composedIngress(label) {
   let sequence = 0;
@@ -413,6 +418,14 @@ test("local completion backend executes one configured gate and persists digest-
     assert.equal(evidenceText.includes("sensitive-gate-output"), false);
     const evidence = JSON.parse(evidenceText);
     assert.equal(evidence.stdoutSha256, createHash("sha256").update("sensitive-gate-output").digest("hex").toUpperCase());
+    const resultStats = lstatSync(resultPath, { bigint: true });
+    const directoryStats = lstatSync(path.dirname(resultPath), { bigint: true });
+    assert.equal(evidence.resultFileIdentitySha256, sha256(JSON.stringify({
+      device: String(resultStats.dev), inode: String(resultStats.ino), mode: Number(resultStats.mode),
+    })));
+    assert.equal(evidence.evidenceDirectoryIdentitySha256, sha256(JSON.stringify({
+      device: String(directoryStats.dev), inode: String(directoryStats.ino), mode: Number(directoryStats.mode),
+    })));
 
     const inspected = adapter.inspectGate({
       contractId: COMPLETION_CONTRACT_ID,

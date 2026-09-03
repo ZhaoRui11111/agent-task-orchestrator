@@ -179,7 +179,9 @@ single-link. Its closed record includes hashes of the evidence-directory and
 result-file device/inode/mode identities. Restart inspection opens the result
 through a no-follow descriptor and checks descriptor/path/parent/root identities
 both before and after reading instead of trusting process memory or raw command
-output. Missing, partial, exact-byte-replaced, directory- or leaf-swapped,
+output. Device and inode values are captured through lossless BigInt filesystem
+stats and canonicalized directly as decimal strings; a JavaScript number
+round-trip is forbidden. Missing, partial, exact-byte-replaced, directory- or leaf-swapped,
 reparse, hardlinked, conflicting, or digest-mismatched evidence is
 `indeterminate`/unknown and can never become a fresh pass.
 
@@ -322,7 +324,8 @@ Before every filesystem mutation or cleanup, the workspace adapter MUST:
 
 1. obtain a canonical no-reparse device/inode/mode identity for each trusted
    root and hold each mutation namespace and its ancestors as a verified worker
-   current directory for the relevant write window;
+   current directory for the relevant write window; device and inode values use
+   lossless BigInt stats with no JavaScript number round-trip;
 2. before acquiring either registration leaf, run a production capability
    attestation below both the exact `.git/worktrees` parent and exact
    `ato-workspaces` parent: a fresh ownership-bound empty child must pass a

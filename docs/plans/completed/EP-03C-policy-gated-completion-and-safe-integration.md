@@ -8,7 +8,7 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
   "lifecycle": {
     "status": "completed",
     "created_at": "2026-09-02 20:50:53+08:00",
-    "updated_at": "2026-09-03 11:09:12+08:00",
+    "updated_at": "2026-09-03 13:41:01+08:00",
     "authorization": {
       "implementation": {
         "authorized": true,
@@ -139,6 +139,11 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         "id": "C21",
         "statement": "INTEGRATION_RECEIPT_CODES is exactly inspected_unchanged, inspected_local_applied, inspected_pushed, inspected_foreign, inspected_ambiguous, applied, already_applied, apply_refused, apply_ambiguous, pushed, already_pushed, push_rejected, push_ambiguous. Every receipt has a non-null opaque evidenceReference and every object ID is a lowercase 40-hex SHA-1; C9 guarantees expectedTargetObjectId differs from sourceHeadObjectId. For inspect, both before IDs are null, both configured refs are always inspected, and state classification uses this exhaustive precedence. Local: a source match is already_at_source; otherwise an expected-target match is unchanged; otherwise a non-null object is foreign; otherwise unknown; fast_forwarded is illegal. Remote: a source match is already_at_source even when expectedRemoteHead also equals source; otherwise authoritative null with expectedRemoteHead null is absent; otherwise a non-null expected-remote match is unchanged; otherwise a non-null object is foreign; otherwise unknown; not_requested, pushed, and rejected are illegal. The mutually exclusive inspect rows are ordered: inspected_ambiguous+ambiguous iff either state is unknown; otherwise inspected_unchanged+succeeded iff local is unchanged and remote is absent|unchanged; otherwise inspected_local_applied+succeeded iff local is already_at_source and remote is absent|unchanged; otherwise inspected_pushed+succeeded iff both are already_at_source; every other fully authoritative combination is inspected_foreign+refused, including local expected plus remote source and combinations with either foreign state. For apply, both remote IDs are null and remoteState=not_requested: applied+succeeded has expected-target before/source after and localState=fast_forwarded; already_applied+succeeded has source before/after and localState=already_at_source; the sole active-preserving apply_refused+refused row has expected-target before/after and localState=unchanged; an authoritative non-null other local object uses apply_refused+refused with localState=foreign and makes the reservation ambiguous; apply_ambiguous+ambiguous has localAfterObjectId=null and localState=unknown. For push, both local IDs equal source and localState=already_at_source. already_pushed+succeeded applies whenever remote before/after equal source, including expectedRemoteHead equal to source. pushed+succeeded requires expectedRemoteHead differ from source, remoteBeforeObjectId equal that nullable expected value, remoteAfterObjectId equal source, and remoteState=pushed. The sole active-preserving push_rejected+refused row also requires expectedRemoteHead differ from source and proves no effect by keeping both remote IDs equal to a non-null expected remote with remoteState=rejected|unchanged, or both null with expectedRemoteHead null, authoritative inspection, and remoteState=absent. An authoritative non-null other remote object uses push_rejected+refused with remoteState=foreign and makes the reservation ambiguous; push_ambiguous+ambiguous has remoteAfterObjectId=null and remoteState=unknown, distinct from authoritative absent. Normal succeeded rows finalize success; only the named nonforeign no-effect refusal rows fail their current intent while preserving active status for a separately authorized new intent. Every foreign or unknown effect row makes both intent and reservation ambiguous, prohibits a new effect, and can be resolved only by C18's inspect terminalization. Every other operation/outcome/code/state/equality/nullability/finalization combination is invalid.",
         "source": "docs/reference/adapter-contracts.md#operation-class-receipts; docs/reference/completion-workspace-contract.md#git-partial-success-protocol; docs/reference/reliability-protocol.md"
+      },
+      {
+        "id": "C22",
+        "statement": "Every semantic filesystem-object identity used by ProjectRegistry Project/runtime-root receipts, trusted persistence runtime-layout ownership, persistence regular-file/path/descriptor/unlink/lock/connection-receipt guards, completion evidence, local Git integration, or workspace mutation captures device and inode from BigInt lstat/fstat and canonicalizes their exact decimal strings before any JavaScript number conversion. Mode and byte size remain bounded numeric contract fields only after explicit safe-range conversion; link counts and byte-length comparisons remain BigInt where supplied by BigInt stats. Ordinary numeric stat may be used only for presence/type checks that do not create or compare semantic identity. Windows regressions independently recompute actual BigInt identities, require high-bit values to remain exact, and prove replacement objects are rejected at Project revalidation, trusted-runtime bootstrap/runtime-layout revalidation, and persistence path-versus-descriptor/lock/receipt boundaries.",
+        "source": "docs/reference/completion-workspace-contract.md; docs/reference/persistence-contract.md; docs/security/threat-model.md"
       }
     ],
     "authorization": {
@@ -229,8 +234,11 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         {"path": "src/persistence/doctor.ts", "kind": "file"},
         {"path": "src/persistence/index.ts", "kind": "file"},
         {"path": "src/persistence/migrations.ts", "kind": "file"},
+        {"path": "src/persistence/runtime.ts", "kind": "file"},
+        {"path": "src/persistence/values.ts", "kind": "file"},
         {"path": "src/product-runtime.ts", "kind": "file"},
         {"path": "src/project-policy-port.ts", "kind": "file"},
+        {"path": "src/project-registry.ts", "kind": "file"},
         {"path": "src/workspace-application.ts", "kind": "file"},
         {"path": "src/workspace-git-adapter.ts", "kind": "file"},
         {"path": "src/workspace-port.ts", "kind": "file"},
@@ -274,6 +282,7 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         {"path": "test/product-runtime-security.test.mjs", "kind": "file"},
         {"path": "test/product-runtime.test.mjs", "kind": "file"},
         {"path": "test/project-policy-contract.test.mjs", "kind": "file"},
+        {"path": "test/project-registry.test.mjs", "kind": "file"},
         {"path": "test/workspace-application.test.mjs", "kind": "file"},
         {"path": "test/workspace-git-adapter-contract.test.mjs", "kind": "file"},
         {"path": "test/workspace-git-command-security.test.mjs", "kind": "file"},
@@ -361,7 +370,7 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         "id": "V7",
         "type": "automated",
         "target": "Tier-2 persistence writer/reader/schema closure",
-        "criterion": "Architecture, schema and repository tests prove ApplicationTransaction is the sole SQL/CAS writer and the combined state decoder plus APPLICATION_STATE_DIGEST_VERSION=2 projection is the complete reader for every C8/C19/C20 row and field; all constraints, foreign keys, child/parent checks, partial unique indexes, immutable evidence and C18 legal transition triggers are exact. A terminal reservation with any nonterminal old integration intent is corruption; a cleanup attestation without exactly one identity-matching durable cleanup intent in its permitted phase is corruption. Current-state projection, lifecycle digest v2, backup/restore and doctor include every family once; malformed/orphan/duplicate/cyclic/cross-subtype/stale/inconsistent rows fail read-only before mutation; and digest v1 or any old checksum/fingerprint/baseline is rejected byte-preservingly."
+        "criterion": "Architecture, schema and repository tests prove ApplicationTransaction is the sole SQL/CAS writer and the combined state decoder plus APPLICATION_STATE_DIGEST_VERSION=2 projection is the complete reader for every C8/C19/C20 row and field; all constraints, foreign keys, child/parent checks, partial unique indexes, immutable evidence and C18 legal transition triggers are exact. A terminal reservation with any nonterminal old integration intent is corruption; a cleanup attestation without exactly one identity-matching durable cleanup intent in its permitted phase is corruption. Current-state projection, lifecycle digest v2, backup/restore and doctor include every family once; malformed/orphan/duplicate/cyclic/cross-subtype/stale/inconsistent rows fail read-only before mutation; and digest v1 or any old checksum/fingerprint/baseline is rejected byte-preservingly. C22 tests prove exact BigInt device/inode capture and replacement refusal for Project/runtime-root receipts, runtime-layout ownership, persistence regular files, lifecycle locks and connection receipts across path, descriptor, reopen and unlink boundaries."
       },
       {
         "id": "V8",
@@ -403,7 +412,7 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         "id": "V14",
         "type": "automated",
         "target": "Path, command, prompt, evidence, and redaction security",
-        "criterion": "Hostile-shape/security tests prove traversal, root/share/device/ADS/non-NFC/case ambiguity, symlink/junction/reparse, hardlink, path swap, unsafe executable/argv/env, checked-out integration target, source/client/receive hooks, filters, submodules, sparse/alternate/promisor/replace/grafts/shallow state, credential/helper/proxy and disallowed source/destination config are rejected or inert before effect; observable hook/filter/config sentinels prove no execution and no external write. Prompt/Task injection, raw gate/Git output, SQL/stack/credential/path/URL sentinels and adapter exceptions cannot select authority, create passing evidence, or enter durable/public/default output. All fixed bounds reject over-limit input before trusted ingress or effect and no sensitive committed fixture/evidence remains."
+        "criterion": "Hostile-shape/security tests prove traversal, root/share/device/ADS/non-NFC/case ambiguity, symlink/junction/reparse, hardlink, path swap, unsafe executable/argv/env, checked-out integration target, source/client/receive hooks, filters, submodules, sparse/alternate/promisor/replace/grafts/shallow state, credential/helper/proxy and disallowed source/destination config are rejected or inert before effect; observable hook/filter/config sentinels prove no execution and no external write. C22 independently checks the actual high-bit BigInt filesystem identities before production serialization and proves no rounded numeric identity can authorize a Project/runtime/persistence or Phase-3 effect. Prompt/Task injection, raw gate/Git output, SQL/stack/credential/path/URL sentinels and adapter exceptions cannot select authority, create passing evidence, or enter durable/public/default output. All fixed bounds reject over-limit input before trusted ingress or effect and no sensitive committed fixture/evidence remains."
       },
       {
         "id": "V15",
@@ -440,7 +449,7 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
       {"id": "R1", "risk": "A gate or policy receipt can omit one semantic identity and remain falsely fresh after Task, execution, workspace, HEAD, policy, command, adapter or environment change."},
       {"id": "R2", "risk": "A policy adapter or product facade can become a second authorization/domain owner or let untrusted Task/repository content select commands and mutations."},
       {"id": "R3", "risk": "Gate execution can run an unsafe shell/config/helper, leak stdout/stderr/secrets, publish evidence inside mutable Git inventory, suffer alias/replacement, survive response loss ambiguously, or be blindly rerun."},
-      {"id": "R4", "risk": "New Tier-2 rows can split writer/reader/digest/backup ownership, admit orphan or stale evidence, or expose a partial schema as current."},
+      {"id": "R4", "risk": "New Tier-2 rows can split writer/reader/digest/backup ownership, admit orphan or stale evidence, expose a partial schema as current, or let rounded numeric filesystem identities collapse distinct Project/runtime/file/lock/receipt objects."},
       {"id": "R5", "risk": "Concurrent integration reservations or expired owners can both mutate the same target ref or write back under stale fencing."},
       {"id": "R6", "risk": "Local integration or push can partially succeed and be disguised as rollback, retried twice, forced, redirected to a network/credential path, execute source/receive hooks or filters, split a checked-out ref from its worktree, or apply over another actor's target change."},
       {"id": "R7", "risk": "Cleanup can consume a stale or cross-resource attestation or delete user/replacement content after a path swap, hardlink/reparse substitution, dirty inventory, active owner, incomplete preservation, or partial quarantine."},
@@ -507,6 +516,11 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         "id": "D11",
         "statement": "Close A0 attempt 1 before activation by treating its six findings as approval defects: the independent gate evidence topology is C7, generic completion lineage is C19, integration envelope and recovery are C17/C18, ref-only apply and validated bare push are C10/D7, cleanup proof is C20, and lifecycle digest is exactly version 2. Persist that report and require a different fresh independent A0 over the revised approval bytes.",
         "rationale": "None of these identities, state transitions, or Git safety primitives may be delegated to post-approval implementation judgment."
+      },
+      {
+        "id": "D12",
+        "statement": "Close F-A2-EP03C-004 by treating lossless filesystem identity as one cross-owner invariant rather than an adapter-local repair: ProjectRegistry, persistence runtime-layout ownership, persistence file/descriptor/lock/receipt guards, completion evidence, Git integration and workspace mutation all use C22 BigInt device/inode capture before canonical string conversion. Add only the three newly identified production owners and the focused ProjectRegistry test to the approved task scope; existing persistence and Phase-3 test owners remain the executable regression envelope.",
+        "rationale": "The observed Windows inode precision loss is one proven replacement-detection and effect-authorization root; leaving directly invoked owners on numeric stat would make the partial repair and exact-identity claims unsound."
       }
     ],
     "milestone_recovery": [
@@ -542,7 +556,7 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
       {"id": "R1", "mitigation": "Freeze the complete C4 tuple in policy/gate records and centralize freshness in one application function with one-field-at-a-time negative matrices.", "recovery": "Reject the receipt as stale without mutation, obtain new policy requirements, and run a new explicitly authorized gate operation only when current evidence permits."},
       {"id": "R2", "mitigation": "Keep ProjectPolicy pure, require preliminary policy authority, make receipts narrowing-only, inject trusted configuration out of band, and keep Domain/authorization decisions in the application owner.", "recovery": "Remove the leaked decision/config seam and re-run policy, authorization, architecture and hostile-input tests; do not add a policy fallback."},
       {"id": "R3", "mitigation": "Use exact configured executables/argv, shell=false, minimal environment, bounded timeout/output, the separate C7 no-follow evidence topology, process identity and intent-before-effect ordering.", "recovery": "Inspect the exact external owner-bound leaf; missing/partial/replaced/aliased/conflicting state stays indeterminate/ambiguous and requires an explicit new operation rather than blind replay. Product cleanup never deletes gate evidence."},
-      {"id": "R4", "mitigation": "Allocate all new rows in one baseline with strict FK/unique/transition guards; use ApplicationTransaction as sole writer and combined reader/digest/backup projection as sole ingress.", "recovery": "Refuse the database read-only, preserve bytes, repair the current fresh baseline and rerun fresh/reopen/corruption/backup tests without migration or SQL repair."},
+      {"id": "R4", "mitigation": "Allocate all new rows in one baseline with strict FK/unique/transition guards; use ApplicationTransaction as sole writer and combined reader/digest/backup projection as sole ingress; capture every Project/runtime/file/lock/receipt semantic device/inode identity through C22 BigInt stats before conversion.", "recovery": "Refuse the database and affected Project/runtime identity read-only, preserve bytes, repair the current fresh baseline or identity owner, and rerun exact BigInt, replacement, reopen, corruption and backup tests without migration or SQL repair."},
       {"id": "R5", "mitigation": "Use a partial unique current-target index, monotonic fence sequence, exact owner/lease/revision CAS and observation-first expiry/takeover.", "recovery": "Stop mutations, retain current/ambiguous reservation, inspect target refs, and terminalize only through the matching recover CAS before replacement."},
       {"id": "R6", "mitigation": "Use the exact C17/C18 unions and C21 mutually exclusive/exhaustive state machine; require distinct expected target/source; make apply ref-only expected-old update-ref on an un-checked-out target; separately persist apply/push; reject hostile repository/destination topology and config; prohibit force/network/credentials; and inspect exact local plus configured local-remote refs after every uncertain result.", "recovery": "Preserve local success and exact remote observations. Only a named nonforeign authoritative no-effect refusal may leave active status for a separately authorized new push; unknown, foreign or inconsistent state blocks every new effect and requires authorized inspection that finalizes the old intent before terminalizing the reservation, after which a higher-fence replacement may be acquired."},
       {"id": "R7", "mitigation": "Issue and point-of-use revalidate C20 only after policy, authorization, generic completion/terminal execution, ownership, quiescence, released integration and preservation proof; revalidate no-follow inventory; quarantine exact leaves with identity checks; remove only enumerated regular files/empty dirs; and propagate every acquired/renamed effect.", "recovery": "Inspect deterministic quarantine/original identities, never delete an unproved object or C7 evidence, and keep recovery_required until exact present or absent postconditions are independently proven."},
@@ -560,282 +574,173 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
       "base_transitions": []
     },
     "milestone_progress": [
-      {"id": "M1", "status": "complete", "updated_at": "2026-09-02 22:50:21+08:00"},
-      {"id": "M2", "status": "complete", "updated_at": "2026-09-03 09:28:24+08:00"},
-      {"id": "M3", "status": "complete", "updated_at": "2026-09-03 09:28:24+08:00"},
-      {"id": "M4", "status": "complete", "updated_at": "2026-09-03 09:28:24+08:00"},
-      {"id": "M5", "status": "complete", "updated_at": "2026-09-03 09:28:24+08:00"},
-      {"id": "M6", "status": "complete", "updated_at": "2026-09-03 11:09:12+08:00"}
+      {"id": "M1", "status": "complete", "updated_at": "2026-09-03 12:16:14+08:00"},
+      {"id": "M2", "status": "complete", "updated_at": "2026-09-03 13:06:19+08:00"},
+      {"id": "M3", "status": "complete", "updated_at": "2026-09-03 13:06:19+08:00"},
+      {"id": "M4", "status": "complete", "updated_at": "2026-09-03 13:06:19+08:00"},
+      {"id": "M5", "status": "complete", "updated_at": "2026-09-03 13:06:19+08:00"},
+      {"id": "M6", "status": "complete", "updated_at": "2026-09-03 13:41:01+08:00"}
     ],
     "validation_results": [
       {
         "id": "V1",
         "status": "passed",
         "method": "schema-v3 trace, predecessor terminal-resolve, successor chain-check, and local ref inspection",
-        "evidence": "State refresh after all three A2 residual repairs identified exact current material state git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4 with no outside-scope, overlap or pre-existing-dirty paths. Approval digest remains 35A308CAA02690A0832FC1C112A3BCD14ACD4259F4AEFE58B5519711BD617065 at exact base and HEAD 2485608a1684ea6430adcb8d004979a90d689a69. EP-03B terminal-resolve uniquely selected that commit, chain-check accepted EP-03C, and master, origin/master and task base all matched it.",
-        "state_id": "approval-sha256:35A308CAA02690A0832FC1C112A3BCD14ACD4259F4AEFE58B5519711BD617065"
+        "evidence": "After the F-A2-EP03C-004 approval-scope revision, schema-v3 parsing and current scope inspection identify approval SHA-256 172AD37726545F99A1CD60F142F92043A051CDE4AAA764F36BC0AE764AC30434 over 67435 canonical bytes at unchanged exact base 2485608a1684ea6430adcb8d004979a90d689a69. Fresh independent A0 attempt 7 reproduced those bytes and approved the expanded C22 envelope with findings=[]. EP-03B terminal-resolve and chain-check uniquely select that base; the task branch contains first result commit ad6f6c791fd061a1fb83afa51532a7a0ae33a3c6 plus only the declared repair/terminal-plan delta, with empty outside-scope, overlap and pre-existing-dirty inventories.",
+        "state_id": "approval-sha256:172AD37726545F99A1CD60F142F92043A051CDE4AAA764F36BC0AE764AC30434"
       },
       {
         "id": "V2",
         "status": "passed",
         "method": "focused port/application/Windows selections plus complete offline test discovery",
-        "evidence": "After all three A2 residual repairs, the focused ProjectPolicy plus completion application files passed 16/16, including the completion file's 14/14 cases; the complete Windows Phase-3 file passed 21/21 inside the full run; and the complete suite passed 573/573 with zero fail/skip/todo, covering the earlier 67/67 application/policy/workspace and 47/47 Windows Git/workspace selections. Exact project-policy/v1, completion/v1, integration/v1 and workspace/v2 grammars, operation unions, receipt matrices, the required-preservation/requires-integration invariant, cleanup attestation, old-v1 refusal and unchanged ato.api/v1 plus backup-v1 surfaces all passed.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "evidence": "After the post-result BigInt identity repair and F-A1-EP03C-010 byte-length repair, the complete current suite passed 575/575 with zero fail/skip/todo and includes every ProjectPolicy, completion, Windows Phase-3, workspace/Git, ProjectRegistry, persistence and public-export case. Exact project-policy/v1, completion/v1, integration/v1 and workspace/v2 grammars, operation unions, receipt matrices, the required-preservation/requires-integration invariant, cleanup attestation, old-v1 refusal, unchanged ato.api/v1 plus backup-v1 surfaces, lossless BigInt filesystem identity capture, and BigInt file-length equality all passed.",
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V3",
         "status": "passed",
         "method": "authorization, application, persistence, failpoint, CLI and package-runtime tests",
         "evidence": "The complete suite proved cumulative authorization stages 1 through 6, stage-6-only completion/integration actions, all four required high-risk actions, one confirmed stage per upgrade, and atomic refusal for stale, revoked, wrong-scope, wrong-root, wrong-policy and wrong-fence paths. Package smoke exercised both the workspace-stage and completion/integration-stage upgrades.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V4",
         "status": "passed",
         "method": "ProjectPolicy port, configured-adapter and Phase-3 application tests",
         "evidence": "Tests passed the exact four-operation policy grammar, deterministic allow/deny/defer receipts, current Project/config/subject identity, bounded gate/integration/preservation/cleanup facts, the required-preservation/requires-integration cross-field invariant at direct facts and result ingress, duplicate-gate refusal and preliminary policy.evaluate narrowing without SQL, filesystem, Git, grant, reservation, Domain or caller-value mutation.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V5",
         "status": "passed",
         "method": "Completion port/backend/application contract, race and durable-evidence tests",
-        "evidence": "The local completion backend passed configured gate execution and immutable digest-only evidence, deletion/replacement/hardlink/reparse/digest-drift refusal, descriptor-based parent/leaf publication and reopen race closure, bounded no-shell command handling, response-loss inspection and closed pass/fail/indeterminate outcomes. Application tests proved prepare/final authorization before the outside-transaction effect and no blind semantic replay.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "evidence": "The local completion backend passed configured gate execution and immutable digest-only evidence, deletion/replacement/hardlink/reparse/digest-drift refusal, descriptor-based parent/leaf publication and reopen race closure, bounded no-shell command handling, response-loss inspection and closed pass/fail/indeterminate outcomes. Device and inode components are now captured from BigInt stats and canonicalized as exact decimal strings before hashing; independent tests recomputed those identity hashes from BigInt values, and the read/publication race passed 12/12 in repeated isolation. Application tests proved prepare/final authorization before the outside-transaction effect and no blind semantic replay.",
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V6",
         "status": "passed",
         "method": "gate identity/freshness matrix and live Git/evidence substitution tests",
-        "evidence": "Required gates were accepted only for the exact Task/execution/fence/workspace/generation/revision/ownership/repository/HEAD/policy/config/gate/command/adapter/evidence/tool/environment tuple. Metadata-only HEAD advance, symbolic or detached mismatch, ownership substitution, object-topology drift, evidence deletion/replacement/hardlink/reparse and digest mismatch all made old evidence unusable before spawn or completion.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "evidence": "Required gates were accepted only for the exact Task/execution/fence/workspace/generation/revision/ownership/repository/HEAD/policy/config/gate/command/adapter/evidence/tool/environment tuple. Physical file and directory identities use lossless BigInt device/inode capture. Metadata-only HEAD advance, symbolic or detached mismatch, ownership substitution, object-topology drift, evidence deletion/replacement/hardlink/reparse and digest mismatch all made old evidence unusable before spawn or completion.",
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V7",
         "status": "passed",
-        "method": "architecture, migration, repository reader/writer, corruption, lifecycle-digest, backup/restore and doctor tests",
-        "evidence": "ApplicationTransaction remained the sole SQL/CAS writer; the combined current decoder and APPLICATION_STATE_DIGEST_VERSION=2 projection covered every new policy/gate/integration/completion/cleanup family. The shared facts parser and reader reject preservation=required with integration=not_required, derive valid required preservation from the verified integration digest, and reject both an impossible canonical policy pair and a different format-valid persisted digest through direct combined read, reopen and doctor with typed corruption evidence. Fresh schema, FK/index/trigger/subtype/terminal constraints, immutable evidence, backup/readback and other corruption refusal passed; prior checksum/fingerprint/digest-v1/workspace-v1 shapes were rejected byte-preservingly.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "method": "Tier-2 architecture/schema/reader-writer tests plus focused Project/runtime/file identity regressions",
+        "evidence": "The complete current 575/575 suite and current focused 12/12 persistence path selection prove the single writer/combined-reader/digest-v2 closure and exact fresh-only schema, backup/restore and doctor behavior. ProjectRegistry, trusted runtime directories, owned runtime layout, persistence regular files, lifecycle locks and connection receipts capture device/inode through BigInt lstat/fstat before exact decimal serialization; actual filesystem receipts are independently recomputed from BigInt stats, synthetic values above MAX_SAFE_INTEGER retain distinct decimal identities, unsafe numeric mode/size conversion is rejected, the read byte-length equality stays BigInt until decided, and path/descriptor/reopen/replacement guards fail closed.",
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V8",
         "status": "passed",
         "method": "Phase-3 completion application, product facade, Domain and real-SQLite tests",
         "evidence": "Only complete current policy, freshly reopened passing gates, terminal integration/preservation where required, current high-risk authority and exact CAS bindings completed the Task. Generic plus Phase-3 decision, Domain transition and unique terminal execution fact committed atomically; replay was exact and missing, stale, failed, indeterminate or competing evidence left Task/execution nonterminal. Manual observable behavior and completion separation remained intact.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V9",
         "status": "passed",
         "method": "real-SQLite reservation, lease/fence, failpoint, concurrency and recovery tests",
         "evidence": "Tests proved one current reservation per exact target, distinct target/source, monotonic fences, one racing acquire winner, exact renewal, observation-first takeover, old-intent terminalization before reservation release/expiry, and blocking of higher fences under unresolved ambiguity. Only named authoritative nonforeign no-effect results retained an active reservation; foreign, unknown and inconsistent observations terminalized through inspect-only recovery.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V10",
         "status": "passed",
         "method": "local Git integration adapter, equality-matrix, hostile-configuration and composed Windows tests",
-        "evidence": "Disposable local Git tests passed inspect, expected-old ref-only fast-forward and explicit non-force local-file push, including expected-remote/source and authoritative absent/foreign/unknown cross-products plus response-loss recovery. Checked-out targets, non-FF, dirty inventory, live source drift, escaped gitdir/common/object topology, alternates, unsafe config/hooks/filters/helpers/proxies/URLs and pointer swaps refused before effect; no network or credential source was used.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "evidence": "Disposable local Git tests passed inspect, expected-old ref-only fast-forward and explicit non-force local-file push, including expected-remote/source and authoritative absent/foreign/unknown cross-products plus response-loss recovery. Direct repository paths, Git metadata directories and open descriptors now retain exact BigInt device/inode identities. Checked-out targets, non-FF, dirty inventory, live source drift, escaped gitdir/common/object topology, alternates, unsafe config/hooks/filters/helpers/proxies/URLs and pointer swaps refused before effect; no network or credential source was used.",
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V11",
         "status": "passed",
         "method": "cleanup application/adapter point-of-use, attestation, inventory and race tests",
-        "evidence": "Cleanup reached the backend only after current actor, grant revision/expiry, policy receipt/config/expiry, completion/terminal-execution, released integration, exact ownership, self-intent-excluding quiescence and integration-derived preservation were revalidated at point of use. Revocation, expiry, policy drift, actor substitution, forged/stale attestation, dirty or foreign inventory, hardlink/reparse/path swap and partial publication all refused without deleting replacement bytes; successful fixture cleanup removed only the exact owned generation and retained gate evidence.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "evidence": "Cleanup reached the backend only after current actor, grant revision/expiry, policy receipt/config/expiry, completion/terminal-execution, released integration, exact ownership, self-intent-excluding quiescence and integration-derived preservation were revalidated at point of use. Workspace mutation identities now retain exact BigInt device/inode components. Revocation, expiry, policy drift, actor substitution, forged/stale attestation, dirty or foreign inventory, hardlink/reparse/path swap and partial publication all refused without deleting replacement bytes; successful fixture cleanup removed only the exact owned generation and retained gate evidence.",
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V12",
         "status": "passed",
         "method": "every-checkpoint failpoint, response-loss, close/reopen, concurrency and ambiguity tests",
         "evidence": "The complete suite reopened every durable prepare/execute/observe/verify/finalize boundary for gate, integration, completion and cleanup. Known authoritative state finalized once, response loss never duplicated a gate/ref update/push/completion/deletion, unknown or foreign effects remained explicit ambiguity, stale fences and terminal executions could not write back, and corrupt terminal-reservation or cleanup-attestation lineage failed read-only.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V13",
         "status": "passed",
         "method": "module-DAG, root-export, product, CLI, package-boundary and installed-consumer checks",
         "evidence": "Architecture tests retained the sole application/persistence/CLI owners and kept concrete Phase-3 adapters behind injected ports; the default product runtime and CLI construct none. The ato.api/v1 33-command/37-error surface remained exact. Package smoke passed 212 files, consumer types, approved root exports, persistence, source/built/installed CLI parity and uninstall after synchronizing the fixed inventory and stage-6 package fixture.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V14",
         "status": "passed",
-        "method": "hostile path/topology/command/evidence/redaction tests and manual bounded-evidence review",
-        "evidence": "Traversal, device/share/ADS/non-NFC/case ambiguity, reparse/junction/hardlink, directory and leaf swaps, unsafe executable/config, checked-out target, hooks/filters/submodules/sparse/alternate/promisor/replace/grafts/shallow state, credentials/helpers/proxies and over-limit values all failed before unsafe effect. Raw Task, gate/Git output, paths, URLs, SQL, stack and credential sentinels were absent from durable/public/default evidence and no committed sensitive fixture was added.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "method": "hostile path/command/redaction suites plus actual and synthetic BigInt identity regressions",
+        "evidence": "The complete current 575/575 suite, current focused 12/12 persistence path selection and full documentation scan passed. Actual object receipts are compared to independently acquired BigInt stats; synthetic high-bit device/inode values prove production conversion has no Number round-trip; unsafe numeric mode/size is rejected; the persistence read length comparison is statically fixed to BigInt equality; identical-byte replacement, root/parent/leaf swap, hardlink/reparse, live Git topology drift, hostile command/configuration and redaction cases all fail closed. The internal test helper remains excluded from the unchanged package-root export surface.",
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V15",
         "status": "passed",
         "method": "real Windows composed Phase-3 E2E in the 21-case Windows suite",
-        "evidence": "The real SQLite/local-Git composed test passed policy, external gate, source commit and stale-gate rerun, distinct-source/target integration reservation, fast-forward, validated local-bare push, policy-gated terminal completion, release, attested cleanup, retained evidence and restart inspection beneath the registered disposable fixture. Spaces and NFC Unicode passed; no real Project, network, credential, Codex, scheduler, MCP or support claim was used.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "evidence": "The standalone 21-case real Windows Phase-3 suite passed after the BigInt identity repair, including policy, external gate, source commit and stale-gate rerun, distinct-source/target integration reservation, fast-forward, validated local-bare push, policy-gated terminal completion, release, attested cleanup, retained evidence and restart inspection beneath the registered disposable fixture. Its targeted read/publication replacement race also passed 12/12 in repeated isolation. Spaces and NFC Unicode passed; no real Project, network, credential, Codex, scheduler, MCP or support claim was used.",
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V16",
         "status": "passed",
         "method": "fresh schema, exact reopen, lifecycle digest, backup/restore and compatibility-refusal tests",
         "evidence": "Fresh initialization and exact reopen passed for the replaced schema-version-1 baseline with digest version 2 and complete current projection. Backup/restore JSON stayed version 1 and round-tripped only the exact current reader. Prior EP-03B checksum/fingerprint/database/digest-v1, old vocabulary/workspace-v1, future versions and mixed malformed state were rejected before writable open or effect without migration or downgrade.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V17",
         "status": "passed",
         "method": "focused impact suites followed by the bundled network-disabled pnpm verify:offline route",
-        "evidence": "After all three A2 residual repairs, the focused ProjectPolicy plus completion application files passed 16/16, including the completion file's 14/14 cases; the complete Windows Phase-3 file passed 21/21 inside the full run; and pnpm verify:offline exited 0 through lint 283/53, strict typecheck, build, 573/573 tests with zero fail/skip/todo, docs 146/262/22/0, offline zero-production-dependency shape, 212-file package smoke, complete Windows SQLite with zero survivors and truthful Codex blocked evidence. That full run includes the earlier 67/67 application/policy/workspace and 47/47 Windows Git/workspace coverage. The wrapper preserved the frozen 2048-entry pre-result diagnostic baseline byte-for-byte and created no new survivor; the contract-required absent-root exact-head run remains the standing post-result-commit prune/gate step recorded by V19 rather than a claim that those diagnostics were already removed.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "evidence": "At current material state git-sha1:b715d8123afe02920876a0b1ba366fba954f716c, pnpm verify:offline exited 0 through lint 283/53, strict typecheck, build, 575/575 tests with zero fail/skip/todo, docs 146/262/22/0, offline zero-production-dependency shape, 212-file package smoke, complete Windows SQLite with zero survivors and truthful Codex blocked evidence. The exact-state persistence path selection passed 12/12 and strict typecheck passed separately after F-A1-EP03C-010 was repaired by retaining raw BigInt fstat size through the byte-length equality. Artifact hygiene observed baseline 0 and terminal 0 and reclaimed the generated root. The post-repair result commit, current-head pathless prune and exact-head gate receipts remain the explicit V19 sequence.",
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V18",
         "status": "not_applicable",
         "method": "authorization review and offline dependency-shape evidence only",
         "evidence": "The controlling request prohibits registry and advisory-query network access, so pnpm dependency:audit and every registry/network vulnerability query were not run. Offline validation proved zero production dependencies, exactly TypeScript 5.9.3 as the sole development dependency, no install script or credential source, and made no vulnerability-status claim. The final coordinator ordinary origin/master push is the sole separate network exception.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       },
       {
         "id": "V19",
         "status": "passed",
-        "method": "fresh independent exact-state A2, full documentation gardening, no-follow task inventory, and terminal pre-commit handoff review",
-        "evidence": "Fresh independent A2 attempt 4 reproduced approval bytes 65478, approval SHA-256 35A308CAA02690A0832FC1C112A3BCD14ACD4259F4AEFE58B5519711BD617065, exact base 2485608a1684ea6430adcb8d004979a90d689a69, and final material state git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4; it closed all eight A1 findings and all three historical A2 roots with findings=[]. Full documentation gardening covered 146 Markdown files and returned zero HIGH/MEDIUM/LOW issues, zero review candidates and zero unverified items under repository policy SHA-256 ded78c74e14a9dbd7e4321ddf01e788fca5b17c96ea39dbdddc2d14b36f37ab7. The exact 80-path task diff inventory contains only declared regular non-reparse files, with no outside-scope, overlapping, pre-existing-dirty, runtime, secret or generated entry. This completed candidate delegates the still-unperformed result commit, pathless 2048-entry artifact prune, 22 exact-head gates, readiness, FF-only integration, standing-authorized ordinary push, and final master verification to the Git-flow coordinator. Coordinator cleanup remains unauthorized and no network advisory query was run.",
-        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+        "method": "fresh exact-state A1, extra user-required independent A2, full documentation gardening, diff hygiene, exact inventory, and terminal pre-commit handoff review",
+        "evidence": "Fresh independent A1 attempt 4 reviewed git-sha1:b715d8123afe02920876a0b1ba366fba954f716c and found no residual after independently rechecking every historical A1/A2 root and F-A1-EP03C-010. Because schema-v3 forbids a current A2 closure record when current A1 findings=[], the separately user- and plan-required fresh independent A2 attempt 6 is preserved as an accepted audit attempt; it bound the same exact state, found no residual and reported closure_safe=true. Full doc-gardener scanned 146 documents with HIGH=0, MEDIUM=0, LOW=0, candidates=0 and unverified=0; current docs check passed 146/262/22/0 and git diff --check passed. The exact 16-path candidate inventory is entirely declared regular non-reparse task material with no runtime, secret, generated, outside-scope, overlapping or pre-existing-dirty member. This completed candidate delegates the still-unperformed repair result commit, current-head pathless prune, 22 exact-head gates, readiness, FF-only integration, standing-authorized ordinary origin/master push and final master verification to the Git-flow coordinator. Cleanup remains unauthorized and every other external action remains intentionally unrun.",
+        "state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c"
       }
     ],
     "ownership_receipts": [],
     "audits": {
       "a0": {
         "report_status": "complete",
-        "reviewer": "/root/ep03b_a1_1",
-        "independence": "Fresh independent, non-drafter, non-reviser, non-implementer, strictly read-only, non-fail-fast A0. Earlier participation was limited to superseded attempt 3 and no prior conclusion was reused; no repository, Git, ExecPlan, coordinator, test, fixture, ignored-artifact, network, credential, external-project, integration, cleanup, push, release, deployment, Codex, scheduler, MCP, or D:\\quant mutation occurred.",
-        "scope": "Complete ExecPlan skill/schema/A0/Tier-2 persistence instructions; AGENTS.md and ARCHITECTURE.md; current proposal and attempts 1–5; relevant lifecycle/Git-flow/persistence/reliability authorities; and the sole post-attempt-5 approval change adding the helper-required singular ownership sentinel constrained to remain absent.",
+        "reviewer": "/root/ep03a_a0_3",
+        "independence": "Fresh independent non-drafter, non-reviser, non-implementer, strictly read-only, non-fail-fast A0 attempt 7. Earlier participation was limited to superseded A0 attempts 2 and 5 and no conclusion was reused. No repository, Git, ExecPlan, coordinator, test, build, fixture, ignored-artifact, network, credential, external-repository, cleanup, integration, push, release, deployment, Codex, scheduler, MCP or D:\\quant mutation occurred.",
+        "scope": "Complete harness-exec-plan skill/schema/A0 and Tier-2 persistence instructions; AGENTS.md and ARCHITECTURE.md; the complete current schema-v3 proposal and historical A0/A1/A2 records; relevant persistence, completion/workspace, authorization, compatibility, CLI, validation and threat authorities; F-A2-EP03C-004; C22, V7, V14, R4, D12 and milestone recovery; the current ProjectRegistry, persistence runtime/file-identity, completion, integration and workspace identity call paths; and the complete task-path/test inventory.",
         "readiness": "ready_for_activation",
-        "reviewed_at": "2026-09-02 22:49:27+08:00",
-        "approval_sha256": "35A308CAA02690A0832FC1C112A3BCD14ACD4259F4AEFE58B5519711BD617065",
+        "reviewed_at": "2026-09-03 12:14:55+08:00",
+        "approval_sha256": "172AD37726545F99A1CD60F142F92043A051CDE4AAA764F36BC0AE764AC30434",
         "reviewed_material_base": "2485608a1684ea6430adcb8d004979a90d689a69",
-        "evidence": "Exactly one correctly targeted trace returned ok=true with empty errors, warnings, outside_scope, overlap and pre_existing_dirty at base/HEAD 2485608a1684ea6430adcb8d004979a90d689a69 and material state git-sha1:c9f9c0a330a6702de16e6850ba20c072305a84da. Independent duplicate-key-rejecting sorted-key compact UTF-8 canonicalization reproduced exactly 65478 bytes and SHA-256 35A308CAA02690A0832FC1C112A3BCD14ACD4259F4AEFE58B5519711BD617065. The singular lifecycle sentinel was absent, grants no creation authority, and changes no implementation, schema, authorization, persistence, product, external-action or validation outcome. Findings 001–015 and the Tier-2 writer/reader/FK/CAS/recovery closure remain intact.",
+        "evidence": "Exactly one correctly targeted trace returned ok=true with approval_contract_bytes=67435, approval SHA-256 172AD37726545F99A1CD60F142F92043A051CDE4AAA764F36BC0AE764AC30434, approval/current material base 2485608a1684ea6430adcb8d004979a90d689a69 and material state git-sha1:84224f82371679d05075df30f7eba2a1a40ce27e; errors, outside_scope, overlap and pre_existing_dirty were empty and only the accurately preserved W_PREFLIGHT_A2_CONVERGENCE warning remained. Independent duplicate-key-rejecting sorted-key compact UTF-8 canonicalization reproduced the same 67435 bytes and digest. C22 exactly requires every semantic Project/runtime/persistence/completion/integration/workspace device/inode identity to use BigInt lstat/fstat before decimal-string conversion, explicit safe-range mode/size conversion, and BigInt link/length comparisons. The newly added three production paths are the complete directly unclosed owner set and test/project-registry.test.mjs plus already scoped persistence/Windows tests close the executable envelope. V7/V14, R4 and D12 provide binary validation, recovery and one cross-owner implementation choice. The revision changes no API, CLI, schema, backup format, authorization stage/action, external effect, network grant, compatibility policy or support claim and is necessary within the existing user-authorized EP-03C completion scope. Material V7/V14 and A1/A2 remain correctly stale or pending after activation.",
         "parent_disposition": "complete",
         "findings": []
       },
       "a1": {
         "report_status": "complete",
         "reviewer": "/root/ep03b_a1_1",
-        "independence": "Fresh independent non-implementer strictly read-only A1 attempt 2. The reviewer did not implement or repair the change, edit repository or external state, run tests or builds, inspect ignored artifact contents, mutate Git, ExecPlan or coordinator state, grant authority, use network or credentials, inspect another repository, or perform cleanup, integration, push, release or deployment; the prior unbindable attempt was not reused.",
-        "scope": "The exact approved EP-03C implementation state, schema-v3 plan and earlier evidence; authoritative policy/completion/integration/workspace, authorization, persistence, reliability, topology, security, privacy, package and product boundaries; concrete ports, application service, adapters, product exports, migrations, documentation and tests under the Tier-2 writer/reader, identity, no-follow, CAS, terminal-evidence and recovery lenses.",
-        "reviewed_at": "2026-09-03 03:34:01+08:00",
-        "evidence": "One correctly targeted independent trace returned ok=true with empty errors, warnings, outside_scope, overlap and pre_existing_dirty, approval SHA-256 35A308CAA02690A0832FC1C112A3BCD14ACD4259F4AEFE58B5519711BD617065, base and HEAD 2485608a1684ea6430adcb8d004979a90d689a69, and reviewed state git-sha1:2ec992d569f2f88ab2e148699f1898443b4aac2c. The reviewer found eight confirmed in-scope task-diff-changing HIGH/MEDIUM gaps. The parent independently reproduced every cited call path and test/evidence deficiency, accepted the report at docs/plans/evidence/EP-03C/a1-attempt-2.md, repaired each root inside the approved envelope, closed the later A2 preservation-reader, target-checkout point-of-use, and impossible policy-facts residuals, and bound all material validation evidence to git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4; fresh exact-state A2 is mandatory.",
-        "reviewed_state_id": "git-sha1:2ec992d569f2f88ab2e148699f1898443b4aac2c",
+        "independence": "Fresh independent non-implementer and non-fixer A1 attempt 4. The review was strictly read-only and non-fail-fast. The reviewer modified no repository, Git, ExecPlan, coordinator, fixture, ignored-artifact, credential, network, external-repository, cleanup, integration, push, release, deployment, Codex, scheduler, MCP, or D:\\quant state; ran no tests or builds; and independently re-evaluated rather than reused prior A1 conclusions.",
+        "scope": "The complete EP-03C task-owned material inventory from base 2485608a1684ea6430adcb8d004979a90d689a69, including the active schema-v3 ExecPlan and approval contract; AGENTS.md and ARCHITECTURE.md; authoritative authorization, CLI, policy/completion/integration/workspace, persistence, reliability, compatibility, security, observability, package and validation contracts; schema, writers, combined readers, digest, CAS and recovery paths under the Tier-2 persistence lens; ProjectRegistry, runtime-layout, persistence file/descriptor/lock/receipt identities; completion, integration and workspace adapters; product and package-root exports; documentation and test inventory. The review explicitly rechecked F-A1-EP03C-002 through F-A1-EP03C-010, F-A2-EP03C-001 through F-A2-EP03C-004, the V19 high-bit inode root, semantic dev/ino/nlink/size/byte-length handling, and the package-root export boundary.",
+        "reviewed_at": "2026-09-03 13:27:45+08:00",
+        "evidence": "Exactly one correctly targeted fresh trace returned schema_version=3, lifecycle=active, ok=true, errors=[], outside_scope=[], overlap=[], pre_existing_dirty=[], approval_contract_bytes=67435, approval SHA-256 172AD37726545F99A1CD60F142F92043A051CDE4AAA764F36BC0AE764AC30434, material base 2485608a1684ea6430adcb8d004979a90d689a69, HEAD ad6f6c791fd061a1fb83afa51532a7a0ae33a3c6, exact material state git-sha1:b715d8123afe02920876a0b1ba366fba954f716c and sole warning W_PREFLIGHT_A2_CONVERGENCE. Fresh static inspection confirmed every semantic Project/runtime/persistence/completion/integration/workspace device and inode originates from BigInt lstat/fstat and converts directly to exact decimal strings; ordinary numeric stats are only presence/type checks; nlink and stat-derived byte-length equality use BigInt. F-A1-EP03C-010 now retains raw BigInt post-read fstat size through equality and has a focused regression. Internal conversion helpers remain absent from the package root. Point-of-use cleanup authority/identity/quiescence, gate reopening, no-follow evidence checks, preservation derivation/combined-reader enforcement, ProjectPolicy cross-field rules, Git topology/source/checkout revalidation, composed Windows lifecycle, completion lineage, terminal execution, schema/digest/vocabulary compatibility refusal and every historical A1/A2 root were independently found closed. git diff --check passed. State-bound 12/12 focused persistence, strict typecheck, Windows Phase-3 21/21 and complete offline 575/575 evidence was inspected but not rerun by the reviewer.",
+        "reviewed_state_id": "git-sha1:b715d8123afe02920876a0b1ba366fba954f716c",
         "parent_disposition": "complete",
         "closes": [],
-        "findings": [
-          {
-            "id": "F-A1-EP03C-002",
-            "severity": "HIGH",
-            "summary": "Milestone and validation execution state was absent, so the implementation was not review- or completion-ready.",
-            "confirmed": true,
-            "in_scope": true,
-            "changes_task_diff": true,
-            "disposition": "a2_required",
-            "resolution": "Run every impact-selected and complete material validation, record exact state-bound results and failed attempts, complete milestones M2-M5, and reserve the self-referential post-result-commit prune, exact-head gates, integration and push evidence for the terminal Git-flow handoff in V19/M6.",
-            "closure_evidence": "At git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4, V1-V18 have ordered state-bound results; the focused ProjectPolicy plus completion files passed 16/16, the Windows Phase-3 file passed 21/21 inside the full run, and pnpm verify:offline passed lint 283/53, typecheck, build, 573/573 tests, docs, dependency shape, 212-file package smoke, SQLite and Codex boundary. Earlier focused 67/67 and 47/47 selections, full doc gardening and git diff --check also passed; failed missing-store/package attempts remain preserved. V19/M6 remain the explicit coordinator sequence after A2 and are not represented as already executed.",
-            "closure_state_id": null
-          },
-          {
-            "id": "F-A1-EP03C-003",
-            "severity": "HIGH",
-            "summary": "Cleanup lacked current grant, policy, actor and resource revalidation immediately before the destructive backend call.",
-            "confirmed": true,
-            "in_scope": true,
-            "changes_task_diff": true,
-            "disposition": "a2_required",
-            "resolution": "Revalidate the exact actor and lease owner, current workspace.cleanup grant revision/expiry, policy receipt/config/expiry, attestation, quiescence, ownership, preservation and Project/resource identity after the executing transition and immediately before backend access.",
-            "closure_evidence": "At git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4, cleanupWorkspace performs the complete point-of-use authority and identity check before invoking the backend. Deterministic revoked-grant, expired-grant, policy-config-drift and actor-substitution cases all refuse before backend access; the focused selection and complete 573/573 suite pass.",
-            "closure_state_id": null
-          },
-          {
-            "id": "F-A1-EP03C-004",
-            "severity": "HIGH",
-            "summary": "The Git integration adapter did not contain and bind the live gitdir, common directory, object store, worktree metadata and destination topology.",
-            "confirmed": true,
-            "in_scope": true,
-            "changes_task_diff": true,
-            "disposition": "a2_required",
-            "resolution": "Bind canonical Project/source/destination roots plus Git directory, common directory, object namespace, linked-worktree metadata and bare destination identities at construction and every use; reject external or relative escapes, alternates, pointer swaps and identity drift before effect.",
-            "closure_evidence": "At git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4, createLocalGitIntegrationBackend validates and reopens the entire source and destination Git topology before inspect/apply/push and again immediately before update-ref or push. Apply now also rechecks target-worktree checkout and ancestry after the pre-effect interlock. Escaped topology, alternates, gitfile/source drift and a deterministic target-checkout race refuse without mutation; the 47/47 prior Windows selection, current 21/21 Windows file and complete 573/573 suite pass.",
-            "closure_state_id": null
-          },
-          {
-            "id": "F-A1-EP03C-005",
-            "severity": "HIGH",
-            "summary": "Policy-gated completion consumed durable gate rows without independently reopening each required evidence leaf immediately before the final CAS.",
-            "confirmed": true,
-            "in_scope": true,
-            "changes_task_diff": true,
-            "disposition": "a2_required",
-            "resolution": "Outside every writer transaction, call inspect_gate for each exact required gate immediately before final completion authorization and CAS; require fresh identity-bound passing receipts and bind their intent identities into the final transaction.",
-            "closure_evidence": "At git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4, completion.accept reopens every required gate through the injected backend immediately before its final authorization/CAS and accepts only exact fresh verified receipts. Deletion, replacement, hardlink, reparse, digest drift and indeterminate reopen tests leave Task/execution nonterminal; focused and complete 573/573 suites pass.",
-            "closure_state_id": null
-          },
-          {
-            "id": "F-A1-EP03C-006",
-            "severity": "HIGH",
-            "summary": "A caller-supplied syntactically valid preservation digest was accepted as proof.",
-            "confirmed": true,
-            "in_scope": true,
-            "changes_task_diff": true,
-            "disposition": "a2_required",
-            "resolution": "Remove caller-selected preservation proof, derive the required preservation digest only from the current independently verified terminal integration receipt bound to the exact completion tuple, and make the Tier-2 combined reader derive and enforce that same unique expected digest for every preservation disposition.",
-            "closure_evidence": "At git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4, required preservation is deterministically derived from verified terminal integration/publication evidence and carried into completion and cleanup attestation. The shared facts parser enforces that required preservation implies required integration; the Tier-2 combined reader derives the same unique expected digest and rejects both the impossible canonical policy pair and a different format-valid SQLite value through direct read, reopen and doctor. Positive required/required and not_required paths plus absent, forged, stale, substituted and persisted-corruption cases pass in the focused 16/16 selection and complete 573/573 suite.",
-            "closure_state_id": null
-          },
-          {
-            "id": "F-A1-EP03C-007",
-            "severity": "HIGH",
-            "summary": "Completion evidence publication and reopen used pathname checks that admitted parent or leaf replacement races.",
-            "confirmed": true,
-            "in_scope": true,
-            "changes_task_diff": true,
-            "disposition": "a2_required",
-            "resolution": "Acquire evidence leaves with no-follow descriptors, require regular single-link identities, and revalidate root, parent and leaf identities before and after read/publication without trusting a later pathname reopen.",
-            "closure_evidence": "At git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4, the local completion backend uses no-follow descriptor acquisition and exact root/parent/leaf pre/post identity plus nlink=1 checks for publication and reopen. Deterministic directory swap, leaf swap, junction/reparse, hardlink and digest-drift cases all fail closed; backend and complete 573/573 suites pass.",
-            "closure_state_id": null
-          },
-          {
-            "id": "F-A1-EP03C-008",
-            "severity": "MEDIUM",
-            "summary": "The Windows Phase-3 test lacked a real-SQLite composed facade lifecycle through cleanup and restart.",
-            "confirmed": true,
-            "in_scope": true,
-            "changes_task_diff": true,
-            "disposition": "a2_required",
-            "resolution": "Add one no-network composed Windows fixture covering policy, external gate, stale-HEAD rerun, integration, local-file push, completion, release, attested cleanup, retained evidence and restart beneath the owned artifact root.",
-            "closure_evidence": "At git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4, test/windows-phase3-e2e.test.mjs contains the complete real SQLite/local Git composed facade path plus the target-checkout point-of-use regression. The file passed 21/21 inside the complete 573/573 suite, with no network, credentials, external Project or support claim.",
-            "closure_state_id": null
-          },
-          {
-            "id": "F-A1-EP03C-009",
-            "severity": "HIGH",
-            "summary": "Completion and integration effects did not rebind the live source repository ownership, branch and HEAD identity immediately before spawn or ref mutation.",
-            "confirmed": true,
-            "in_scope": true,
-            "changes_task_diff": true,
-            "disposition": "a2_required",
-            "resolution": "Bind the exact trusted Project/workspace ownership and complete Git identity at adapter construction, then reopen direct detached HEAD, registration, manifest, common/object topology and clean source state at every use and immediately before each effect.",
-            "closure_evidence": "At git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4, both local backends perform live source identity validation before every effect and repeat it immediately before gate spawn, update-ref or push; apply additionally rechecks its dynamic checkout and ancestry preconditions at that final boundary. Metadata-only HEAD advance, symbolic HEAD substitution, ownership-manifest replacement, source drift, gitdir swap, object-alternates and target-checkout races all refuse before effect; Windows 21/21 and complete 573/573 suites pass.",
-            "closure_state_id": null
-          }
-        ]
-      },
-      "a2": {
-        "report_status": "complete",
-        "reviewer": "/root/ep03b_a2_1",
-        "independence": "Fresh independent non-implementer and non-repairer strictly read-only non-fail-fast A2 attempt 4. The reviewer began from the current material state rather than reusing a historical conclusion; edited no file; ran no Node, pnpm, npm, npx, test, build, fixture or artifact command; read no ignored artifact contents; and performed no network, credential, external-repository, Git, ExecPlan, coordinator, cleanup, integration, push, release or deployment mutation.",
-        "scope": "The exact current 79-path material scope, active schema-v3 plan, A1 and A2 history, AGENTS.md and ARCHITECTURE.md; the authoritative authorization, completion/workspace, adapter, persistence, reliability and local Git-flow contracts; and every ProjectPolicy, completion application, Tier-2 persistence, local completion/Git integration, migration, package and test owner needed to re-evaluate F-A1-EP03C-002 through F-A1-EP03C-009 plus F-A2-EP03C-001 through F-A2-EP03C-003.",
-        "reviewed_at": "2026-09-03 11:03:20+08:00",
-        "evidence": "Exactly one correctly targeted read-only trace returned ok=true with errors, outside_scope, overlap and pre_existing_dirty empty; its only warning was the expected W_PREFLIGHT_A2_CONVERGENCE. It reproduced base and HEAD 2485608a1684ea6430adcb8d004979a90d689a69, approval SHA-256 35A308CAA02690A0832FC1C112A3BCD14ACD4259F4AEFE58B5519711BD617065 over 65478 canonical bytes, and exact material state git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4. Fresh source/test review confirmed the shared facts parser enforces preservation=required only with integration=required across direct facts, complete receipt ingress, application persistence and the durable combined reader; matching-canonical-facts SQLite corruption now fails direct read, doctor and reopen. It independently reconfirmed the required-preservation digest equality, post-interlock target-checkout/ancestry/full-preflight check, gate reopening, cleanup point-of-use authority, no-follow evidence, Git topology/live source identity and real Windows composed lifecycle. All eight A1 findings and all three historical A2 roots are closed with no adjacent Tier-2 writer/reader/FK/CAS/recovery residual. Parent-supplied validation at this exact state passed focused ProjectPolicy plus completion 16/16, Windows Phase-3 21/21 inside the complete run, and verify:offline 573/573 plus every remaining offline gate while preserving the frozen 2048-entry pre-result diagnostic baseline; the reviewer did not rerun those commands. V19/M6 remain the explicit post-review coordinator sequence.",
-        "reviewed_state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4",
-        "parent_disposition": "complete",
-        "closes": ["F-A1-EP03C-002", "F-A1-EP03C-003", "F-A1-EP03C-004", "F-A1-EP03C-005", "F-A1-EP03C-006", "F-A1-EP03C-007", "F-A1-EP03C-008", "F-A1-EP03C-009"],
         "findings": []
       }
     },
@@ -889,12 +794,36 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         "reason": "Fresh independent A0 at 2026-09-02 22:49:27+08:00 bound approval digest 35A308CAA02690A0832FC1C112A3BCD14ACD4259F4AEFE58B5519711BD617065, reviewed base 2485608a1684ea6430adcb8d004979a90d689a69, and material state git-sha1:c9f9c0a330a6702de16e6850ba20c072305a84da. It independently reproduced 65478 canonical bytes, confirmed the helper ownership sentinel remains absent and non-authorizing, confirmed findings 001–015 and the Tier-2 boundary remain closed, found no new finding, and declared the plan ready_for_activation."
       },
       {
+        "audit": "A0",
+        "attempt": 7,
+        "report_status": "complete",
+        "finding_ids": [],
+        "disposition": "accepted",
+        "reason": "Fresh independent A0 at 2026-09-03 12:14:55+08:00 bound approval digest 172AD37726545F99A1CD60F142F92043A051CDE4AAA764F36BC0AE764AC30434, reviewed base 2485608a1684ea6430adcb8d004979a90d689a69 and material state git-sha1:84224f82371679d05075df30f7eba2a1a40ce27e. It independently reproduced 67435 canonical bytes, confirmed C22's exact cross-owner BigInt identity rule, the four-path scope expansion, V7/V14, R4/D12, recovery and unchanged authority/API/schema/network boundaries, found no new finding, and declared the revised plan ready_for_activation."
+      },
+      {
         "audit": "A1",
         "attempt": 1,
         "report_status": "failed",
         "finding_ids": ["F-A1-EP03C-001", "F-A1-EP03C-002", "F-A1-EP03C-003", "F-A1-EP03C-004", "F-A1-EP03C-005", "F-A1-EP03C-006", "F-A1-EP03C-007", "F-A1-EP03C-008"],
         "disposition": "failed",
         "reason": "Independent read-only non-fail-fast review completed at 2026-09-03T03:26:28.1066050+08:00 and preserved eight findings, but its trace returned E_SCOPE for the task-diff change to docs/adr/README.md and therefore issued no valid material state ID. The parent reverted that path, archived the unbindable report at docs/plans/evidence/EP-03C/a1-attempt-1-unbindable.md, and requires a fresh independent A1 before treating any finding disposition as current."
+      },
+      {
+        "audit": "A1",
+        "attempt": 2,
+        "report_status": "complete",
+        "finding_ids": ["F-A1-EP03C-002", "F-A1-EP03C-003", "F-A1-EP03C-004", "F-A1-EP03C-005", "F-A1-EP03C-006", "F-A1-EP03C-007", "F-A1-EP03C-008", "F-A1-EP03C-009"],
+        "disposition": "superseded",
+        "reason": "Fresh independent read-only A1 attempt 2 reviewed git-sha1:2ec992d569f2f88ab2e148699f1898443b4aac2c and confirmed eight implementation findings. The parent repaired them, later A2 reviews exposed and closed four adjacent residual roots, V19 then exposed lossy Windows inode capture, and the approval scope plus implementation changed. Attempt 2 remains historical evidence but no longer binds the current material state; fresh expanded-scope A1 attempt 4 replaces it."
+      },
+      {
+        "audit": "A1",
+        "attempt": 3,
+        "report_status": "complete",
+        "finding_ids": ["F-A1-EP03C-010"],
+        "disposition": "reopened",
+        "reason": "Fresh independent read-only non-fail-fast A1 at 2026-09-03 13:13:58+08:00 reviewed git-sha1:f8799bb50f1cd5a4dd0e759442ed7abff050b8f0 and confirmed one in-scope LOW contract residual: readRegularFile converted the BigInt post-read fstat size into number before comparing it with bytes.byteLength. The parent independently confirmed the literal C22/persistence-contract violation, retained raw BigInt size through equality, added an exact static regression, and passed focused persistence 12/12, strict typecheck and complete pnpm verify:offline 575/575 at git-sha1:b715d8123afe02920876a0b1ba366fba954f716c. Fresh exact-state A1 and A2 remain mandatory."
       },
       {
         "audit": "A2",
@@ -919,6 +848,30 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         "finding_ids": ["F-A2-EP03C-003"],
         "disposition": "reopened",
         "reason": "Fresh independent read-only non-fail-fast A2 reviewed git-sha1:18859222b0278deebd73b1b9a0592e56b82ffd1b at 2026-09-03 10:38:39+08:00. It confirmed the eight original A1 findings and both earlier A2 direct roots closed, then found one in-scope MEDIUM residual in the F-A1-EP03C-006/F-A2-EP03C-001 family: the shared ProjectPolicy facts parser accepted preservation=required with integration=not_required, allowing a contract-impossible canonical durable pair to make equal not-required integration and preservation digests appear healthy. The parent independently reproduced the port-to-writer-to-reader chain, enforced the implication in the single shared parser, added direct-facts and result-ingress rejection, and added a real SQLite regression proving the impossible pair fails direct combined read, doctor and reopen with CORRUPT_ROW/state_corrupt while positive required/required and not_required paths remain green. The focused ProjectPolicy plus completion files passed 16/16 and pnpm verify:offline passed 573/573 plus every remaining offline gate at current state git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4; the localized repair remains within the approved envelope, A1/A0 need not reopen, and a fresh exact-state A2 remains mandatory."
+      },
+      {
+        "audit": "A2",
+        "attempt": 4,
+        "report_status": "complete",
+        "finding_ids": [],
+        "disposition": "superseded",
+        "reason": "Fresh independent read-only non-fail-fast A2 at 2026-09-03 11:03:20+08:00 found no residual at git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4 and was valid for that reviewed material state. After result commit ad6f6c791fd061a1fb83afa51532a7a0ae33a3c6, a separately selected exact-head Windows Phase-3 validation exposed that ordinary numeric stat rounded a real inode before canonical identity hashing. The plan was reopened, the completion/workspace/Git effect owners were repaired to capture device/inode through BigInt stats, and attempt 4 no longer binds the current material state; a fresh independent A2 must evaluate both the historical A1/A2 roots and this V19 identity root."
+      },
+      {
+        "audit": "A2",
+        "attempt": 5,
+        "report_status": "complete",
+        "finding_ids": ["F-A2-EP03C-004"],
+        "disposition": "reopened",
+        "reason": "Fresh independent read-only non-fail-fast A2 at 2026-09-03 12:04:14+08:00 reviewed git-sha1:84224f82371679d05075df30f7eba2a1a40ce27e, rechecked every prior A1/A2 root, and found one HIGH directly adjacent persistence/authority residual: ProjectRegistry, runtime-layout and persistence file/lock/receipt guards still stringified already-rounded numeric device/inode values. The parent independently reproduced the shared root, revised the approval envelope, obtained fresh A0, repaired every semantic identity owner with BigInt stats and safe numeric mode/size conversion, added actual/synthetic/replacement regressions, and requires reopened A1 plus fresh exact-state A2."
+      },
+      {
+        "audit": "A2",
+        "attempt": 6,
+        "report_status": "complete",
+        "finding_ids": [],
+        "disposition": "accepted",
+        "reason": "User- and plan-required fresh independent read-only A2 at 2026-09-03 13:37:57+08:00 reviewed exact state git-sha1:b715d8123afe02920876a0b1ba366fba954f716c after current A1 attempt 4 found no residual. Exactly one trace was clean except the expected convergence advisory. The reviewer independently rechecked every historical A1/A2 root, V19 high-bit inode behavior, all production dev/ino/nlink/size/byte-length semantics, package-root helper exclusion, cleanup point-of-use authorization, gate/preservation/combined-reader enforcement, integration post-interlock checks, SQLite corruption refusal and Windows composed coverage; findings=[] and closure_safe=true. Because schema-v3 requires execution.audits.a2 to be absent when current A1 has no a2_required finding, this extra accepted terminal review is preserved here without inventing a closure edge; M6/V19 and final_summary remain separately pending."
       }
     ],
     "validation_attempts": [
@@ -945,6 +898,46 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         "at": "2026-09-03 09:28:24+08:00",
         "evidence": "The next package:smoke run passed the corrected inventory and reached its installed runtime consumer, where the fixture incorrectly expected the stage-5 workspace upgrade to expose all stage-6 actions. The parent made the stage-5 assertion use WORKSPACE_STAGE_AUTHORIZATION_ACTIONS, added one separately confirmed stage-6 completion/integration upgrade, and shifted only trusted fixture timestamps. Direct package smoke and the complete offline route then passed.",
         "state_id": null
+      },
+      {
+        "validation_id": "V17",
+        "attempt": 4,
+        "classification": "deterministic_failure",
+        "at": "2026-09-03 11:42:07+08:00",
+        "evidence": "The first full offline attempt after reopening the committed terminal candidate stopped in lint before typecheck, build or tests because the governance-required plan move from completed back to active was present only in the worktree while the Git index still named the committed completed path. The repository inventory correctly failed closed on that path identity mismatch. Staging only the exact old and new lifecycle paths makes the index and filesystem agree; no source, product, fixture or validation behavior was repaired or hidden by this workflow correction.",
+        "state_id": "git-sha1:84224f82371679d05075df30f7eba2a1a40ce27e"
+      },
+      {
+        "validation_id": "V19",
+        "attempt": 1,
+        "classification": "deterministic_failure",
+        "at": "2026-09-03 11:31:09+08:00",
+        "evidence": "After result commit ad6f6c791fd061a1fb83afa51532a7a0ae33a3c6 and its standing-authorized artifact prune, the exact-head pnpm verify:offline passed 573/573 with an absent terminal artifact root. A separately selected 21-case Windows Phase-3 file then passed 20/21: the identical-byte result-leaf replacement race was once accepted as lifecycle=completed rather than unknown. Eight immediate isolated reruns passed, but independent instrumentation proved Node's ordinary numeric stat rounded actual inode 42502721485294691 to 42502721485294690. Because the implementation canonicalized device/inode only after that lossy number conversion, the exact-identity contract was not deterministic even though the manifestation was intermittent. The terminal candidate, A2 binding, prune receipt and V19 completion claim were reopened for a BigInt identity repair and fresh exact-state review; the failed direct run left only an empty .task-artifacts root and changed no tracked byte.",
+        "state_id": "git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4"
+      },
+      {
+        "validation_id": "V14",
+        "attempt": 1,
+        "classification": "deterministic_failure",
+        "at": "2026-09-03 12:42:29+08:00",
+        "evidence": "The first focused ProjectRegistry/persistence identity run at git-sha1:c1e8e2a7d8e6bc9ffa2edc2f0143163506b0d213 passed 25/27. Its two failures came only from a test oracle that assumed every newly allocated Windows inode must exceed Number.MAX_SAFE_INTEGER; exact BigInt recomputation and replacement checks had passed, but inode magnitude is allocation-dependent. The tests were corrected to compare every actual receipt to independently acquired BigInt stats and to exercise synthetic high-bit values through the production conversion helpers, without weakening any implementation guard.",
+        "state_id": "git-sha1:c1e8e2a7d8e6bc9ffa2edc2f0143163506b0d213"
+      },
+      {
+        "validation_id": "V17",
+        "attempt": 5,
+        "classification": "environment_failure",
+        "at": "2026-09-03 12:42:29+08:00",
+        "evidence": "A focused pnpm typecheck invocation at git-sha1:fe2421635139bf6b8211fa646556388e6ebe26f6 stopped before TypeScript launched because the child command could not resolve node from PATH. The same repository-bundled Node/pnpm runtime with its three prescribed bin directories prepended immediately ran strict typecheck successfully; no source byte was changed to address this environment-only failure.",
+        "state_id": "git-sha1:fe2421635139bf6b8211fa646556388e6ebe26f6"
+      },
+      {
+        "validation_id": "V17",
+        "attempt": 6,
+        "classification": "deterministic_failure",
+        "at": "2026-09-03 12:42:29+08:00",
+        "evidence": "The first complete 574-test run after the cross-owner repair at git-sha1:fe2421635139bf6b8211fa646556388e6ebe26f6 passed 573/574 and exposed one exact public-boundary defect: export * from project-registry leaked the internal BigInt conversion helper through the package root. The parent replaced only that wildcard with an explicit whitelist of the pre-existing public ProjectRegistry values and types; focused public-export plus identity tests then passed 34/34 and the complete current suite passed 574/574 with unchanged ato.api/v1 and package-root names.",
+        "state_id": "git-sha1:fe2421635139bf6b8211fa646556388e6ebe26f6"
       }
     ],
     "contract_revisions": [
@@ -972,9 +965,14 @@ EP-03C is the final item in the strict EP-03A -> EP-03B -> EP-03C chain. It clos
         "at": "2026-09-02 22:44:52+08:00",
         "summary": "Closed the activation-only W_PREFLIGHT_LIFECYCLE_SCOPE advisory by adding the helper-required singular docs/plans/proposal path as an ownership-only scope sentinel while explicitly requiring it to remain absent; the sole plan still moves only through proposals, active, and completed, and no implementation, product, schema, authorization, persistence, external-action, or validation outcome changed.",
         "previous_approval_sha256": "14F7EC5BD24D6A393D7A884A71DE30A003C8A1779D073C1456670C683919E770"
+      },
+      {
+        "at": "2026-09-03 12:08:51+08:00",
+        "summary": "Accepted fresh A2 finding F-A2-EP03C-004 after V19 proved ordinary Node numeric stat rounded a real high-bit Windows inode. The approval now makes lossless BigInt device/inode capture one cross-owner Project/runtime/persistence/Phase-3 identity invariant, adds only src/project-registry.ts, src/persistence/runtime.ts, src/persistence/values.ts and test/project-registry.test.mjs to the task scope, strengthens V7/V14 and R4, and requires fresh A0 before implementation plus reopened A1/A2 afterward. No public API, CLI, schema, authorization action, external effect, network grant or product-support claim changes.",
+        "previous_approval_sha256": "35A308CAA02690A0832FC1C112A3BCD14ACD4259F4AEFE58B5519711BD617065"
       }
     ],
-    "final_summary": "EP-03C closes the approved fresh-only local Phase 3 injected-library boundary. It implements exact ato.project-policy/v1, ato.completion/v1 and ato.integration/v1 ports, replaces the unreleased workspace boundary with exact ato.workspace/v2, advances the finite authorization vocabulary through stage 6, and replaces the sole current schema-version-1 development baseline with digest-version-2 policy, gate, completion, reservation, integration and cleanup evidence. One typed application/product-library owner now performs preliminary policy evaluation, current grant and receipt checks, durable prepare/observe/verify/finalize protocols, fresh gate reopening, policy-gated terminal completion, local ref-only fast-forward and configured local-file ordinary push, reservation release, and separately authorized owner-bound workspace cleanup using only injected backends. Exact material state git-sha1:51a1a9f8e3f053de67deb6162f7343628cf5cba4 passes focused ProjectPolicy plus completion 16/16, the complete Windows Phase-3 file 21/21 inside the full run, and network-disabled pnpm verify:offline through lint 283/53, typecheck, build, 573/573 tests with zero fail/skip/todo, docs 146/262/22/0, offline zero-production-dependency shape, 212-file package smoke, complete Windows SQLite with zero survivors and truthful blocked-only Codex evidence. Full documentation gardening reports zero issues, candidates or unverified items. Fresh A0 approved the final contract; independent A1 found eight defects; three successive A2 reviews found preservation-reader, post-interlock checkout and impossible-policy-pair residuals; every root was repaired, and final independent A2 attempt 4 closes all eight A1 findings plus all three historical A2 roots with findings=[]. The default runtime and closed 33-command ato.api/v1 CLI construct none of the new adapters; no Task content execution, scheduler, Codex/MCP adapter, daemon, release, deployment, compatibility reader, real external Project effect or platform-support claim is added. No registry/network advisory query ran and no vulnerability-status claim is made. The terminal result commit, pathless artifact prune, 22 exact-head gates, readiness, FF-only integration, standing-authorized ordinary push and final master verification remain authorized coordinator consumers of this completed candidate; coordinator cleanup remains separately unauthorized."
+    "final_summary": "EP-03C closes only the approved fresh-only local library boundary for ProjectPolicy, completion gates, durable integration reservation/recovery, configured disposable local-Git fast-forward/local-file push, policy-gated Task completion, preservation derivation, and separately authorized ownership-safe workspace cleanup through explicitly injected adapters; the default product runtime and CLI still construct none of those adapters. Exact material state git-sha1:b715d8123afe02920876a0b1ba366fba954f716c passes pnpm verify:offline through lint 283/53, strict typecheck, build, 575/575 tests with zero fail/skip/todo, docs 146/262/22/0, offline zero-production-dependency shape, 212-file package smoke, Windows SQLite with zero survivors, truthful blocked-only Codex evidence and artifact hygiene baseline/terminal zero; focused persistence path tests pass 12/12. Full documentation gardening reports zero HIGH/MEDIUM/LOW issues, candidates or unverified items. Fresh A0 approved the final 67435-byte contract; fresh exact-state A1 found no residual; the extra user-required independent A2 also found no residual and is recorded as accepted history because current A1 requires no schema closure edge. First result commit ad6f6c791fd061a1fb83afa51532a7a0ae33a3c6 was correctly reopened after V19 exposed lossy Windows inode handling and remains preserved as history. The terminal repair result commit, current-head pathless artifact prune, 22 exact-head Git-flow gates, readiness, FF-only integration, standing-authorized ordinary origin/master push and final master gates remain authorized coordinator consumers of this completed candidate; coordinator cleanup remains separately unauthorized. No dependency advisory query ran and no vulnerability-status claim is made. No real external Project, product/fixture network, credential, Codex adapter/E2E support, scheduler, MCP, PR, release or deployment is implemented or performed."
   }
 }
 ```

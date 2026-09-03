@@ -424,6 +424,14 @@ Runtime data is outside the source checkout and every supplied Project root.
   directories and regular files use user-only permissions on hosts where
   POSIX mode enforcement is meaningful. Windows mode observation is not an ACL
   or platform-support claim.
+- Every semantic Project root, trusted runtime directory, persistence file,
+  descriptor, lifecycle lock, and connection-receipt identity captures device
+  and inode through BigInt filesystem stats and canonicalizes those exact values
+  as decimal strings without a JavaScript number round-trip. Mode and file size
+  become numeric contract fields only after explicit safe-range validation;
+  link-count and byte-length comparisons stay BigInt when supplied by BigInt
+  stats. Ordinary numeric stats may serve presence or node-type checks only and
+  never an identity comparison.
 - Before any SQLite open, the owner no-follow inspects the complete present
   main/WAL/SHM set, rejects unsafe node or permission state, and binds every
   present object across the open. Newly created sidecars are checked before

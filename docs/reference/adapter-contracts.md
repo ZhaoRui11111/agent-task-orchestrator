@@ -370,7 +370,9 @@ directory and result-file device/inode/mode identities. Inspection acquires the
 leaf through a no-follow read descriptor and compares descriptor, pathname,
 parent-directory, retained-root, single-link, byte-count, and final inventory
 identities before accepting those hashes. Publication uses exclusive no-follow
-descriptor creation and the same parent/root checks. Exact-byte replacement,
+descriptor creation and the same parent/root checks. Every device/inode value is
+read through lossless BigInt stats and canonicalized without a JavaScript number
+round-trip. Exact-byte replacement,
 hardlinking, leaf or directory swaps, and reparse substitution therefore become
 indeterminate evidence rather than a reopened pass.
 

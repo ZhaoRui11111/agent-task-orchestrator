@@ -198,16 +198,21 @@ function containedBy(parent: string, child: string): boolean {
   return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
 }
 
-function identityFromStats(realPath: string, stats: ReturnType<typeof lstatSync>): FileIdentity {
-  return Object.freeze({ realPath, device: String(stats.dev), inode: String(stats.ino), mode: stats.mode });
+function identityFromStats(
+  realPath: string,
+  stats: Readonly<{ dev: bigint; ino: bigint; mode: bigint }>,
+): FileIdentity {
+  const mode = Number(stats.mode);
+  if (!Number.isSafeInteger(mode)) throw new TypeError("Completion file mode is invalid");
+  return Object.freeze({ realPath, device: String(stats.dev), inode: String(stats.ino), mode });
 }
 
 function directDirectoryIdentity(value: unknown): FileIdentity {
   if (typeof value !== "string" || !path.isAbsolute(value)) throw new TypeError("Completion root path must be absolute");
   const resolved = path.resolve(value);
-  const direct = lstatSync(resolved);
+  const direct = lstatSync(resolved, { bigint: true });
   const realPath = realpathSync.native(resolved);
-  const stats = lstatSync(realPath);
+  const stats = lstatSync(realPath, { bigint: true });
   if (!direct.isDirectory() || direct.isSymbolicLink() || !stats.isDirectory() || stats.isSymbolicLink() ||
       normalizedPath(resolved) !== normalizedPath(realPath)) {
     throw new TypeError("Completion root is not a direct directory");
@@ -218,11 +223,11 @@ function directDirectoryIdentity(value: unknown): FileIdentity {
 function directFileIdentity(value: unknown): FileIdentity {
   if (typeof value !== "string" || !path.isAbsolute(value)) throw new TypeError("Completion file must be absolute");
   const resolved = path.resolve(value);
-  const direct = lstatSync(resolved);
+  const direct = lstatSync(resolved, { bigint: true });
   const realPath = realpathSync.native(resolved);
-  const stats = lstatSync(realPath);
-  if (!direct.isFile() || direct.isSymbolicLink() || direct.nlink !== 1 || !stats.isFile() || stats.isSymbolicLink() ||
-      stats.nlink !== 1 || normalizedPath(resolved) !== normalizedPath(realPath)) {
+  const stats = lstatSync(realPath, { bigint: true });
+  if (!direct.isFile() || direct.isSymbolicLink() || direct.nlink !== 1n || !stats.isFile() || stats.isSymbolicLink() ||
+      stats.nlink !== 1n || normalizedPath(resolved) !== normalizedPath(realPath)) {
     throw new TypeError("Completion file is not a direct single-link regular file");
   }
   return identityFromStats(realPath, stats);
@@ -242,9 +247,11 @@ function fileIdentityCurrent(expected: FileIdentity): boolean {
 }
 
 function descriptorMatches(fileDescriptor: number, expected: FileIdentity): boolean {
-  const stats = fstatSync(fileDescriptor);
-  return stats.isFile() && !stats.isSymbolicLink() && stats.nlink === 1 &&
-    String(stats.dev) === expected.device && String(stats.ino) === expected.inode && stats.mode === expected.mode;
+  const stats = fstatSync(fileDescriptor, { bigint: true });
+  const mode = Number(stats.mode);
+  return stats.isFile() && !stats.isSymbolicLink() && stats.nlink === 1n &&
+    Number.isSafeInteger(mode) && String(stats.dev) === expected.device && String(stats.ino) === expected.inode &&
+    mode === expected.mode;
 }
 
 function evidenceIdentitySha256(identity: FileIdentity): string {
@@ -253,14 +260,14 @@ function evidenceIdentitySha256(identity: FileIdentity): string {
 
 function readStableFile(target: string, maximumBytes: number): Readonly<{ identity: FileIdentity; bytes: Uint8Array }> {
   const before = directFileIdentity(target);
-  const beforeStats = lstatSync(before.realPath);
-  if (beforeStats.size < 1 || beforeStats.size > maximumBytes) throw new TypeError("Completion file size is invalid");
+  const beforeStats = lstatSync(before.realPath, { bigint: true });
+  if (beforeStats.size < 1n || beforeStats.size > BigInt(maximumBytes)) throw new TypeError("Completion file size is invalid");
   let descriptor: number | null = null;
   try {
     descriptor = openSync(before.realPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     if (!descriptorMatches(descriptor, before)) throw new TypeError("Completion file identity changed before read");
     const bytes = readFileSync(descriptor);
-    if (bytes.byteLength !== beforeStats.size || !descriptorMatches(descriptor, before) ||
+    if (BigInt(bytes.byteLength) !== beforeStats.size || !descriptorMatches(descriptor, before) ||
         !fileIdentityCurrent(before)) throw new TypeError("Completion file identity changed during read");
     return Object.freeze({ identity: before, bytes });
   } finally {
@@ -722,15 +729,15 @@ function readEvidence(
     const entries = readdirSync(location.directory);
     if (entries.length !== 1 || entries[0] !== "result.json") return "ambiguous";
     const before = directFileIdentity(location.resultFile);
-    const beforeStats = lstatSync(location.resultFile);
-    if (beforeStats.size < 2 || beforeStats.size > 64 * 1024) return "ambiguous";
+    const beforeStats = lstatSync(location.resultFile, { bigint: true });
+    if (beforeStats.size < 2n || beforeStats.size > 64n * 1024n) return "ambiguous";
     ingress.beforeEvidenceReadOpen?.();
     if (!directoryIdentityCurrent(root.identity) || !directoryIdentityCurrent(directoryIdentity) ||
         !fileIdentityCurrent(before)) return "ambiguous";
     descriptor = openSync(location.resultFile, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     if (!descriptorMatches(descriptor, before)) return "ambiguous";
     const bytes = readFileSync(descriptor);
-    if (bytes.byteLength !== beforeStats.size || !descriptorMatches(descriptor, before) ||
+    if (BigInt(bytes.byteLength) !== beforeStats.size || !descriptorMatches(descriptor, before) ||
         !fileIdentityCurrent(before) || !directoryIdentityCurrent(directoryIdentity) ||
         !directoryIdentityCurrent(root.identity)) return "ambiguous";
     const finalEntries = readdirSync(location.directory);
@@ -762,9 +769,9 @@ function publishEvidence(
         readdirSync(location.directory).length !== 0) return null;
     descriptor = openSync(location.resultFile,
       constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW ?? 0), 0o600);
-    const openedStats = fstatSync(descriptor);
+    const openedStats = fstatSync(descriptor, { bigint: true });
     const openedIdentity = identityFromStats(location.resultFile, openedStats);
-    if (!openedStats.isFile() || openedStats.isSymbolicLink() || openedStats.nlink !== 1 ||
+    if (!openedStats.isFile() || openedStats.isSymbolicLink() || openedStats.nlink !== 1n ||
         !directoryIdentityCurrent(directoryIdentity) || !directoryIdentityCurrent(root.identity)) return null;
     const persisted: GateEvidence = Object.freeze({
       ...evidence,

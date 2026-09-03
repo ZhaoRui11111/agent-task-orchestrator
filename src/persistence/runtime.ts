@@ -89,13 +89,23 @@ export interface OwnedRuntimeDirectory {
 const runtimeLayouts = new WeakMap<object, readonly Readonly<{ path: string; identity: DirectoryIdentity }>[] >();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 
+export function exactDirectoryFilesystemIdentity(
+  stats: Readonly<{ dev: bigint; ino: bigint; mode: bigint }>,
+): DirectoryIdentity {
+  const mode = Number(stats.mode);
+  if (!Number.isSafeInteger(mode)) {
+    throw persistenceFailure("UNSAFE_RUNTIME_ROOT", "Runtime directory mode is outside the safe numeric range");
+  }
+  return Object.freeze({ dev: String(stats.dev), ino: String(stats.ino), mode });
+}
+
 function identityOfDirectory(value: string): DirectoryIdentity {
   try {
-    const stats = lstatSync(value);
+    const stats = lstatSync(value, { bigint: true });
     if (!stats.isDirectory() || stats.isSymbolicLink()) {
       throw persistenceFailure("UNSAFE_RUNTIME_ROOT", "Runtime path component is not a real directory");
     }
-    return Object.freeze({ dev: String(stats.dev), ino: String(stats.ino), mode: stats.mode });
+    return exactDirectoryFilesystemIdentity(stats);
   } catch (error) {
     if (error instanceof Error && error.name === "PersistenceError") throw error;
     throw persistenceFailure("UNSAFE_RUNTIME_ROOT", "Runtime directory identity could not be established", {}, error);

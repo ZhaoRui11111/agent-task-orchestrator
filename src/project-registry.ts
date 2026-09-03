@@ -58,6 +58,16 @@ function overlaps(left: string, right: string): boolean {
   return first === second || first.startsWith(`${second}${path.sep}`) || second.startsWith(`${first}${path.sep}`);
 }
 
+export function exactProjectFilesystemIdentity(
+  stats: Readonly<{ dev: bigint; ino: bigint; mode: bigint }>,
+): Readonly<{ device: string; inode: string; mode: number }> {
+  const mode = Number(stats.mode);
+  if (!Number.isSafeInteger(mode)) {
+    throw registryFailure("PROJECT_IDENTITY_UNCERTAIN", "Filesystem mode is outside the safe numeric range");
+  }
+  return Object.freeze({ device: String(stats.dev), inode: String(stats.ino), mode });
+}
+
 function rejectLexicalRoot(value: unknown): asserts value is string {
   if (typeof value !== "string" || value.length === 0 || value.indexOf("\0") !== -1 || !path.isAbsolute(value)) {
     throw registryFailure("INVALID_PROJECT_ROOT", "Project root must be a nonempty absolute local path");
@@ -109,7 +119,7 @@ export function inspectProjectRoot(projectRootInput: unknown, runtimeRootInput: 
   inspectEveryComponent(projectRootInput);
   inspectEveryComponent(runtimeRootInput);
   try {
-    const rootStat = lstatSync(projectRootInput);
+    const rootStat = lstatSync(projectRootInput, { bigint: true });
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
       throw registryFailure("PROJECT_ROOT_REPARSE", "Project root must be a real directory");
     }
@@ -121,18 +131,15 @@ export function inspectProjectRoot(projectRootInput: unknown, runtimeRootInput: 
     if (overlaps(canonicalRoot, canonicalRuntimeRoot)) {
       throw registryFailure("PROJECT_RUNTIME_OVERLAP", "Project root and runtime root must not overlap");
     }
-    const device = String(rootStat.dev);
-    const inode = String(rootStat.ino);
-    if (device.length === 0 || inode.length === 0 || !Number.isSafeInteger(rootStat.mode)) {
+    const identity = exactProjectFilesystemIdentity(rootStat);
+    if (identity.device.length === 0 || identity.inode.length === 0) {
       throw registryFailure("PROJECT_IDENTITY_UNCERTAIN", "Project root has no stable local identity receipt");
     }
     return Object.freeze({
       canonicalRoot,
       rootKey: comparablePath(canonicalRoot),
       platform: process.platform,
-      device,
-      inode,
-      mode: rootStat.mode,
+      ...identity,
     });
   } catch (error) {
     if (error instanceof ProjectRegistryError) throw error;
@@ -144,7 +151,7 @@ export function inspectTrustedRuntimeRoot(runtimeRootInput: unknown): ProjectRoo
   rejectLexicalRoot(runtimeRootInput);
   inspectEveryComponent(runtimeRootInput);
   try {
-    const rootStat = lstatSync(runtimeRootInput);
+    const rootStat = lstatSync(runtimeRootInput, { bigint: true });
     if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
       throw registryFailure("PROJECT_ROOT_REPARSE", "Runtime root must be a real directory");
     }
@@ -152,13 +159,12 @@ export function inspectTrustedRuntimeRoot(runtimeRootInput: unknown): ProjectRoo
     if (comparablePath(canonicalRoot) !== comparablePath(runtimeRootInput)) {
       throw registryFailure("PROJECT_ROOT_REPARSE", "Runtime root resolves through an alias or reparse point");
     }
+    const identity = exactProjectFilesystemIdentity(rootStat);
     return Object.freeze({
       canonicalRoot,
       rootKey: comparablePath(canonicalRoot),
       platform: process.platform,
-      device: String(rootStat.dev),
-      inode: String(rootStat.ino),
-      mode: rootStat.mode,
+      ...identity,
     });
   } catch (error) {
     if (error instanceof ProjectRegistryError) throw error;

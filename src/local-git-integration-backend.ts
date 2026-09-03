@@ -155,30 +155,36 @@ function localAbsolutePath(value: unknown): value is string {
     !/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(value.replace(/^[A-Za-z]:[\\/]/u, ""));
 }
 
+function safeMode(value: bigint): number {
+  const mode = Number(value);
+  if (!Number.isSafeInteger(mode)) throw new TypeError("Integration file mode is invalid");
+  return mode;
+}
+
 function directDirectoryIdentity(value: unknown): FileIdentity {
   if (!localAbsolutePath(value)) throw new TypeError("Integration directory is not an absolute local path");
   const resolved = path.resolve(value);
-  const direct = lstatSync(resolved);
+  const direct = lstatSync(resolved, { bigint: true });
   const realPath = realpathSync.native(resolved);
-  const stats = lstatSync(realPath);
+  const stats = lstatSync(realPath, { bigint: true });
   if (!direct.isDirectory() || direct.isSymbolicLink() || !stats.isDirectory() || stats.isSymbolicLink() ||
       normalizedPath(resolved) !== normalizedPath(realPath)) {
     throw new TypeError("Integration directory is not a direct directory");
   }
-  return Object.freeze({ realPath, device: String(stats.dev), inode: String(stats.ino), mode: stats.mode });
+  return Object.freeze({ realPath, device: String(stats.dev), inode: String(stats.ino), mode: safeMode(stats.mode) });
 }
 
 function directFileIdentity(value: unknown): FileIdentity {
   if (!localAbsolutePath(value)) throw new TypeError("Integration file is not an absolute local path");
   const resolved = path.resolve(value);
-  const direct = lstatSync(resolved);
+  const direct = lstatSync(resolved, { bigint: true });
   const realPath = realpathSync.native(resolved);
-  const stats = lstatSync(realPath);
-  if (!direct.isFile() || direct.isSymbolicLink() || direct.nlink !== 1 || !stats.isFile() || stats.isSymbolicLink() ||
-      stats.nlink !== 1 || normalizedPath(resolved) !== normalizedPath(realPath)) {
+  const stats = lstatSync(realPath, { bigint: true });
+  if (!direct.isFile() || direct.isSymbolicLink() || direct.nlink !== 1n || !stats.isFile() || stats.isSymbolicLink() ||
+      stats.nlink !== 1n || normalizedPath(resolved) !== normalizedPath(realPath)) {
     throw new TypeError("Integration file is not a direct single-link regular file");
   }
-  return Object.freeze({ realPath, device: String(stats.dev), inode: String(stats.ino), mode: stats.mode });
+  return Object.freeze({ realPath, device: String(stats.dev), inode: String(stats.ino), mode: safeMode(stats.mode) });
 }
 
 function identityEqual(left: FileIdentity, right: FileIdentity): boolean {
@@ -201,19 +207,19 @@ function fileIdentityCurrent(expected: FileIdentity): boolean {
 
 function stableFile(value: unknown, maximumBytes: number): StableFileIdentity {
   const before = directFileIdentity(value);
-  const beforeStats = lstatSync(before.realPath);
-  if (beforeStats.size < 1 || beforeStats.size > maximumBytes) throw new TypeError("Integration control file size is invalid");
+  const beforeStats = lstatSync(before.realPath, { bigint: true });
+  if (beforeStats.size < 1n || beforeStats.size > BigInt(maximumBytes)) throw new TypeError("Integration control file size is invalid");
   let descriptor: number | null = null;
   try {
     descriptor = openSync(before.realPath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
-    const opened = fstatSync(descriptor);
-    if (!opened.isFile() || opened.isSymbolicLink() || opened.nlink !== 1 ||
+    const opened = fstatSync(descriptor, { bigint: true });
+    if (!opened.isFile() || opened.isSymbolicLink() || opened.nlink !== 1n ||
         String(opened.dev) !== before.device || String(opened.ino) !== before.inode) {
       throw new TypeError("Integration control file identity changed");
     }
     const bytes = readFileSync(descriptor);
-    const after = fstatSync(descriptor);
-    if (bytes.byteLength !== beforeStats.size || !after.isFile() || after.isSymbolicLink() || after.nlink !== 1 ||
+    const after = fstatSync(descriptor, { bigint: true });
+    if (BigInt(bytes.byteLength) !== beforeStats.size || !after.isFile() || after.isSymbolicLink() || after.nlink !== 1n ||
         String(after.dev) !== before.device || String(after.ino) !== before.inode || !fileIdentityCurrent(before)) {
       throw new TypeError("Integration control file changed during read");
     }

@@ -263,12 +263,13 @@ function pathContains(root: string, candidate: string): boolean {
 }
 
 function identityFor(target: string, kind: "directory" | "file"): FileIdentity {
-  let stats: ReturnType<typeof lstatSync>;
-  try {
-    stats = lstatSync(target);
-  } catch {
-    throw new AdapterRefusal("conflict", "path_identity_unavailable");
-  }
+  const stats = (() => {
+    try {
+      return lstatSync(target, { bigint: true });
+    } catch {
+      throw new AdapterRefusal("conflict", "path_identity_unavailable");
+    }
+  })();
   if (stats.isSymbolicLink() || (kind === "directory" ? !stats.isDirectory() : !stats.isFile())) {
     throw new AdapterRefusal("conflict", "unsafe_path_component");
   }
@@ -279,11 +280,13 @@ function identityFor(target: string, kind: "directory" | "file"): FileIdentity {
     throw new AdapterRefusal("conflict", "path_identity_unavailable");
   }
   if (!samePath(realPath, target)) throw new AdapterRefusal("conflict", "aliased_path_component");
+  const mode = Number(stats.mode);
+  if (!Number.isSafeInteger(mode)) throw new AdapterRefusal("conflict", "path_identity_unavailable");
   return Object.freeze({
     realPath,
     dev: String(stats.dev),
     ino: String(stats.ino),
-    mode: stats.mode,
+    mode,
   });
 }
 
@@ -469,7 +472,9 @@ function readBounded(target: string, maximum: number): Uint8Array {
   const identity = identityFor(target, "file");
   let bytes: Uint8Array;
   try {
-    if (lstatSync(target).size > maximum) throw new AdapterRefusal("conflict", "bounded_file_too_large");
+    if (lstatSync(target, { bigint: true }).size > BigInt(maximum)) {
+      throw new AdapterRefusal("conflict", "bounded_file_too_large");
+    }
     bytes = readFileSync(target);
   } catch (error) {
     if (error instanceof AdapterRefusal) throw error;
@@ -845,7 +850,7 @@ function exclusiveRegularFile(target: string, bytes: Uint8Array): void {
     throw new AdapterRefusal("conflict", "exclusive_leaf_create_failed");
   }
   const createdIdentity = identityFor(target, "file");
-  if (lstatSync(target).nlink !== 1) {
+  if (lstatSync(target, { bigint: true }).nlink !== 1n) {
     throw new AdapterRefusal("integrity_failure", "exclusive_leaf_hardlink_refused", true);
   }
   let reopened: Uint8Array;
@@ -865,7 +870,7 @@ function exclusiveUtf8File(target: string, value: string): void {
 
 function exactFileText(target: string, expected: string, maximum = 4096): boolean {
   try {
-    if (lstatSync(target).nlink !== 1) return false;
+    if (lstatSync(target, { bigint: true }).nlink !== 1n) return false;
     const actual = decodeUtf8(readBounded(target, maximum));
     return actual === expected;
   } catch {
@@ -875,13 +880,14 @@ function exactFileText(target: string, expected: string, maximum = 4096): boolea
 
 function singleLinkFileIdentity(target: string): FileIdentity {
   const identity = identityFor(target, "file");
-  let stats: ReturnType<typeof lstatSync>;
-  try {
-    stats = lstatSync(target);
-  } catch {
-    throw new AdapterRefusal("conflict", "single_link_file_unavailable");
-  }
-  if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1 ||
+  const stats = (() => {
+    try {
+      return lstatSync(target, { bigint: true });
+    } catch {
+      throw new AdapterRefusal("conflict", "single_link_file_unavailable");
+    }
+  })();
+  if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n ||
       !identityMatches(target, identity, "file")) {
     throw new AdapterRefusal("conflict", "single_link_file_unprovable");
   }
@@ -932,8 +938,8 @@ function materializedDirectoryMatches(
     if (name === undefined) return false;
     const child = path.join(current, name);
     if (!pathContains(snapshot.targetDirectory, child)) return false;
-    const stats = lstatSync(child);
-    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1) return false;
+    const stats = lstatSync(child, { bigint: true });
+    if (!stats.isFile() || stats.isSymbolicLink() || stats.nlink !== 1n) return false;
     const expected = Buffer.from(entry.dataBase64, "base64");
     if (expected.length !== entry.size || !bytesEqual(readBounded(child, entry.size), expected)) return false;
   }
@@ -1022,8 +1028,8 @@ function cleanupInventory(
       throw new AdapterRefusal("integrity_failure", "cleanup_inventory_escape", true);
     }
     const identity = singleLinkFileIdentity(target);
-    const stats = lstatSync(target);
-    if (!Number.isSafeInteger(stats.size) || stats.size < 0 || stats.size > MAX_GIT_OUTPUT) {
+    const stats = lstatSync(target, { bigint: true });
+    if (stats.size < 0n || stats.size > BigInt(MAX_GIT_OUTPUT)) {
       throw new AdapterRefusal("resource_exhausted", "cleanup_inventory_file_limit");
     }
     const bytes = readBounded(target, MAX_GIT_OUTPUT);

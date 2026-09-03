@@ -117,12 +117,22 @@ export interface FileIdentity {
   readonly size: number;
 }
 
-function statsIdentity(stats: ReturnType<typeof lstatSync>): FileIdentity {
+function safeIdentityNumber(value: bigint, label: "mode" | "size"): number {
+  const number = Number(value);
+  if (value < 0n || !Number.isSafeInteger(number)) {
+    throw persistenceFailure("PATH_IDENTITY_CHANGED", `Filesystem ${label} is outside the safe numeric range`);
+  }
+  return number;
+}
+
+export function exactFileFilesystemIdentity(
+  stats: Readonly<{ dev: bigint; ino: bigint; mode: bigint; size: bigint }>,
+): FileIdentity {
   return Object.freeze({
     dev: String(stats.dev),
     ino: String(stats.ino),
-    mode: stats.mode,
-    size: stats.size,
+    mode: safeIdentityNumber(stats.mode, "mode"),
+    size: safeIdentityNumber(stats.size, "size"),
   });
 }
 
@@ -155,11 +165,11 @@ export function pathEntryExistsNoFollow(path: string): boolean {
 
 export function inspectRegularFile(path: string): FileIdentity {
   try {
-    const stats = lstatSync(path);
+    const stats = lstatSync(path, { bigint: true });
     if (!stats.isFile() || stats.isSymbolicLink()) {
       throw persistenceFailure("PATH_IDENTITY_CHANGED", "Expected a regular no-follow file");
     }
-    return statsIdentity(stats);
+    return exactFileFilesystemIdentity(stats);
   } catch (error) {
     if (error instanceof Error && error.name === "PersistenceError") throw error;
     throw persistenceFailure("PATH_IDENTITY_CHANGED", "Regular file identity could not be established", {}, error);
@@ -172,7 +182,7 @@ export function inspectPrivateRegularFile(path: string): FileIdentity {
     const noFollow = constants.O_NOFOLLOW ?? 0;
     const descriptor = openSync(path, (constants.O_RDONLY ?? 0) | noFollow);
     try {
-      const opened = statsIdentity(fstatSync(descriptor));
+      const opened = exactFileFilesystemIdentity(fstatSync(descriptor, { bigint: true }));
       if (!sameFileIdentity(before, opened)) {
         throw persistenceFailure("PATH_IDENTITY_CHANGED", "File identity changed before private-file inspection");
       }
@@ -199,7 +209,7 @@ export function enforcePrivateRegularFile(path: string): FileIdentity {
     const noFollow = constants.O_NOFOLLOW ?? 0;
     const descriptor = openSync(path, (constants.O_RDWR ?? 0) | noFollow);
     try {
-      const opened = statsIdentity(fstatSync(descriptor));
+      const opened = exactFileFilesystemIdentity(fstatSync(descriptor, { bigint: true }));
       if (!sameFileIdentity(before, opened)) {
         throw persistenceFailure("PATH_IDENTITY_CHANGED", "File identity changed before permission enforcement");
       }
@@ -207,7 +217,7 @@ export function enforcePrivateRegularFile(path: string): FileIdentity {
         fchmodSync(descriptor, 0o600);
         fsyncSync(descriptor);
       }
-      const after = statsIdentity(fstatSync(descriptor));
+      const after = exactFileFilesystemIdentity(fstatSync(descriptor, { bigint: true }));
       if (!sameFileObjectIdentity(opened, after) || opened.size !== after.size) {
         throw persistenceFailure("PATH_IDENTITY_CHANGED", "File identity changed during permission enforcement");
       }
@@ -238,7 +248,7 @@ export function reservePrivateRegularFile(path: string): FileIdentity {
     const descriptor = openSync(path, flags, 0o600);
     try {
       fsyncSync(descriptor);
-      const identity = statsIdentity(fstatSync(descriptor));
+      const identity = exactFileFilesystemIdentity(fstatSync(descriptor, { bigint: true }));
       if (identity.size !== 0 || (process.platform !== "win32" && (identity.mode & 0o077) !== 0)) {
         throw persistenceFailure("UNSAFE_RUNTIME_ROOT", "Reserved persistence file is not private and empty");
       }
@@ -258,13 +268,14 @@ export function readRegularFile(path: string): Readonly<{ bytes: Uint8Array; ide
     const noFollow = constants.O_NOFOLLOW ?? 0;
     const descriptor = openSync(path, (constants.O_RDONLY ?? 0) | noFollow);
     try {
-      const opened = statsIdentity(fstatSync(descriptor));
+      const opened = exactFileFilesystemIdentity(fstatSync(descriptor, { bigint: true }));
       if (!sameFileIdentity(before, opened)) {
         throw persistenceFailure("PATH_IDENTITY_CHANGED", "File identity changed before read");
       }
       const bytes = readFileSync(descriptor);
-      const after = statsIdentity(fstatSync(descriptor));
-      if (!sameFileIdentity(opened, after) || after.size !== bytes.byteLength) {
+      const afterStats = fstatSync(descriptor, { bigint: true });
+      const after = exactFileFilesystemIdentity(afterStats);
+      if (!sameFileIdentity(opened, after) || afterStats.size !== BigInt(bytes.byteLength)) {
         throw persistenceFailure("PATH_IDENTITY_CHANGED", "File identity changed during read");
       }
       return Object.freeze({ bytes, identity: after });
@@ -288,7 +299,7 @@ export function writeExclusiveFile(path: string, value: string | Uint8Array): Fi
     try {
       writeFileSync(descriptor, value);
       fsyncSync(descriptor);
-      const identity = statsIdentity(fstatSync(descriptor));
+      const identity = exactFileFilesystemIdentity(fstatSync(descriptor, { bigint: true }));
       if (identity.size <= 0) {
         throw persistenceFailure("PATH_IDENTITY_CHANGED", "Exclusive file publication produced no bytes");
       }

@@ -4,6 +4,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  readFileSync,
   renameSync,
   symlinkSync,
   writeFileSync,
@@ -17,12 +18,16 @@ import {
   verifyBackupGeneration,
 } from "../src/index.ts";
 import {
+  assertOwnedRuntimeDirectory,
   assertRuntimeLayout,
+  createOwnedRuntimeDirectory,
+  exactDirectoryFilesystemIdentity,
   PRIMARY_RUNTIME_MEMBER_NAMES,
   primaryRuntimeMemberPath,
   requiredRuntimeDirectoryPaths,
   selectConfiguredRuntimeRoot,
 } from "../src/persistence/runtime.ts";
+import { exactFileFilesystemIdentity } from "../src/persistence/values.ts";
 import {
   cleanupPersistenceFixture,
   createAuthorizedTestBackup,
@@ -30,6 +35,12 @@ import {
   expectPersistenceError,
 } from "./persistence-test-helpers.mjs";
 import { createOwnedGeneration, removeOwnedGeneration } from "../scripts/repo-utils.mjs";
+
+test("persistence read length comparison remains BigInt until equality is decided", () => {
+  const source = readFileSync(new URL("../src/persistence/values.ts", import.meta.url), "utf8");
+  assert.match(source, /afterStats\.size !== BigInt\(bytes\.byteLength\)/u);
+  assert.doesNotMatch(source, /after\.size !== bytes\.byteLength/u);
+});
 
 test("Windows default and environment override only select a candidate later subjected to full validation", () => {
   assert.equal(
@@ -261,6 +272,54 @@ test("every issued runtime directory identity is revalidated before later use", 
     mkdirSync(fixture.layout.connectionsRoot);
     assert.throws(
       () => assertRuntimeLayout(fixture.layout),
+      (error) => expectPersistenceError(error, "PATH_IDENTITY_CHANGED"),
+    );
+  } finally {
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("owned runtime directory identity preserves BigInt device and inode before replacement checks", () => {
+  const fixture = createPersistenceFixture("path-bigint-identity");
+  try {
+    const owned = createOwnedRuntimeDirectory(fixture.layout, fixture.layout.restoreStagingRoot, "owned-bigint");
+    const stats = lstatSync(owned.path, { bigint: true });
+    assert.equal(owned.identity.dev, String(stats.dev));
+    assert.equal(owned.identity.ino, String(stats.ino));
+    assert.equal(owned.identity.mode, Number(stats.mode));
+    const highBitInode = BigInt(Number.MAX_SAFE_INTEGER) + 2n;
+    assert.notEqual(String(highBitInode), String(Number(highBitInode)));
+    assert.deepEqual(
+      exactDirectoryFilesystemIdentity({ dev: highBitInode + 2n, ino: highBitInode, mode: 0o40700n }),
+      { dev: String(highBitInode + 2n), ino: String(highBitInode), mode: 0o40700 },
+    );
+    assert.deepEqual(
+      exactFileFilesystemIdentity({ dev: highBitInode + 2n, ino: highBitInode, mode: 0o100600n, size: 17n }),
+      { dev: String(highBitInode + 2n), ino: String(highBitInode), mode: 0o100600, size: 17 },
+    );
+    assert.throws(
+      () => exactDirectoryFilesystemIdentity({
+        dev: highBitInode + 2n,
+        ino: highBitInode,
+        mode: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+      }),
+      (error) => expectPersistenceError(error, "UNSAFE_RUNTIME_ROOT"),
+    );
+    assert.throws(
+      () => exactFileFilesystemIdentity({
+        dev: highBitInode + 2n,
+        ino: highBitInode,
+        mode: 0o100600n,
+        size: BigInt(Number.MAX_SAFE_INTEGER) + 1n,
+      }),
+      (error) => expectPersistenceError(error, "PATH_IDENTITY_CHANGED"),
+    );
+
+    const displaced = `${owned.path}.displaced`;
+    renameSync(owned.path, displaced);
+    mkdirSync(owned.path);
+    assert.throws(
+      () => assertOwnedRuntimeDirectory(fixture.layout, owned),
       (error) => expectPersistenceError(error, "PATH_IDENTITY_CHANGED"),
     );
   } finally {

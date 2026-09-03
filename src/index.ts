@@ -1,6 +1,13 @@
 export * from "./domain.ts";
 export * from "./authorization.ts";
-export * from "./project-registry.ts";
+export {
+  PROJECT_REGISTRY_ERROR_CODES,
+  ProjectRegistryError,
+  inspectProjectRoot,
+  inspectTrustedRuntimeRoot,
+  revalidateProjectRoot,
+} from "./project-registry.ts";
+export type { ProjectRegistryErrorCode, ProjectRootIdentity } from "./project-registry.ts";
 export {
   APPLICATION_ERROR_CODES,
   createApplicationService,

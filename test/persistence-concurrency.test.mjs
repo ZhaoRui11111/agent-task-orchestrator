@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
@@ -286,6 +287,11 @@ test("connection receipt owner revalidates its issued parent at create and relea
       renameSync(owned, fixture.layout.connectionsRoot);
       return createConnectionReceipt(fixture.layout, "parent", token);
     });
+    const receiptStats = lstatSync(receipt.path, { bigint: true });
+    assert.equal(receipt.identity.dev, String(receiptStats.dev));
+    assert.equal(receipt.identity.ino, String(receiptStats.ino));
+    assert.equal(receipt.identity.mode, Number(receiptStats.mode));
+    assert.equal(receipt.identity.size, Number(receiptStats.size));
     await withLifecycleLock(fixture.layout, "release-receipt", (token) => {
       const owned = `${fixture.layout.connectionsRoot}.owned`;
       const replacement = `${fixture.layout.connectionsRoot}.replacement`;

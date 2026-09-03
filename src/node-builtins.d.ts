@@ -35,6 +35,18 @@ declare module "node:fs" {
     isSymbolicLink(): boolean;
   }
 
+  interface BigIntStats {
+    readonly dev: bigint;
+    readonly ino: bigint;
+    readonly mode: bigint;
+    readonly nlink: bigint;
+    readonly size: bigint;
+    readonly mtimeMs: bigint;
+    isDirectory(): boolean;
+    isFile(): boolean;
+    isSymbolicLink(): boolean;
+  }
+
   interface MkdirOptions {
     readonly recursive?: boolean;
     readonly mode?: number;
@@ -57,8 +69,10 @@ declare module "node:fs" {
   export function closeSync(fileDescriptor: number): void;
   export function existsSync(path: string): boolean;
   export function fchmodSync(fileDescriptor: number, mode: number): void;
+  export function fstatSync(fileDescriptor: number, options: Readonly<{ bigint: true }>): BigIntStats;
   export function fstatSync(fileDescriptor: number): Stats;
   export function fsyncSync(fileDescriptor: number): void;
+  export function lstatSync(path: string, options: Readonly<{ bigint: true }>): BigIntStats;
   export function lstatSync(path: string): Stats;
   export function mkdirSync(path: string, options?: MkdirOptions): string | undefined;
   export function openSync(path: string, flags: string | number, mode?: number): number;
