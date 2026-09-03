@@ -7,7 +7,9 @@ operational events, diagnostic access, and the application of redaction to
 operational events. No logger, diagnostic command, event exporter, or telemetry
 pipeline exists today. Current schema-version-1 application, Manual-loop, dispatcher request/
 decision/audit, reconciliation, member, no-execution member-denial, and summary
-rows, plus the dedicated workspace transition-event relation and closed current
+rows, plus current policy receipts, completion-gate transition evidence,
+completion decisions, integration reservation/transition evidence, cleanup
+attestations, the workspace transition-event relation, and closed current
 `ato.api/v1` responses, implement only a
 bounded durable/display evidence subset; they are not log files or a general
 event sink.
@@ -27,7 +29,8 @@ rows are source-of-truth records owned by the
 - `causation_id` identifies the immediately preceding event or command.
 - Structured events include applicable stable IDs for actor, Project, Task,
   execution, run, trigger, operation/intent, receipt, workspace/generation,
-  gate, and authorization decision.
+  policy, gate, integration reservation, cleanup attestation, and authorization
+  decision.
 - Missing optional IDs are explicit nulls. Logs never substitute Task title,
   filesystem path, prompt excerpt, or external response text for a stable ID.
 - Adapter calls carry correlation and operation identity, and adapter errors
@@ -61,12 +64,15 @@ Events describe observed facts. They do not claim an external effect succeeded
 unless a verified receipt/finalization exists, and they do not claim a Task
 completed based on an execution-turn event.
 
-## Current dedicated workspace transition evidence
+## Current dedicated transition evidence
 
-The current workspace foundation does not implement the general operational
-event envelope or a sink. It persists one dedicated append-only
-`workspace_events` relation as authoritative transition evidence. Its complete
-event-kind set is `workspace.operation.prepared`,
+The current workspace/Phase 3 library does not implement the general
+operational event envelope or a sink. It persists dedicated append-only
+`workspace_events`, `completion_gate_events`, and `integration_events`
+relations as authoritative transition evidence, while the generic application
+audit records bounded policy/completion/integration command outcomes.
+
+The workspace event-kind set is `workspace.operation.prepared`,
 `workspace.operation.denied`, `workspace.operation.executing`,
 `workspace.operation.observed`, `workspace.operation.verified`,
 `workspace.operation.finalized`, and `workspace.operation.reconciled`.
@@ -84,7 +90,17 @@ durable transition and are verified by the combined decoder; they cannot
 authorize a later operation or substitute for observation, verified receipt,
 or finalization.
 
-No current CLI or diagnostic surface exports these rows. Adding a logger,
+Completion-gate events use the same closed prepared/denied/executing/observed/
+verified/finalized/reconciled lifecycle under a gate operation and intent.
+Integration events add reservation lifecycle facts (`reserved`, `renewed`,
+`taken_over`, `released`, `expired`, or `ambiguous`) and the same closed
+operation lifecycle. They contain only bound opaque identities, closed
+outcome/reason codes, revisions/fences/counts/times, and nullable bounded
+evidence references. Policy receipts, verified gate receipts, generic and
+subtyped completion decisions, integration receipts/finalizations, and cleanup
+attestations are source-of-truth records rather than reconstructed events.
+
+No current CLI or diagnostic surface exports any of these rows. Adding a logger,
 general event envelope, retention worker, query/export API, telemetry sink, or
 remote disclosure remains a separate planned implementation and authorization
 decision.

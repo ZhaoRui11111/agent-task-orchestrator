@@ -12,6 +12,7 @@ import {
   DISPATCHER_AUTHORIZATION_ACTIONS,
   MANUAL_AUTHORIZATION_ACTIONS,
   AUTHORIZATION_ACTIONS,
+  WORKSPACE_STAGE_AUTHORIZATION_ACTIONS,
   openPersistence,
 } from "../src/index.ts";
 import { readApplicationStateForOwner } from "../src/persistence/application-repository.ts";
@@ -174,6 +175,7 @@ test("source ato.api/v1 closes the real local Manual dispatch-to-completion loop
       CLAIM_AUTHORIZATION_ACTIONS.length,
       MANUAL_AUTHORIZATION_ACTIONS.length,
       DISPATCHER_AUTHORIZATION_ACTIONS.length,
+      WORKSPACE_STAGE_AUTHORIZATION_ACTIONS.length,
       AUTHORIZATION_ACTIONS.length,
     ]) {
       const upgraded = invoke(runtimeRoot, [
@@ -340,6 +342,7 @@ test("source ato.api/v1 opens the exact current baseline and completes one resta
           CLAIM_AUTHORIZATION_ACTIONS.length,
           MANUAL_AUTHORIZATION_ACTIONS.length,
           DISPATCHER_AUTHORIZATION_ACTIONS.length,
+          WORKSPACE_STAGE_AUTHORIZATION_ACTIONS.length,
           AUTHORIZATION_ACTIONS.length,
         ]) {
           const upgraded = invoke(runtimeRoot, [

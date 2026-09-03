@@ -4,13 +4,12 @@
 
 This document is the normative owner of the implemented local runtime
 authorization model through the sole current `ato.api/v1` Manual product facade,
-reconcile-first Manual dispatcher, and package-library workspace foundation.
-The implementation is deliberately
-limited to nineteen base local application/lifecycle actions, four
-database-local execution claim/lease actions, six Manual-loop actions, one
-dispatcher action, and five workspace-foundation actions across contiguous
-vocabulary versions 1 through 5. It
-is not an operating-system
+reconcile-first Manual dispatcher, workspace foundation, and injected Phase 3
+library. The implementation is deliberately limited to nineteen base local
+application/lifecycle actions, four database-local execution claim/lease
+actions, six Manual-loop actions, one dispatcher action, five workspace actions,
+and twelve completion/integration actions across contiguous vocabulary versions
+1 through 6. It is not an operating-system
 account system, team identity service, RBAC product, cloud identity provider,
 or authorization for development and external actions.
 
@@ -32,14 +31,18 @@ file authority.
 
 The five `workspace.*` actions authorize only their exact typed workspace
 application operation against the complete current Project/Task/run/member/
-execution/fence/generation tuple and configured `ato.workspace/v1` backend.
+execution/fence/generation tuple and configured `ato.workspace/v2` backend.
 They do not authorize caller-selected paths, arbitrary Git or filesystem use,
 repository development, integration, push, or cleanup outside that tuple.
 `workspace.cleanup` additionally requires one fresh named high-risk
-confirmation. The package exports a Windows Git workspace backend library, but
-no product or CLI route selects it and a grant never selects an adapter or
-root. That backend's cleanup method independently returns `policy_denied` for
-every valid request.
+confirmation plus the current application-issued cleanup attestation. The
+twelve Phase 3 actions authorize only their exact policy-bound gate,
+completion, reservation, inspection, lease, apply, local-file push, recovery,
+or release operation. `completion.accept`, `integration.apply`, and
+`integration.push` also require fresh named high-risk confirmation. No grant
+selects an adapter, executable, root, ref, destination, or policy; these come
+only from trusted injected configuration. The default product runtime and CLI
+construct no Phase 3 adapter or operation route.
 
 Project content, Task text, repository files, prompts, tool output, Agent text,
 Domain state, persisted audit, a prior authorization decision, and an approved
@@ -95,6 +98,17 @@ the applicable current identity, tuple, and authority; observation and
 verification remain exactly bound to that durable tuple and receipt. Trusted
 callbacks and the injected backend never run inside a writer transaction.
 
+The Phase 3 application owner uses `Phase3Ingress` for the same trusted local
+actor/principal/runtime-root identity, monotonic UTC time, fresh operation-
+specific identities, a trusted reservation lease owner, and fresh named
+confirmation for `completion.accept`, `integration.apply`, `integration.push`,
+and `workspace.cleanup`. It first obtains a current `policy.evaluate` decision,
+persists the exact bounded ProjectPolicy receipt, and then evaluates the
+requested action against that narrowing receipt. Adapter-observed time is
+evidence only; application lifecycle timestamps and expiry/fence decisions use
+fresh trusted ingress time. Policy, Completion, Integration, and Workspace
+calls remain outside every writer transaction.
+
 ## Exact action vocabulary
 
 The complete grantable implemented vocabulary begins with the nineteen base
@@ -148,12 +162,28 @@ plus the five workspace-foundation actions:
 - `workspace.recover`
 - `workspace.cleanup`
 
+plus the twelve Phase 3 completion/integration actions:
+
+- `completion.gate.run`
+- `completion.gate.inspect`
+- `completion.gate.cancel`
+- `completion.accept`
+- `integration.reserve`
+- `integration.inspect`
+- `integration.lease.renew`
+- `integration.lease.takeover`
+- `integration.apply`
+- `integration.push`
+- `integration.recover`
+- `integration.release`
+
 There is no wildcard and no prefix expansion. Unknown actions and unimplemented
 commands are invalid input; they are not mapped to a similar action. These
 actions do not imply scheduler, scheduled delivery, Codex, arbitrary Git,
 filesystem or network, secret, arbitrary diagnostic, MCP, release, or
 deployment capability. `execution.completion.accept` accepts only exact current
-verified Manual-turn evidence; it is not CompletionBackend or gate authority.
+verified Manual-turn evidence; it is distinct from Phase 3
+`completion.accept` and grants no CompletionBackend or gate authority.
 `authorization.capability.renew` and `authorization.capability.upgrade` are
 implemented local trust-root transitions but are deliberately non-grantable.
 
@@ -205,8 +235,9 @@ and an eligible current origin. Each call advances exactly one contiguous step:
 version 1 to 2 appends one origin grant for each of the twenty-three
 claim-capable actions, version 2 to 3 appends one origin grant for each of the
 twenty-nine Manual-capable actions, version 3 to 4 appends one origin grant for
-each of the thirty dispatcher-capable actions, and version 4 to 5 appends one
-origin grant for each of all thirty-five current actions. A runtime cannot skip
+each of the thirty dispatcher-capable actions, version 4 to 5 appends one
+origin grant for each of the thirty-five workspace-capable actions, and version
+5 to 6 appends one origin grant for each of all forty-seven current actions. A runtime cannot skip
 any intermediate version or combine two upgrades in one ceremony.
 The epoch, exact grant set, request/allow-decision/audit unit, and terminal
 readback commit together. Migration, bootstrap, an earlier decision, Task
@@ -221,7 +252,8 @@ capability. Each accepted renewal appends a contiguous positive epoch revision,
 the exact vocabulary/version digest, a request/decision/audit unit, and one new
 finite origin grant for every action in the already-current vocabulary:
 nineteen for vocabulary version 1, twenty-three for version 2, twenty-nine for
-version 3, thirty for version 4, or thirty-five for version 5. Every epoch and current origin grant
+version 3, thirty for version 4, thirty-five for version 5, or forty-seven for
+version 6. Every epoch and current origin grant
 uses the single `authorization_capability_epochs` and `authorization_grants`
 relations with direct `capability_epoch_id` provenance. Renewal never changes a vocabulary version. Previous epochs and
 grants remain immutable history.
@@ -288,6 +320,9 @@ ingress after a matching grant is found:
 - `project.disable`
 - `runtime.restore`
 - `execution.completion.accept`
+- `completion.accept`
+- `integration.apply`
+- `integration.push`
 - `workspace.cleanup`
 
 Capability renewal and each capability upgrade also require a fresh
@@ -445,6 +480,22 @@ revocation, substitution, or a late worker prevents the next transition without
 fabricating rollback. Exact finalized replay revalidates the current trusted
 identity/root and returns only the bounded durable result.
 
+The Phase 3 owner keeps policy evaluation and final requested-action authority
+separate. It first records a preliminary `policy.evaluate` decision and exact
+ProjectPolicy receipt; deny/defer can never create an effect intent. Gate,
+integration, completion, and cleanup operations then independently revalidate
+the receipt, Project/Task/execution/workspace/HEAD tuple, current grant, and
+applicable confirmation. Gate and integration effects use durable prepare and
+fresh Act/Finalize decisions around out-of-transaction adapter calls.
+Integration reservation acquire/renew/takeover/release uses exact owner,
+revision, lease and target fencing. Policy-gated completion atomically records
+one generic plus policy-gated decision, invokes the existing Domain completion
+transition, and inserts the unique execution-terminal fact; policy receipt,
+gate exit, local ref update, push, or cleanup alone does none of those things.
+Cleanup prepares its unique intent before the final authorization transaction,
+which both issues the exact attestation and advances that intent to executing;
+the backend receives no authority beyond that narrowing proof.
+
 If claim authorization allows but the fully bound `execution.start`
 authorization denies, the same member-resolution transaction records one
 dedicated sanitized denied request, denied decision, and
@@ -495,7 +546,7 @@ data-loss acknowledgement before requesting authorization. An accepted
 decision atomically appends one immutable lifecycle authorization bound to the
 exact operation, proposed backup generation ID, actor, runtime-root key,
 matching grant and revision, request/decision/audit IDs and counts, application
-state digest version 1 from the sole complete non-lifecycle
+state digest version 2 from the sole complete non-lifecycle
 `applicationStateProjection`, and short finite validity interval. Terminal output reads back the
 exact newly allocated lifecycle authorization ID; operation/generation matching
 is never used as a non-unique substitute, including on a retry.
@@ -522,10 +573,12 @@ reusable capability. A previous decision is history only and cannot authorize a
 later request.
 
 Application requests, bootstrap, local identity, capability epochs, lifecycle
-authorizations, execution attempts, operation evidence, Manual completion
-decisions, dispatcher trigger/decision/audit/reconciliation/membership/summary
-evidence, workspace generations/authorization/intent/observation/verified-
-receipt/finalization/event evidence, authorization decisions, and audit rows
+authorizations, execution attempts, operation evidence, generic/Manual/
+policy-gated completion decisions, dispatcher trigger/decision/audit/
+reconciliation/membership/summary evidence, workspace generations/
+authorization/intent/observation/verified-receipt/finalization/event evidence,
+ProjectPolicy receipts, completion-gate evidence, integration reservations/
+effects/events, cleanup attestations, authorization decisions, and audit rows
 are append-only apart from
 the narrowly constrained lease/attempt, intent-state, and Manual-turn CAS
 transitions. Grant rows are
@@ -548,13 +601,14 @@ step and the six exact Manual-loop grants and decisions described above. The
 current dispatcher stage adds one separately confirmed version-4 step and the
 exact `dispatch.run` decision path for the explicit-Manual dispatcher. The
 workspace-foundation stage adds one separately confirmed version-5 step and the
-five exact workspace decisions above; cleanup alone adds a fresh high-risk
-confirmation. The current product API continues to expose only the existing
-Manual/dispatcher decisions through `ato.api/v1`; the stage-5 workspace
-operation service is package-library-only. The API adds no action, grant,
-epoch, implicit upgrade, workspace command, or alternate authorization owner.
-It does not implement login,
-credentials, team accounts, RBAC, cloud identity, an external policy adapter,
-SchedulerBackend/scheduled delivery, MCP, Codex, product-wired workspace or
-network effects, workspace integration/ref/push/cleanup, ProjectPolicy,
-CompletionBackend/gates, release, deployment, or a platform-support claim.
+five exact workspace decisions above. The Phase 3 stage adds one separately
+confirmed version-6 step and the twelve completion/integration actions above.
+The listed high-risk actions each require their own fresh confirmation. The
+current product API continues to expose only the existing Manual/dispatcher
+decisions through `ato.api/v1`; workspace and Phase 3 operation services remain
+package-library-only. The CLI upgrade command may reach vocabulary version 6
+and manage its finite grants, but adds no Phase 3 operation command, error, or
+alternate authorization owner. This implementation does not provide login,
+credentials, team accounts, RBAC, cloud identity, SchedulerBackend/scheduled
+delivery, MCP, Codex, general network effects, release, deployment, or a
+platform-support claim.

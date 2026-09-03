@@ -20,6 +20,7 @@ import {
   WINDOWS_GIT_WORKSPACE_ADAPTER_VERSION,
   createWindowsGitWorkspaceBackend,
 } from "../../src/index.ts";
+import { workspaceCleanupAttestationSha256 } from "../../src/workspace-port.ts";
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex").toUpperCase();
@@ -48,8 +49,8 @@ function gitEnvironment() {
 
 function locateGitExecutable() {
   const candidates = [
-    "C:\\Program Files\\Git\\cmd\\git.exe",
     "C:\\Program Files\\Git\\bin\\git.exe",
+    "C:\\Program Files\\Git\\cmd\\git.exe",
   ];
   for (const candidate of candidates) {
     if (!existsSync(candidate)) continue;
@@ -154,7 +155,7 @@ export function workspaceRequest(fixture, operation, overrides = {}) {
     ...overrides.subject,
   };
   return Object.freeze({
-    contractId: "ato.workspace/v1",
+    contractId: "ato.workspace/v2",
     operation,
     operationId: `operation-${operation}`,
     idempotencyKey: `idempotency-${operation}`,
@@ -163,8 +164,67 @@ export function workspaceRequest(fixture, operation, overrides = {}) {
     adapterId: WINDOWS_GIT_WORKSPACE_ADAPTER_ID,
     adapterVersion: WINDOWS_GIT_WORKSPACE_ADAPTER_VERSION,
     subject: Object.freeze(subject),
+    cleanupAttestation: null,
     ...overrides.request,
   });
+}
+
+export function workspaceCleanupRequest(fixture, ownershipReceipt, overrides = {}) {
+  const request = workspaceRequest(fixture, "cleanup", {
+    subject: { workspaceRevision: 3, ...overrides.subject },
+    request: { ...overrides.request, cleanupAttestation: null },
+  });
+  const issuedAt = overrides.issuedAt ?? new Date(Date.now() - 1_000).toISOString();
+  const validUntil = overrides.validUntil ?? new Date(Date.now() + 120_000).toISOString();
+  const unsigned = Object.freeze({
+    contractId: "ato.workspace-cleanup-attestation/v1",
+    attestationId: "cleanup-attestation",
+    operationId: request.operationId,
+    intentId: "cleanup-intent",
+    projectId: request.subject.projectId,
+    projectResourceRevision: request.subject.projectResourceRevision,
+    projectConfigRevision: request.subject.projectConfigRevision,
+    projectRootKey: request.subject.projectRootKey,
+    repositoryIdentity: ownershipReceipt.repositoryIdentity,
+    taskId: request.subject.taskId,
+    taskCompletedRevision: request.subject.taskRevision,
+    completionDecisionId: "completion-decision",
+    executionId: request.subject.executionId,
+    executionRevision: request.subject.executionRevision,
+    attemptNumber: request.subject.attemptNumber,
+    fencingToken: request.subject.fencingToken,
+    executionTerminalCreatedAt: issuedAt,
+    workspaceId: request.subject.workspaceId,
+    generation: request.subject.generation,
+    workspaceRevision: request.subject.workspaceRevision,
+    workspaceRootKey: request.subject.workspaceRootKey,
+    ownershipBindingSha256: request.subject.ownershipBindingSha256,
+    policyReceiptId: "cleanup-policy-receipt",
+    policyReceiptSha256: sha256("cleanup-policy-receipt"),
+    policyConfigRevision: request.subject.projectConfigRevision,
+    cleanupAuthorizationDecisionId: "cleanup-authorization",
+    cleanupAuthorizationBindingRevision: 2,
+    grantId: "cleanup-grant",
+    grantRevision: 1,
+    confirmationId: "cleanup-confirmation",
+    gateSetSha256: sha256("cleanup-gates"),
+    preservationStateSha256: sha256("cleanup-preservation"),
+    integrationDisposition: "not_required",
+    integrationReservationId: null,
+    integrationReservationRevision: null,
+    integrationReservationFencingToken: null,
+    expectedBranchReference: "refs/heads/main",
+    expectedHeadObjectId: ownershipReceipt.headObjectId,
+    quiescenceSha256: sha256("cleanup-quiescence"),
+    issuedAt,
+    validUntil,
+    ...overrides.attestation,
+  });
+  const attestation = Object.freeze({
+    ...unsigned,
+    attestationSha256: workspaceCleanupAttestationSha256(unsigned),
+  });
+  return Object.freeze({ ...request, cleanupAttestation: attestation });
 }
 
 export function workspacePaths(fixture, request) {

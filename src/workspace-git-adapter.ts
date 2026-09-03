@@ -13,6 +13,7 @@ import {
   realpathSync,
   renameSync,
   rmdirSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import path from "node:path";
@@ -144,6 +145,22 @@ type CreateWorkerRunner = (
   snapshot: RepositorySnapshot,
   request: WorkspaceBackendRequest,
 ) => WorkerResult;
+type CleanupWorkerRunner = (
+  snapshot: RepositorySnapshot,
+  request: WorkspaceBackendRequest & Readonly<{ readonly operation: "cleanup" }>,
+) => WorkerResult;
+
+interface CleanupInventoryEntry {
+  readonly kind: "directory" | "file";
+  readonly relativePath: string;
+  readonly identity: FileIdentity;
+  readonly size: number | null;
+  readonly sha256: string | null;
+}
+
+interface CleanupInventory {
+  readonly entries: readonly CleanupInventoryEntry[];
+}
 
 class AdapterRefusal extends Error {
   readonly category: WorkspaceFailureCategory;
@@ -170,7 +187,7 @@ const EXPECTED_NODE_VERSION = "24.19.0";
 const EXPECTED_GIT_VERSION = "git version 2.53.0.windows.1";
 const WORKER_MARKER = "--ato-workspace-worker";
 const MANIFEST_NAME = "ato-workspace-ownership-v1.json";
-const LOCK_REASON = "ato.workspace/v1 ownership\n";
+const LOCK_REASON = "ato.workspace/v2 ownership\n";
 const WORKSPACE_PARENT_NAME = "ato-workspaces";
 
 function canonicalValue(value: unknown): unknown {
@@ -882,11 +899,12 @@ function singleLinkFileMatches(target: string, expected: FileIdentity): boolean 
 
 function materializedDirectoryMatches(
   snapshot: RepositorySnapshot,
+  tree: readonly TreeEntry[],
   prefix: readonly string[],
   current: string,
 ): boolean {
   const held = identityFor(current, "directory");
-  const descendants = snapshot.tree.filter((entry) =>
+  const descendants = tree.filter((entry) =>
     entry.segments.length > prefix.length &&
     prefix.every((segment, index) => entry.segments[index] === segment)
   );
@@ -907,7 +925,7 @@ function materializedDirectoryMatches(
   for (const name of directoryNames) {
     const child = path.join(current, name);
     if (!pathContains(snapshot.targetDirectory, child) ||
-        !materializedDirectoryMatches(snapshot, Object.freeze([...prefix, name]), child)) return false;
+        !materializedDirectoryMatches(snapshot, tree, Object.freeze([...prefix, name]), child)) return false;
   }
   for (const entry of directEntries) {
     const name = entry.segments.at(-1);
@@ -922,9 +940,161 @@ function materializedDirectoryMatches(
   return identityMatches(current, held);
 }
 
-function materializedTreeMatches(snapshot: RepositorySnapshot): boolean {
+function materializedTreeMatches(snapshot: RepositorySnapshot, tree: readonly TreeEntry[] = snapshot.tree): boolean {
   try {
-    return materializedDirectoryMatches(snapshot, Object.freeze([]), snapshot.targetDirectory);
+    return materializedDirectoryMatches(snapshot, tree, Object.freeze([]), snapshot.targetDirectory);
+  } catch {
+    return false;
+  }
+}
+
+function normalizedInventoryPath(value: string): readonly string[] {
+  if (value.length === 0 || value.startsWith("/") || value.includes("\\")) {
+    throw new AdapterRefusal("integrity_failure", "cleanup_inventory_path_invalid", true);
+  }
+  const segments = value.split("/");
+  if (segments.some((segment) => !safeChildName(segment))) {
+    throw new AdapterRefusal("integrity_failure", "cleanup_inventory_path_invalid", true);
+  }
+  return Object.freeze(segments);
+}
+
+function cleanupInventory(
+  root: string,
+  relativeFiles: readonly string[],
+): CleanupInventory {
+  const foldedFiles = new Set<string>();
+  const directories = new Set<string>([""]);
+  for (const relativeFile of relativeFiles) {
+    const segments = normalizedInventoryPath(relativeFile);
+    const folded = relativeFile.toLocaleLowerCase("en-US");
+    if (foldedFiles.has(folded)) {
+      throw new AdapterRefusal("integrity_failure", "cleanup_inventory_duplicate", true);
+    }
+    foldedFiles.add(folded);
+    for (let index = 1; index < segments.length; index += 1) {
+      directories.add(segments.slice(0, index).join("/"));
+    }
+  }
+  const foldedDirectories = new Set([...directories].map((value) => value.toLocaleLowerCase("en-US")));
+  if ([...foldedFiles].some((value) => foldedDirectories.has(value))) {
+    throw new AdapterRefusal("integrity_failure", "cleanup_inventory_prefix_collision", true);
+  }
+  const expectedChildren = new Map<string, Set<string>>();
+  for (const directory of directories) expectedChildren.set(directory, new Set<string>());
+  for (const directory of directories) {
+    if (directory === "") continue;
+    const segments = normalizedInventoryPath(directory);
+    const parent = segments.slice(0, -1).join("/");
+    expectedChildren.get(parent)?.add(segments.at(-1)!);
+  }
+  for (const relativeFile of relativeFiles) {
+    const segments = normalizedInventoryPath(relativeFile);
+    expectedChildren.get(segments.slice(0, -1).join("/"))?.add(segments.at(-1)!);
+  }
+
+  const entries: CleanupInventoryEntry[] = [];
+  for (const directory of [...directories].sort((left, right) => {
+    const depth = left === "" ? 0 : left.split("/").length;
+    const otherDepth = right === "" ? 0 : right.split("/").length;
+    return depth - otherDepth || left.localeCompare(right);
+  })) {
+    const target = directory === "" ? root : path.join(root, ...normalizedInventoryPath(directory));
+    if (!pathContains(root, target)) {
+      throw new AdapterRefusal("integrity_failure", "cleanup_inventory_escape", true);
+    }
+    const identity = identityFor(target, "directory");
+    const expected = [...(expectedChildren.get(directory) ?? new Set<string>())].sort();
+    let actual: readonly string[];
+    try {
+      actual = readdirSync(target).sort();
+    } catch {
+      throw new AdapterRefusal("conflict", "cleanup_inventory_unavailable");
+    }
+    if (JSON.stringify(actual) !== JSON.stringify(expected) || !identityMatches(target, identity)) {
+      throw new AdapterRefusal("conflict", "cleanup_inventory_mismatch");
+    }
+    entries.push(Object.freeze({ kind: "directory", relativePath: directory, identity, size: null, sha256: null }));
+  }
+  for (const relativeFile of [...relativeFiles].sort()) {
+    const target = path.join(root, ...normalizedInventoryPath(relativeFile));
+    if (!pathContains(root, target)) {
+      throw new AdapterRefusal("integrity_failure", "cleanup_inventory_escape", true);
+    }
+    const identity = singleLinkFileIdentity(target);
+    const stats = lstatSync(target);
+    if (!Number.isSafeInteger(stats.size) || stats.size < 0 || stats.size > MAX_GIT_OUTPUT) {
+      throw new AdapterRefusal("resource_exhausted", "cleanup_inventory_file_limit");
+    }
+    const bytes = readBounded(target, MAX_GIT_OUTPUT);
+    if (!singleLinkFileMatches(target, identity)) {
+      throw new AdapterRefusal("conflict", "cleanup_inventory_identity_changed");
+    }
+    entries.push(Object.freeze({
+      kind: "file",
+      relativePath: relativeFile,
+      identity,
+      size: bytes.length,
+      sha256: sha256(bytes),
+    }));
+  }
+  return Object.freeze({ entries: Object.freeze(entries) });
+}
+
+function inventoryEntryPath(root: string, entry: CleanupInventoryEntry): string {
+  const target = entry.relativePath === ""
+    ? root
+    : path.join(root, ...normalizedInventoryPath(entry.relativePath));
+  if (!pathContains(root, target)) {
+    throw new AdapterRefusal("integrity_failure", "cleanup_inventory_escape", true);
+  }
+  return target;
+}
+
+function cleanupInventoryMatches(root: string, expected: CleanupInventory): boolean {
+  try {
+    const current = cleanupInventory(
+      root,
+      expected.entries.filter((entry) => entry.kind === "file").map((entry) => entry.relativePath),
+    );
+    if (current.entries.length !== expected.entries.length) return false;
+    return current.entries.every((entry, index) => {
+      const prior = expected.entries[index];
+      return prior !== undefined && entry.kind === prior.kind && entry.relativePath === prior.relativePath &&
+        sameObjectIdentity(entry.identity, prior.identity) && entry.size === prior.size && entry.sha256 === prior.sha256;
+    });
+  } catch {
+    return false;
+  }
+}
+
+function removeCleanupInventory(root: string, inventory: CleanupInventory): boolean {
+  try {
+    const files = inventory.entries.filter((entry) => entry.kind === "file")
+      .sort((left, right) => right.relativePath.localeCompare(left.relativePath));
+    for (const entry of files) {
+      const target = inventoryEntryPath(root, entry);
+      const currentIdentity = singleLinkFileIdentity(target);
+      if (!sameObjectIdentity(currentIdentity, entry.identity)) return false;
+      const bytes = readBounded(target, MAX_GIT_OUTPUT);
+      if (bytes.length !== entry.size || sha256(bytes) !== entry.sha256) return false;
+      unlinkSync(target);
+      if (pathExistsNoFollow(target)) return false;
+    }
+    const directories = inventory.entries.filter((entry) => entry.kind === "directory")
+      .sort((left, right) => {
+        const depth = (value: CleanupInventoryEntry): number =>
+          value.relativePath === "" ? 0 : value.relativePath.split("/").length;
+        return depth(right) - depth(left) || right.relativePath.localeCompare(left.relativePath);
+      });
+    for (const entry of directories) {
+      const target = inventoryEntryPath(root, entry);
+      const currentIdentity = identityFor(target, "directory");
+      if (!sameObjectIdentity(currentIdentity, entry.identity) || readdirSync(target).length !== 0) return false;
+      rmdirSync(target);
+      if (pathExistsNoFollow(target)) return false;
+    }
+    return !pathExistsNoFollow(root);
   } catch {
     return false;
   }
@@ -1033,6 +1203,58 @@ function partialObservation(snapshot: RepositorySnapshot): PhysicalObservation {
   });
 }
 
+function currentOwnedHead(snapshot: RepositorySnapshot): string | null {
+  try {
+    const headPath = path.join(snapshot.adminDirectory, "HEAD");
+    const headIdentity = singleLinkFileIdentity(headPath);
+    const head = singleLine(decodeUtf8(readBounded(headPath, 256)), "linked_head_file_invalid");
+    const oidLength = snapshot.objectFormat === "sha1" ? 40 : 64;
+    if (!new RegExp(`^[0-9a-f]{${oidLength}}$`, "u").test(head) ||
+        !singleLinkFileMatches(headPath, headIdentity)) return null;
+    const verified = singleLine(
+      runGitText(snapshot.gitExecutable, snapshot.targetDirectory, ["rev-parse", "--verify", `${head}^{commit}`]),
+      "linked_head_commit_invalid",
+    );
+    const mergeBase = singleLine(
+      runGitText(snapshot.gitExecutable, snapshot.targetDirectory, ["merge-base", snapshot.baseObjectId, head]),
+      "linked_head_ancestry_invalid",
+    );
+    return verified === head && mergeBase === snapshot.baseObjectId &&
+      singleLinkFileMatches(headPath, headIdentity) ? head : null;
+  } catch {
+    return null;
+  }
+}
+
+function ownedAdminRelativeFiles(snapshot: RepositorySnapshot): readonly string[] | null {
+  try {
+    const required = ["HEAD", "commondir", "gitdir", "index", "locked", MANIFEST_NAME];
+    const allowed = new Set([...required, "COMMIT_EDITMSG", "logs"]);
+    const entries = readdirSync(snapshot.adminDirectory).sort();
+    if (required.some((name) => !entries.includes(name)) || entries.some((name) => !allowed.has(name))) return null;
+    const files = [...required];
+    if (entries.includes("COMMIT_EDITMSG")) {
+      singleLinkFileIdentity(path.join(snapshot.adminDirectory, "COMMIT_EDITMSG"));
+      readBounded(path.join(snapshot.adminDirectory, "COMMIT_EDITMSG"), 256 * 1024);
+      files.push("COMMIT_EDITMSG");
+    }
+    if (entries.includes("logs")) {
+      const logsDirectory = path.join(snapshot.adminDirectory, "logs");
+      const logsIdentity = identityFor(logsDirectory, "directory");
+      const logEntries = readdirSync(logsDirectory);
+      if (logEntries.length !== 1 || logEntries[0] !== "HEAD") return null;
+      const headLog = path.join(logsDirectory, "HEAD");
+      singleLinkFileIdentity(headLog);
+      readBounded(headLog, 4 * 1024 * 1024);
+      if (!identityMatches(logsDirectory, logsIdentity)) return null;
+      files.push("logs/HEAD");
+    }
+    return Object.freeze(files.sort());
+  } catch {
+    return null;
+  }
+}
+
 function inspectPhysical(snapshot: RepositorySnapshot, request: WorkspaceBackendRequest): PhysicalObservation {
   revalidateRoot(snapshot.projectRoot);
   revalidateRoot(snapshot.workspaceRoot);
@@ -1066,9 +1288,7 @@ function inspectPhysical(snapshot: RepositorySnapshot, request: WorkspaceBackend
     if (pathExistsNoFollow(snapshot.worktreesDirectory)) identityFor(snapshot.worktreesDirectory, "directory");
     const adminIdentity = identityFor(snapshot.adminDirectory, "directory");
     const targetIdentity = identityFor(snapshot.targetDirectory, "directory");
-    const expectedAdminEntries = ["HEAD", "commondir", "gitdir", "index", "locked", MANIFEST_NAME].sort();
-    const actualAdminEntries = readdirSync(snapshot.adminDirectory).sort();
-    if (JSON.stringify(actualAdminEntries) !== JSON.stringify(expectedAdminEntries)) return partialObservation(snapshot);
+    if (ownedAdminRelativeFiles(snapshot) === null) return partialObservation(snapshot);
     const expectedTargetGit = `gitdir: ${forwardPath(snapshot.adminDirectory)}\n`;
     const indexPath = path.join(snapshot.adminDirectory, "index");
     let indexIdentity: FileIdentity;
@@ -1077,22 +1297,31 @@ function inspectPhysical(snapshot: RepositorySnapshot, request: WorkspaceBackend
     } catch {
       return partialObservation(snapshot);
     }
+    const head = currentOwnedHead(snapshot);
+    if (head === null) return partialObservation(snapshot);
     if (
-      !exactFileText(path.join(snapshot.adminDirectory, "HEAD"), `${snapshot.baseObjectId}\n`) ||
+      !exactFileText(path.join(snapshot.adminDirectory, "HEAD"), `${head}\n`) ||
       !exactFileText(path.join(snapshot.adminDirectory, "commondir"), "../..\n") ||
       !exactFileText(path.join(snapshot.adminDirectory, "gitdir"), `${forwardPath(path.join(snapshot.targetDirectory, ".git"))}\n`) ||
       !exactFileText(path.join(snapshot.adminDirectory, "locked"), LOCK_REASON) ||
       !exactFileText(path.join(snapshot.targetDirectory, ".git"), expectedTargetGit)
     ) return partialObservation(snapshot);
     const record = targetRecords[0];
-    if (record === undefined || record.head !== snapshot.baseObjectId || !record.detached || !record.locked || record.prunable) {
+    if (record === undefined || record.head !== head || !record.detached || !record.locked || record.prunable) {
       return partialObservation(snapshot);
     }
     const manifest = canonicalJson(manifestValue(snapshot, request, adminIdentity, targetIdentity));
     if (!exactFileText(path.join(snapshot.adminDirectory, MANIFEST_NAME), manifest, 16 * 1024)) {
       return partialObservation(snapshot);
     }
-    if (!materializedTreeMatches(snapshot)) return partialObservation(snapshot);
+    const currentTree = parseTree(
+      snapshot.gitExecutable,
+      snapshot.projectRoot.path,
+      snapshot.targetDirectory,
+      snapshot.objectFormat,
+      head,
+    );
+    if (!materializedTreeMatches(snapshot, currentTree)) return partialObservation(snapshot);
     validateObjectTopology(snapshot.commonDirectory, snapshot.objectDirectory);
     const resolvedAdmin = singleLine(
       runGitText(snapshot.gitExecutable, snapshot.targetDirectory, ["rev-parse", "--absolute-git-dir"]),
@@ -1102,17 +1331,23 @@ function inspectPhysical(snapshot: RepositorySnapshot, request: WorkspaceBackend
       runGitText(snapshot.gitExecutable, snapshot.targetDirectory, ["rev-parse", "--git-common-dir"]),
       "linked_common_directory_invalid",
     ));
-    const head = singleLine(
+    const resolvedHead = singleLine(
       runGitText(snapshot.gitExecutable, snapshot.targetDirectory, ["rev-parse", "HEAD"]),
       "linked_head_invalid",
     );
     if (!samePath(resolvedAdmin, snapshot.adminDirectory) || !samePath(resolvedCommon, snapshot.commonDirectory) ||
-        head !== snapshot.baseObjectId) return partialObservation(snapshot);
+        resolvedHead !== head) return partialObservation(snapshot);
     const status = runGitBytes(snapshot.gitExecutable, snapshot.targetDirectory, [
       "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignored=matching", "--no-renames",
     ]);
     if (status.length !== 0) return partialObservation(snapshot);
-    if (!materializedTreeMatches(snapshot)) return partialObservation(snapshot);
+    if (!materializedTreeMatches(snapshot, currentTree) || currentOwnedHead(snapshot) !== head) {
+      return partialObservation(snapshot);
+    }
+    const finalRecords = worktreeInventory(snapshot).filter((candidate) => samePath(candidate.path, snapshot.targetDirectory));
+    const finalRecord = finalRecords[0];
+    if (finalRecords.length !== 1 || finalRecord === undefined || finalRecord.head !== head ||
+        !finalRecord.detached || !finalRecord.locked || finalRecord.prunable) return partialObservation(snapshot);
     if (!singleLinkFileMatches(indexPath, indexIdentity) ||
         !identityMatches(snapshot.adminDirectory, adminIdentity) || !identityMatches(snapshot.targetDirectory, targetIdentity) ||
         !identityMatches(snapshot.commonDirectory, snapshot.commonIdentity) ||
@@ -1123,10 +1358,188 @@ function inspectPhysical(snapshot: RepositorySnapshot, request: WorkspaceBackend
       registrationIdentity: registrationIdentity(snapshot, request, adminIdentity, targetIdentity),
       baseObjectId: snapshot.baseObjectId,
       headObjectId: head,
-      trackedCount: snapshot.tree.length,
+      trackedCount: currentTree.length,
     });
   } catch {
     return partialObservation(snapshot);
+  }
+}
+
+function validateCleanupAttestation(
+  snapshot: RepositorySnapshot,
+  request: WorkspaceBackendRequest & Readonly<{ readonly operation: "cleanup" }>,
+): void {
+  const attestation = request.cleanupAttestation;
+  if (attestation === null) throw new AdapterRefusal("unauthorized", "cleanup_attestation_required");
+  const issuedAt = new Date(attestation.issuedAt).valueOf();
+  const validUntil = new Date(attestation.validUntil).valueOf();
+  const now = Date.now();
+  if (!Number.isFinite(now) || now < issuedAt || now >= validUntil) {
+    throw new AdapterRefusal("unauthorized", "cleanup_attestation_not_current");
+  }
+  const oidLength = snapshot.objectFormat === "sha1" ? 40 : 64;
+  if (attestation.repositoryIdentity !== snapshot.repositoryIdentity ||
+      !new RegExp(`^[0-9a-f]{${oidLength}}$`, "u").test(attestation.expectedHeadObjectId)) {
+    throw new AdapterRefusal("conflict", "cleanup_attestation_repository_mismatch");
+  }
+  const verifiedHead = singleLine(
+    runGitText(snapshot.gitExecutable, snapshot.projectRoot.path,
+      ["rev-parse", "--verify", `${attestation.expectedHeadObjectId}^{commit}`]),
+    "cleanup_expected_head_invalid",
+  );
+  const mergeBase = singleLine(
+    runGitText(snapshot.gitExecutable, snapshot.projectRoot.path,
+      ["merge-base", snapshot.baseObjectId, attestation.expectedHeadObjectId]),
+    "cleanup_expected_head_ancestry_invalid",
+  );
+  if (verifiedHead !== attestation.expectedHeadObjectId || mergeBase !== snapshot.baseObjectId) {
+    throw new AdapterRefusal("conflict", "cleanup_attestation_repository_mismatch");
+  }
+  const branchHead = singleLine(
+    runGitText(
+      snapshot.gitExecutable,
+      snapshot.projectRoot.path,
+      ["rev-parse", "--verify", `${attestation.expectedBranchReference}^{commit}`],
+    ),
+    "cleanup_expected_branch_invalid",
+  );
+  if (branchHead !== attestation.expectedHeadObjectId) {
+    throw new AdapterRefusal("conflict", "cleanup_expected_branch_changed");
+  }
+  revalidateRoot(snapshot.projectRoot);
+  revalidateRoot(snapshot.workspaceRoot);
+  if (!identityMatches(snapshot.commonDirectory, snapshot.commonIdentity) ||
+      !identityMatches(snapshot.objectDirectory, snapshot.objectIdentity)) {
+    throw new AdapterRefusal("conflict", "cleanup_repository_identity_changed");
+  }
+}
+
+function cleanupQuarantinePaths(
+  snapshot: RepositorySnapshot,
+  request: WorkspaceBackendRequest & Readonly<{ readonly operation: "cleanup" }>,
+): Readonly<{
+  readonly targetParent: string;
+  readonly target: string;
+  readonly adminParent: string;
+  readonly admin: string;
+}> {
+  const attestation = request.cleanupAttestation;
+  if (attestation === null) throw new AdapterRefusal("unauthorized", "cleanup_attestation_required");
+  const quarantineName = `q-${attestation.attestationSha256.toLocaleLowerCase("en-US")}`;
+  if (!safeChildName(quarantineName)) {
+    throw new AdapterRefusal("integrity_failure", "cleanup_quarantine_name_invalid", true);
+  }
+  const targetParent = path.dirname(snapshot.targetDirectory);
+  const adminParent = path.dirname(snapshot.adminDirectory);
+  const target = path.join(targetParent, quarantineName);
+  const admin = path.join(adminParent, quarantineName);
+  if (!pathContains(snapshot.workspaceRoot.path, targetParent) ||
+      !pathContains(snapshot.commonDirectory, adminParent) ||
+      !pathContains(targetParent, target) || !pathContains(adminParent, admin) ||
+      target.length > MAX_PATH_LENGTH || admin.length > MAX_PATH_LENGTH) {
+    throw new AdapterRefusal("integrity_failure", "cleanup_quarantine_path_invalid", true);
+  }
+  return Object.freeze({ targetParent, target, adminParent, admin });
+}
+
+function workerStageCleanup(payload: WorkerPayload): WorkerResult {
+  if (payload.request.operation !== "cleanup") {
+    return fixedWorkerResult(false, false, "cleanup_worker_request_invalid");
+  }
+  const request = payload.request as WorkspaceBackendRequest & Readonly<{ readonly operation: "cleanup" }>;
+  const snapshot = payload.snapshot;
+  const heldCommon = assertWorkerCwd(snapshot.commonDirectory, snapshot.commonIdentity);
+  let effectStarted = false;
+  try {
+    validateRepositoryConfiguration(snapshot.commonDirectory);
+    validateObjectTopology(snapshot.commonDirectory, snapshot.objectDirectory);
+    validateCleanupAttestation(snapshot, request);
+    const observation = inspectPhysical(snapshot, request);
+    if (observation.state !== "complete" || observation.headObjectId !== request.cleanupAttestation?.expectedHeadObjectId) {
+      return fixedWorkerResult(false, false, "cleanup_ownership_unprovable");
+    }
+    const currentTree = parseTree(
+      snapshot.gitExecutable,
+      snapshot.projectRoot.path,
+      snapshot.targetDirectory,
+      snapshot.objectFormat,
+      observation.headObjectId,
+    );
+    const quarantine = cleanupQuarantinePaths(snapshot, request);
+    const targetParentIdentity = identityFor(quarantine.targetParent, "directory");
+    const adminParentIdentity = identityFor(quarantine.adminParent, "directory");
+    const targetIdentity = identityFor(snapshot.targetDirectory, "directory");
+    const adminIdentity = identityFor(snapshot.adminDirectory, "directory");
+    if (targetIdentity.dev !== targetParentIdentity.dev || adminIdentity.dev !== adminParentIdentity.dev ||
+        pathExistsNoFollow(quarantine.target) || pathExistsNoFollow(quarantine.admin)) {
+      return fixedWorkerResult(false, false, "cleanup_quarantine_unavailable");
+    }
+    const targetInventory = cleanupInventory(
+      snapshot.targetDirectory,
+      Object.freeze([".git", ...currentTree.map((entry) => entry.relativePath)]),
+    );
+    const adminFiles = ownedAdminRelativeFiles(snapshot);
+    if (adminFiles === null) return fixedWorkerResult(false, false, "cleanup_admin_inventory_unprovable");
+    const adminInventory = cleanupInventory(
+      snapshot.adminDirectory,
+      adminFiles,
+    );
+    validateCleanupAttestation(snapshot, request);
+    const finalObservation = inspectPhysical(snapshot, request);
+    if (finalObservation.state !== "complete" ||
+        finalObservation.headObjectId !== observation.headObjectId ||
+        finalObservation.registrationIdentity !== observation.registrationIdentity ||
+        JSON.stringify(ownedAdminRelativeFiles(snapshot)) !== JSON.stringify(adminFiles) ||
+        !identityMatches(snapshot.targetDirectory, targetIdentity) ||
+        !identityMatches(snapshot.adminDirectory, adminIdentity) ||
+        !identityMatches(quarantine.targetParent, targetParentIdentity) ||
+        !identityMatches(quarantine.adminParent, adminParentIdentity) ||
+        !identityMatches(process.cwd(), heldCommon)) {
+      return fixedWorkerResult(false, false, "cleanup_final_precondition_changed");
+    }
+
+    renameSync(snapshot.targetDirectory, quarantine.target);
+    effectStarted = true;
+    if (pathExistsNoFollow(snapshot.targetDirectory) ||
+        !sameObjectIdentity(identityFor(quarantine.target, "directory"), targetIdentity) ||
+        !identityMatches(quarantine.targetParent, targetParentIdentity)) {
+      return fixedWorkerResult(false, true, "cleanup_target_quarantine_changed");
+    }
+    renameSync(snapshot.adminDirectory, quarantine.admin);
+    if (pathExistsNoFollow(snapshot.adminDirectory) ||
+        !sameObjectIdentity(identityFor(quarantine.admin, "directory"), adminIdentity) ||
+        !identityMatches(quarantine.adminParent, adminParentIdentity) ||
+        !identityMatches(quarantine.targetParent, targetParentIdentity) ||
+        !identityMatches(process.cwd(), heldCommon)) {
+      return fixedWorkerResult(false, true, "cleanup_admin_quarantine_changed");
+    }
+    if (!cleanupInventoryMatches(quarantine.target, targetInventory) ||
+        !cleanupInventoryMatches(quarantine.admin, adminInventory)) {
+      return fixedWorkerResult(false, true, "cleanup_quarantine_inventory_changed");
+    }
+    if (!removeCleanupInventory(quarantine.target, targetInventory)) {
+      return fixedWorkerResult(false, true, "cleanup_target_remove_failed");
+    }
+    if (!identityMatches(quarantine.targetParent, targetParentIdentity) ||
+        !identityMatches(quarantine.adminParent, adminParentIdentity) ||
+        !identityMatches(process.cwd(), heldCommon)) {
+      return fixedWorkerResult(false, true, "cleanup_parent_guard_changed");
+    }
+    if (!removeCleanupInventory(quarantine.admin, adminInventory)) {
+      return fixedWorkerResult(false, true, "cleanup_admin_remove_failed");
+    }
+    if (pathExistsNoFollow(snapshot.targetDirectory) || pathExistsNoFollow(snapshot.adminDirectory) ||
+        pathExistsNoFollow(quarantine.target) || pathExistsNoFollow(quarantine.admin) ||
+        !identityMatches(quarantine.targetParent, targetParentIdentity) ||
+        !identityMatches(quarantine.adminParent, adminParentIdentity) ||
+        !identityMatches(process.cwd(), heldCommon)) {
+      return fixedWorkerResult(false, true, "cleanup_postcondition_unprovable");
+    }
+    const remaining = worktreeInventory(snapshot).filter((record) => samePath(record.path, snapshot.targetDirectory));
+    if (remaining.length !== 0) return fixedWorkerResult(false, true, "cleanup_registration_remains");
+    return fixedWorkerResult(true, true, "removed");
+  } catch (error) {
+    return workerRefusal(error, effectStarted, "cleanup_worker_failed");
   }
 }
 
@@ -1697,6 +2110,7 @@ function executeWorker(stage: string): void {
     else if (stage === "workspace-root") result = workerStageWorkspaceRoot(payload);
     else if (stage === "target-chain") result = workerStageTargetChain(payload);
     else if (stage === "tree") result = workerStageTree(payload);
+    else if (stage === "cleanup") result = workerStageCleanup(payload);
   } catch {
     result = fixedWorkerResult(false, true, "worker_internal_failure");
   }
@@ -1706,6 +2120,13 @@ function executeWorker(stage: string): void {
 
 function runCreateWorker(snapshot: RepositorySnapshot, request: WorkspaceBackendRequest): WorkerResult {
   return runNestedWorker("common", snapshot.commonDirectory, Object.freeze({ snapshot, request }));
+}
+
+function runCleanupWorker(
+  snapshot: RepositorySnapshot,
+  request: WorkspaceBackendRequest & Readonly<{ readonly operation: "cleanup" }>,
+): WorkerResult {
+  return runNestedWorker("cleanup", snapshot.commonDirectory, Object.freeze({ snapshot, request }));
 }
 
 function runPostMkdirIdentityFailureForTesting(
@@ -1858,6 +2279,9 @@ function receiptFor(
       repository: snapshot.repositoryIdentity,
       state: externalState,
     }),
+    cleanupAttestationSha256: request.operation === "cleanup"
+      ? request.cleanupAttestation?.attestationSha256 ?? null
+      : null,
     observedAt,
   });
   const result = parseWorkspaceBackendResult(Object.freeze({ ok: true as const, receipt }));
@@ -1948,15 +2372,51 @@ function executeCreate(
   }
 }
 
-function executeCleanup(value: unknown): WorkspaceBackendResult {
+function executeCleanup(
+  configuration: ReturnType<typeof parseConfiguration>,
+  value: unknown,
+  cleanupWorker: CleanupWorkerRunner,
+): WorkspaceBackendResult {
   const request = requestForOperation(value, "cleanup");
   if (request === null) return backendFailure("invalid_request", "request_shape_invalid", null);
-  return backendFailure("policy_denied", "cleanup_policy_unavailable", request);
+  const cleanupRequest = request as WorkspaceBackendRequest & Readonly<{ readonly operation: "cleanup" }>;
+  try {
+    const attestation = cleanupRequest.cleanupAttestation;
+    if (attestation === null) return backendFailure("unauthorized", "cleanup_attestation_required", cleanupRequest);
+    const now = Date.now();
+    if (now < new Date(attestation.issuedAt).valueOf() || now >= new Date(attestation.validUntil).valueOf()) {
+      return backendFailure("unauthorized", "cleanup_attestation_not_current", cleanupRequest);
+    }
+    const snapshot = preflight(configuration, cleanupRequest);
+    validateCleanupAttestation(snapshot, cleanupRequest);
+    const before = inspectPhysical(snapshot, cleanupRequest);
+    if (before.state === "absent") return receiptFor(cleanupRequest, snapshot, before, "already_absent");
+    if (before.state !== "complete" || before.headObjectId !== attestation.expectedHeadObjectId) {
+      return receiptFor(cleanupRequest, snapshot, before, "partial");
+    }
+    const worker = cleanupWorker(snapshot, cleanupRequest);
+    if (!worker.ok) {
+      return backendFailure(
+        worker.effectStarted ? "ambiguous_external_state" : "conflict",
+        worker.code,
+        cleanupRequest,
+      );
+    }
+    const after = inspectPhysical(snapshot, cleanupRequest);
+    if (after.state !== "absent") {
+      return backendFailure("ambiguous_external_state", "cleanup_postcondition_unprovable", cleanupRequest);
+    }
+    return receiptFor(cleanupRequest, snapshot, after, "removed");
+  } catch (error) {
+    if (error instanceof AdapterRefusal) return backendFailure(error.category, error.code, cleanupRequest);
+    return backendFailure("integrity_failure", "adapter_cleanup_failed", cleanupRequest);
+  }
 }
 
 function createWindowsGitWorkspaceBackendWithRunner(
   configurationValue: WindowsGitWorkspaceAdapterConfiguration,
   createWorker: CreateWorkerRunner,
+  cleanupWorker: CleanupWorkerRunner = runCleanupWorker,
 ): WindowsGitWorkspaceBackend {
   const configuration = parseConfiguration(configurationValue);
   const description: WindowsGitWorkspaceAdapterDescription = Object.freeze({
@@ -1977,7 +2437,7 @@ function createWindowsGitWorkspaceBackendWithRunner(
     recover: (request: WorkspaceBackendRequest & Readonly<{ readonly operation: "recover" }>) =>
       executeReadOperation(configuration, request, "recover"),
     cleanup: (request: WorkspaceBackendRequest & Readonly<{ readonly operation: "cleanup" }>) =>
-      executeCleanup(request),
+      executeCleanup(configuration, request, cleanupWorker),
   });
   return backend;
 }

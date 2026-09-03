@@ -47,31 +47,34 @@ and fixed public error mapping. Adapter work remains
 outside writer transactions, turn success alone never completes a Task, lease
 expiry never authorizes blind replay, and stale-fence writes are refused.
 
-The fresh-only Phase 3 workspace foundation adds one contiguous authorization
-vocabulary version 5 with exactly `workspace.reserve`, `workspace.create`,
-`workspace.inspect`, `workspace.recover`, and `workspace.cleanup`; cleanup alone
-is newly high risk. It implements the pure exact `ato.workspace/v1` contract,
-one typed application coordinator, and persistence-owned workspace generation,
-authorization, intent, observation, verified-receipt, finalization, and bounded
-redacted event records. The coordinator binds the current
-Project/Task/dispatcher-member/execution/fence tuple, calls only an injected
-backend outside writer transactions, and reconciles durable ambiguity before
-retry. The package additionally exports one Windows local Git backend library
-for exact reserve/create/inspect/recover behavior against trusted disjoint
-roots. It writes no SQLite state, is not constructed by the product runtime or
-CLI, and its cleanup route is an unconditional `policy_denied`.
+The fresh-only Phase 3 library extends the same schema-version-1 baseline with
+application-state digest version 2 and authorization vocabulary version 6. It
+implements exact `ato.project-policy/v1`, `ato.completion/v1`,
+`ato.integration/v1`, and the sole current `ato.workspace/v2` contracts, one
+typed Phase 3 application/product-library owner, and persistence-owned policy,
+gate, generic/subtyped completion, integration-reservation/effect, cleanup-
+attestation, workspace, and bounded redacted event records. That owner alone
+derives current non-public tuples, evaluates explicit grants plus fresh policy
+receipts, persists intent before effects, calls only injected adapters outside
+writer transactions, independently observes/verifies results, reconciles
+durable ambiguity, and applies the final fenced Task completion transition.
+The package exports configured local ProjectPolicy and bounded completion-gate
+adapters, a Windows local Git integration backend for local fast-forward and
+ordinary local-file push, and a Windows Git workspace backend with attestation-
+bound owned cleanup. Their filesystem/Git effects are limited to trusted local
+configuration and disposable fixtures; none writes SQLite or is constructed by
+the default product runtime or CLI.
 
 The Phase 2 product capabilities are implemented only for the local
 explicit-Manual product and `manual-local` adapter. They do not execute Task
-content or perform an external Project/workspace effect. The Phase 3 workspace
-foundation has no public CLI command or product composition; its disposable
-Git `2.53.0.windows.1` adapter evidence is development evidence only. The
-repository still has no scheduler or scheduled trigger, MCP component, Codex
-adapter, product-wired workspace adapter, ProjectPolicy or CompletionBackend
-gate, integration/ref/push/cleanup effect, daemon/service, release, deployment,
-or validated platform-support claim. Do not describe those planned
-modules, platform support, safety properties, or integration behavior as
-implemented. Follow the
+content or perform an external Project/workspace effect. The Phase 3 capability
+is an explicitly injected library surface with no public CLI command or default
+product composition; its disposable Git `2.53.0.windows.1` evidence is
+development evidence only. The repository still has no scheduler or scheduled
+trigger, MCP component, Codex adapter, product-wired Phase 3 route, daemon/
+service, external-service integration, release, deployment, or validated
+platform-support claim. Do not describe those absent modules, platform support,
+safety properties, or integration behavior as implemented. Follow the
 [toolchain contract](docs/reference/toolchain-contract.md) for current
 executable entry points, the [domain contract](docs/reference/domain-contract.md)
 for Domain Core behavior, the
@@ -80,8 +83,8 @@ current finite local grant model, and the
 [persistence contract](docs/reference/persistence-contract.md) for the current
 schema and storage/recovery boundary. The
 [reliability protocol](docs/reference/reliability-protocol.md) owns the current
-claim/lease/fence, Manual effect, workspace durable-effect, and dispatcher
-fan-out protocols. The
+claim/lease/fence, Manual effect, dispatcher fan-out, workspace, gate,
+completion, integration, and cleanup protocols. The
 [CLI contract](docs/reference/cli-contract.md) alone owns commands, public output,
 and exit codes.
 

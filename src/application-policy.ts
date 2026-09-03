@@ -4,6 +4,7 @@ import {
   CLAIM_AUTHORIZATION_ACTIONS,
   DISPATCHER_AUTHORIZATION_ACTIONS,
   MANUAL_AUTHORIZATION_ACTIONS,
+  WORKSPACE_STAGE_AUTHORIZATION_ACTIONS,
   actionsForVocabulary,
   canIssueGrant,
   evaluateAuthorization,
@@ -55,6 +56,7 @@ export const BASE_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(BASE_AUTHO
 export const CLAIM_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(CLAIM_AUTHORIZATION_ACTIONS));
 export const MANUAL_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(MANUAL_AUTHORIZATION_ACTIONS));
 export const DISPATCHER_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(DISPATCHER_AUTHORIZATION_ACTIONS));
+export const WORKSPACE_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(WORKSPACE_STAGE_AUTHORIZATION_ACTIONS));
 export const CURRENT_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
 
 export interface RenewalAssessment {
@@ -100,8 +102,8 @@ export function assessRenewal(
 
 export interface UpgradeAssessment {
   readonly nextEpochRevision: number;
-  readonly currentVocabularyVersion: 1 | 2 | 3 | 4;
-  readonly targetVocabularyVersion: 2 | 3 | 4 | 5;
+  readonly currentVocabularyVersion: 1 | 2 | 3 | 4 | 5;
+  readonly targetVocabularyVersion: 2 | 3 | 4 | 5 | 6;
 }
 
 export function assessCapabilityUpgrade(
@@ -116,7 +118,7 @@ export function assessCapabilityUpgrade(
   }
   const latestEpoch = state.epochs.at(-1);
   const currentVocabulary = latestEpoch?.vocabularyVersion ?? bootstrap.vocabularyVersion;
-  if (currentVocabulary !== 1 && currentVocabulary !== 2 && currentVocabulary !== 3 && currentVocabulary !== 4) {
+  if (currentVocabulary !== 1 && currentVocabulary !== 2 && currentVocabulary !== 3 && currentVocabulary !== 4 && currentVocabulary !== 5) {
     return "not_eligible";
   }
   const originCreatedAt = latestEpoch?.createdAt ?? bootstrap.createdAt;
@@ -143,7 +145,9 @@ export function assessCapabilityUpgrade(
         ? 3 as const
         : currentVocabulary === 3
           ? 4 as const
-          : 5 as const,
+          : currentVocabulary === 4
+            ? 5 as const
+            : 6 as const,
   });
 }
 

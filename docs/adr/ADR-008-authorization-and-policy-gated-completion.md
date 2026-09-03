@@ -2,7 +2,10 @@
 
 **Status:** Accepted
 
-This is an accepted design requirement for future work, not a statement that authorization checks, project policies, review gates, or completion automation are implemented today.
+The fresh-only Phase 3 library now implements this decision through explicit
+ProjectPolicy, completion-gate, authorization, freshness, and atomic completion
+owners. It is not wired into the default `ato.api/v1` CLI and does not create a
+release or supported-platform claim.
 
 ## Context
 
@@ -30,4 +33,7 @@ The [authorization contract](../reference/authorization-contract.md) solely owns
 
 ## Required validation
 
-Authorization, negative-path, policy, completion, and evidence-freshness routes are owned by the [validation policy](../reference/validation-policy.md). No permission or completion guarantee follows from this ADR without those implementations and gates.
+Authorization, negative-path, policy, completion, and evidence-freshness routes
+are owned by the [validation policy](../reference/validation-policy.md). This ADR
+still grants no permission and does not substitute for current implementation,
+fresh evidence, or the final application-owned completion CAS.

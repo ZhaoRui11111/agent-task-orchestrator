@@ -8,41 +8,34 @@ This is an independent community project. It is not made, sponsored, or endorsed
 
 The repository contains a governance and architecture-contract baseline, an
 executable TypeScript/Node toolchain and feasibility harness, a pure in-memory
-Domain Core for Project/Task rules, a safe local ProjectRegistry, a finite
-runtime authorization model, one typed Project/Task/dependency application
-service, current schema-version-1 SQLite persistence, a composable local Phase 1 `ato` product
-CLI, a typed reliable Manual execution loop, a reconcile-first Manual
-dispatcher, and a sole current `ato.api/v1` local Manual product surface. The
-package also exposes a fresh-only durable workspace foundation: the pure exact
-`ato.workspace/v1` contract, a typed application/persistence coordinator, and
-one product-unwired Windows local Git backend library tested against disposable
-repositories. The three backup/restore JSON
-artifacts each use an independent exact current
-schema version `1`; that number does not couple them to the database schema.
-The application owner remains the sole business command/query owner and atomically
-coordinates Domain snapshots, registry/grant changes, authorization decisions,
-execution attempts, leases/fences, durable operation evidence, and sanitized audit. The CLI provides initialization,
-finite grant management, Project/Task/dependency management, status, backup,
-confirmed restore, and read-only doctor surfaces without copying those rules.
-The package exposes explicit capability upgrades, atomic claims, lease/fence
-handling, the strict `ato.execution/v1` contract kit, one durable local Manual
-backend, ordered intent/observation/verified-receipt/finalization recovery,
-resume/retry/cancel paths, verified interruption, and separately confirmed
-Manual completion acceptance. A typed product facade resolves current durable
-lineage and composes those owners; the CLI remains typed ingress, trusted local
-identity/confirmation, redacted presentation, and fixed public-error mapping.
-One explicit authorized Manual trigger can now
-create an owned dispatcher run that reconciles old durable work, seals a finite
-candidate set, claims and prepares permitted Tasks through the existing owners,
-resolves every member, and publishes a completeness-checked summary. The real
-`manual-local` backend records no-workspace Manual lifecycle facts; it does not
-execute Task content or touch a Project repository. The repository still has
-no MCP server, plugin, SchedulerBackend or scheduled trigger, Codex adapter,
-product-wired workspace adapter, ProjectPolicy or CompletionBackend gate,
-integration/push/cleanup effect, supported release, or validated product
-platform integration. The workspace foundation has no public CLI command; the
-Windows Git backend can be selected only by a direct library caller, and its
-cleanup operation always refuses.
+Domain Core, ProjectRegistry, finite local authorization, typed application
+services, and one current schema-version-1 SQLite baseline. The closed local
+explicit-Manual Phase 2 product remains the sole current `ato.api/v1` CLI: it
+provides the 33-command/37-error Project, Task, dependency, authorization,
+backup/restore, doctor, Manual execution, and dispatcher surface without
+executing Task content or touching a Project repository.
+
+The package additionally exposes the fresh-only Phase 3 library closure. It
+implements the exact `ato.project-policy/v1`, `ato.completion/v1`, and
+`ato.integration/v1` ports; replaces the unreleased workspace boundary with
+the sole current `ato.workspace/v2`; adds authorization vocabulary version 6;
+and persists policy receipts, completion gates and decisions, integration
+reservations/effects, cleanup attestations, and redacted transition evidence in
+the same current baseline. One injected typed Phase 3 facade composes a
+configured local policy adapter, bounded non-shell local gate backend, local
+Git fast-forward/local-file-push backend, and the ownership-bound Windows
+workspace backend. It performs adapters outside writer transactions and alone
+coordinates current policy, authorization, observation, verification, fencing,
+completion, reservation release, and cleanup state.
+
+These Phase 3 components are library-only and must be explicitly constructed
+with trusted configuration. The default product runtime and CLI construct none
+of them, add no Phase 3 command or public error, and retain the three independent
+backup/restore JSON schema-version-1 formats unchanged. Local Git and filesystem
+effects are validated only in disposable repository fixtures; no product
+platform support is claimed. The repository still has no MCP server,
+SchedulerBackend or scheduled trigger, Codex adapter, daemon/service, release,
+deployment, or general network integration.
 
 Unimplemented planned capabilities are not current capabilities. Design
 proposals and roadmaps must remain clearly labeled until their implementations
@@ -138,31 +131,37 @@ development evidence is not a platform-support claim. The exact rules are owned 
 [persistence contract](docs/reference/persistence-contract.md), and
 [reliability protocol](docs/reference/reliability-protocol.md).
 
-## Durable workspace foundation
+## Phase 3 policy-gated completion and safe integration library
 
-The package root exports the exact five-operation `ato.workspace/v1` contract
-(`reserve`, `create`, `inspect`, `recover`, and `cleanup`) and a typed workspace
-application service. One system-issued workspace ID has positive, contiguous
-generations bound to the exact Project, Task, dispatcher run/member, execution
-revision/attempt/fence, trusted workspace-root identity, adapter version,
-creator operation, and optional cleaned predecessor. The sole current
-schema-version-1 baseline stores generation state plus operation-specific
-authorization, intent, ordered observation, verified receipt, finalization, and
-bounded redacted transition evidence. Restart resumes committed
-prepare/observe/verify/finalize boundaries; an effect-possible mutation without
-proof becomes explicit recovery-required ambiguity rather than blind replay.
+The package root exports the exact four Phase 3 port kits and one injected
+product-library facade. Workspace generations remain bound to the exact
+Project, Task, dispatcher member, execution, fence, root, ownership digest, and
+predecessor identity under `ato.workspace/v2`. ProjectPolicy receipts narrow
+authority and freeze required gates plus integration, preservation, and cleanup
+facts. Completion gates run only a trusted configured executable/argument/
+environment tuple with `shell=false`; retained evidence contains bounded
+identity and output digests rather than raw output. Only fresh passing evidence,
+current policy, separate `completion.accept` authority and confirmation, and a
+final revision/fence CAS can complete a running Task.
 
-Authorization vocabulary version 5 cumulatively adds exactly the five
-`workspace.*` actions after the existing four stages. Each stage still needs a
-separate confirmed upgrade, bootstrap and renewal never advance the vocabulary,
-and `workspace.cleanup` alone is newly high risk. This foundation is a package
-library boundary only. Alongside the test Fake, the package exports a Windows
-local Git backend that derives an owner-bound path, builds one detached linked
-worktree without checkout, materializes only validated regular local blobs,
-and performs read-only inspection/recovery. The sole current `ato.api/v1`
-command/error grammar is unchanged; the product and CLI do not construct the
-backend, cleanup always returns `policy_denied`, and no integration, ref/push,
-release, or platform-support claim exists.
+Integration uses one durable reservation per Project/repository/target ref,
+monotonic fencing, source-first exact observation, an expected-old
+fast-forward update, and an ordinary non-force push only to a configured
+canonical local bare repository. Foreign or unknown effect state becomes
+inspect-only ambiguity; authoritative recovery terminalizes the original
+intent before releasing or expiring the reservation. Cleanup requires the
+exact current `ato.workspace-cleanup-attestation/v1` proof, zero-owner
+quiescence, completed execution, required gate/preservation evidence, terminal
+integration disposition, and point-of-use ownership/inventory checks. It
+removes only the bound disposable generation and never gate evidence.
+
+Vocabulary version 6 cumulatively adds exactly twelve completion/integration
+actions after the five workspace actions. `completion.accept`,
+`integration.apply`, `integration.push`, and `workspace.cleanup` are high risk.
+Every vocabulary step remains separately confirmed; bootstrap and renewal never
+upgrade it. The default CLI stays at the exact 33 commands and 37 public errors,
+and no support, release, remote-network, or automatic cleanup claim follows
+from this library implementation.
 
 ## Reconcile-first Manual dispatcher
 
@@ -233,10 +232,11 @@ unsupported major fail before runtime construction or protected mutation; no
 compatibility fallback exists. Use `--format json` for the versioned single-line
 machine surface. The exhaustive 33-command tree, `COMMON` execution tuple,
 closed projections, and 37-code public error/exit table are in the
-[CLI/API contract](docs/reference/cli-contract.md). The tree can perform a
-fourth confirmed upgrade to vocabulary version 5 and manage grants for all 35
-actions, but it exposes no workspace operation command. This development
-package is not a release or platform-support claim.
+[CLI/API contract](docs/reference/cli-contract.md). The tree can perform five
+sequential confirmed upgrades through vocabulary version 6 and manage grants
+for all 47 actions, but it exposes no workspace, policy, gate, integration, or
+cleanup operation command. This development package is not a release or
+platform-support claim.
 
 ## Maintainer development workflow
 

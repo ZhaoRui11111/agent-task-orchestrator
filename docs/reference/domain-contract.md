@@ -10,9 +10,11 @@ application service invokes this owner for Project registration/enablement and
 Task/dependency mutations; the execution application owners invoke it for
 accepted `ready`-to-`running` claims and the reliable Manual loop invokes it for
 accepted waiting, continuation, verified interruption, and Manual completion
-transitions. The contract does not itself authorize those calls or imply a
-dispatcher, product execution CLI, workspace, scheduler, CompletionBackend,
-gate, or executable orchestration runtime.
+transitions. The injected Phase 3 application owner invokes the same
+`completion_accepted` transition only after its policy/gate/integration checks.
+The contract does not itself authorize those calls or imply a dispatcher,
+product execution CLI, workspace, scheduler, adapter, gate, or executable
+orchestration runtime.
 
 This contract deliberately contains no SQLite, Git, Codex, CLI, MCP, scheduler,
 or development-plan state. Storage is owned by the

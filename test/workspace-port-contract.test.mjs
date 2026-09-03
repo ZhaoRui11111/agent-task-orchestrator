@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   WORKSPACE_CONTRACT_ID,
+  WORKSPACE_CLEANUP_ATTESTATION_CONTRACT_ID,
   WORKSPACE_EXTERNAL_STATES,
   WORKSPACE_FAILURE_CATEGORIES,
   WORKSPACE_OPERATIONS,
@@ -9,6 +10,7 @@ import {
   invokeWorkspaceBackend,
   parseWorkspaceBackendRequest,
   parseWorkspaceBackendResult,
+  workspaceCleanupAttestationSha256,
 } from "../src/index.ts";
 
 function subject() {
@@ -38,17 +40,67 @@ function subject() {
   };
 }
 
+function cleanupAttestation(operationId, currentSubject) {
+  const unsigned = {
+    contractId: WORKSPACE_CLEANUP_ATTESTATION_CONTRACT_ID,
+    attestationId: "attestation-cleanup",
+    operationId,
+    intentId: "intent-cleanup",
+    projectId: currentSubject.projectId,
+    projectResourceRevision: currentSubject.projectResourceRevision,
+    projectConfigRevision: currentSubject.projectConfigRevision,
+    projectRootKey: currentSubject.projectRootKey,
+    repositoryIdentity: "repository-identity",
+    taskId: currentSubject.taskId,
+    taskCompletedRevision: currentSubject.taskRevision,
+    completionDecisionId: "completion-decision",
+    executionId: currentSubject.executionId,
+    executionRevision: currentSubject.executionRevision,
+    attemptNumber: currentSubject.attemptNumber,
+    fencingToken: currentSubject.fencingToken,
+    executionTerminalCreatedAt: "2026-08-30T11:59:00.000Z",
+    workspaceId: currentSubject.workspaceId,
+    generation: currentSubject.generation,
+    workspaceRevision: currentSubject.workspaceRevision,
+    workspaceRootKey: currentSubject.workspaceRootKey,
+    ownershipBindingSha256: currentSubject.ownershipBindingSha256,
+    policyReceiptId: "policy-receipt",
+    policyReceiptSha256: "D".repeat(64),
+    policyConfigRevision: currentSubject.projectConfigRevision,
+    cleanupAuthorizationDecisionId: "authorization-cleanup",
+    cleanupAuthorizationBindingRevision: 2,
+    grantId: "grant-cleanup",
+    grantRevision: 1,
+    confirmationId: "confirmation-cleanup",
+    gateSetSha256: "E".repeat(64),
+    preservationStateSha256: "F".repeat(64),
+    integrationDisposition: "not_required",
+    integrationReservationId: null,
+    integrationReservationRevision: null,
+    integrationReservationFencingToken: null,
+    expectedBranchReference: "refs/heads/main",
+    expectedHeadObjectId: "b".repeat(40),
+    quiescenceSha256: "A".repeat(64),
+    issuedAt: "2026-08-30T12:00:00.000Z",
+    validUntil: "2026-08-30T12:02:00.000Z",
+  };
+  return { ...unsigned, attestationSha256: workspaceCleanupAttestationSha256(unsigned) };
+}
+
 function request(operation = "reserve") {
+  const currentSubject = subject();
+  const operationId = `operation-${operation}`;
   return {
     contractId: WORKSPACE_CONTRACT_ID,
     operation,
-    operationId: `operation-${operation}`,
+    operationId,
     idempotencyKey: `idempotency-${operation}`,
     correlationId: `correlation-${operation}`,
     causationId: operation === "recover" ? "causal-operation" : null,
     adapterId: "fake-workspace",
     adapterVersion: "1.0.0",
-    subject: subject(),
+    subject: currentSubject,
+    cleanupAttestation: operation === "cleanup" ? cleanupAttestation(operationId, currentSubject) : null,
   };
 }
 
@@ -81,12 +133,13 @@ function receipt(operation, externalState, outcome, code) {
     ownershipMatch: complete ? true : present ? null : false,
     inventory: { trackedCount: 2, modifiedCount: 1, untrackedCount: 0, ignoredCount: 0 },
     evidenceReference: "opaque-evidence",
+    cleanupAttestationSha256: operation === "cleanup" ? "D".repeat(64) : null,
     observedAt: "2026-08-30T12:00:00.000Z",
   };
 }
 
-test("ato.workspace/v1 request and receipt grammar is exact, finite, frozen, and operation-specific", () => {
-  assert.equal(WORKSPACE_CONTRACT_ID, "ato.workspace/v1");
+test("ato.workspace/v2 request, cleanup attestation, and receipt grammar is exact, finite, frozen, and operation-specific", () => {
+  assert.equal(WORKSPACE_CONTRACT_ID, "ato.workspace/v2");
   assert.deepEqual(WORKSPACE_OPERATIONS, ["reserve", "create", "inspect", "recover", "cleanup"]);
   assert.equal(new Set(WORKSPACE_EXTERNAL_STATES).size, WORKSPACE_EXTERNAL_STATES.length);
   assert.equal(new Set(WORKSPACE_RECEIPT_CODES).size, WORKSPACE_RECEIPT_CODES.length);
@@ -183,7 +236,9 @@ test("hostile request and result shapes fail closed without getters or exception
   assert.equal(parseWorkspaceBackendRequest(substitutedMember), null);
   assert.equal(parseWorkspaceBackendRequest({ ...request(), subject: oldSubjectShape }), null);
   assert.equal(parseWorkspaceBackendRequest({ ...request(), subject: { ...subject(), ownershipBindingSha256: "c".repeat(64) } }), null);
-  assert.equal(parseWorkspaceBackendRequest({ ...request(), contractId: "ato.workspace/v2" }), null);
+  assert.equal(parseWorkspaceBackendRequest({ ...request(), contractId: "ato.workspace/v1" }), null);
+  assert.equal(parseWorkspaceBackendRequest({ ...request("cleanup"), cleanupAttestation: null }), null);
+  assert.equal(parseWorkspaceBackendRequest({ ...request(), cleanupAttestation: cleanupAttestation("operation-reserve", subject()) }), null);
 
   const valid = receipt("create", "complete", "succeeded", "created");
   const oldReceiptShape = { ...valid };

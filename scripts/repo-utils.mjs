@@ -32,6 +32,8 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/cli-api-runtime.ts",
   "src/cli-api.ts",
   "src/cli.ts",
+  "src/completion-application.ts",
+  "src/completion-port.ts",
   "src/dispatcher-application.ts",
   "src/dispatcher.ts",
   "src/domain.ts",
@@ -39,6 +41,10 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/execution-loop.ts",
   "src/execution-port.ts",
   "src/index.ts",
+  "src/integration-port.ts",
+  "src/local-completion-backend.ts",
+  "src/local-git-integration-backend.ts",
+  "src/local-project-policy.ts",
   "src/manual-execution-backend.ts",
   "src/node-builtins.d.ts",
   "src/persistence/application-repository-digest.ts",
@@ -61,6 +67,7 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/persistence/store.ts",
   "src/persistence/values.ts",
   "src/product-runtime.ts",
+  "src/project-policy-port.ts",
   "src/project-registry.ts",
   "src/workspace-application.ts",
   "src/workspace-git-adapter.ts",
@@ -97,6 +104,23 @@ export const EXPECTED_WORKSPACE_GIT_ADAPTER_BUILTINS = Object.freeze([
   "node:path",
   "node:url",
 ]);
+
+export const EXPECTED_PHASE3_NODE_BUILTINS = Object.freeze({
+  "src/local-completion-backend.ts": Object.freeze([
+    "node:child_process",
+    "node:crypto",
+    "node:fs",
+    "node:path",
+  ]),
+  "src/local-git-integration-backend.ts": Object.freeze([
+    "node:child_process",
+    "node:crypto",
+    "node:fs",
+    "node:path",
+  ]),
+  "src/local-project-policy.ts": Object.freeze(["node:crypto"]),
+  "src/workspace-port.ts": Object.freeze(["node:crypto"]),
+});
 
 export const EXPECTED_PACKAGE_SCRIPTS = Object.freeze({
   build: "tsc -p tsconfig.json",
@@ -184,17 +208,23 @@ export function productionBoundaryFailures(inventory, readSource) {
       JSON.stringify([...builtins].sort()) !== JSON.stringify(EXPECTED_WORKSPACE_GIT_ADAPTER_BUILTINS)) {
       failures.push(`${relative}: workspace Git adapter Node built-in mapping drifted`);
     }
+    const expectedPhase3Builtins = EXPECTED_PHASE3_NODE_BUILTINS[relative];
+    if (expectedPhase3Builtins !== undefined &&
+      JSON.stringify([...builtins].sort()) !== JSON.stringify(expectedPhase3Builtins)) {
+      failures.push(`${relative}: Phase 3 Node built-in mapping drifted`);
+    }
     for (const builtin of builtins) {
       const registryBuiltin = relative === "src/project-registry.ts" &&
         (builtin === "node:fs" || builtin === "node:path");
       const cliBuiltin = expectedCliBuiltins?.includes(builtin) === true;
       const manualAdapterBuiltin = relative === "src/manual-execution-backend.ts" && builtin === "node:crypto";
+      const phase3Builtin = expectedPhase3Builtins?.includes(builtin) === true;
       if (
         !relative.startsWith("src/persistence/") && !registryBuiltin && !cliBuiltin && !manualAdapterBuiltin &&
-        !workspaceGitBuiltins
+        !workspaceGitBuiltins && !phase3Builtin
       ) {
         failures.push(`${relative}: Node built-in escaped the persistence owner boundary`);
-      } else if (!workspaceGitBuiltins && !ALLOWED_PERSISTENCE_BUILTINS.has(builtin)) {
+      } else if (!workspaceGitBuiltins && expectedPhase3Builtins === undefined && !ALLOWED_PERSISTENCE_BUILTINS.has(builtin)) {
         failures.push(`${relative}: undeclared persistence built-in ${builtin}`);
       }
     }

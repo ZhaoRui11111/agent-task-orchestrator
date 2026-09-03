@@ -2,24 +2,20 @@
 
 ## Current system
 
-The repository has a governance and architecture-contract baseline, an
-executable toolchain and feasibility harness, a pure in-memory TypeScript
-Domain Core, a filesystem-identity ProjectRegistry, a finite local runtime
-authorization owner, a typed Project/Task/dependency application service, a
-local SQLite persistence foundation, the closed local Phase 1 product, the
-complete explicit-Manual local Phase 2 product through the sole current
-`ato.api/v1`, and the fresh-only durable workspace foundation. One immutable
-schema-version-1 baseline directly owns metadata and exact Domain snapshots;
-ProjectRegistry; local identity; vocabulary-version-1-through-5 epochs and grants;
-requests, authorization decisions, lifecycle authorizations and append-only
-audit; ordered execution attempts, lease state and per-Task fencing; reliable
-Manual-loop intents, authorization bindings, observations, verified receipts,
-finalizations, terminal facts and journal records; and bounded dispatcher run,
-reconciliation, membership, member-outcome and summary records; plus workspace
-generations, operation authorization, intents, observations, verified receipts,
-finalizations, and bounded redacted transition events. Lifecycle
-authorization uses the sole complete non-lifecycle application-state projection
-at state-digest version 1.
+The repository has a governance and architecture-contract baseline, executable
+toolchain and feasibility harness, pure in-memory TypeScript Domain Core,
+filesystem-identity ProjectRegistry, finite local authorization owner, typed
+application services, local SQLite persistence, the complete explicit-Manual
+Phase 2 product through the sole current `ato.api/v1`, and a fresh-only injected
+Phase 3 library. One immutable schema-version-1 baseline directly owns metadata
+and exact Domain snapshots; ProjectRegistry; local identity;
+vocabulary-version-1-through-6 epochs and grants; application requests,
+authorization decisions, lifecycle handoffs and audit; execution attempts,
+Manual-loop evidence and journal state; dispatcher runs and membership;
+workspace generations and operation evidence; and Phase 3 policy receipts,
+completion gate evidence/decisions, integration reservations/effects, cleanup
+attestations, and bounded transition events. Lifecycle authorization uses the
+sole complete non-lifecycle application-state projection at digest version 2.
 The application service orchestrates business owners in one transaction;
 persistence never selects a Domain command or grants authority. Its physical
 implementation is split into database-free model, input, policy, Domain
@@ -30,9 +26,9 @@ presentation, and public error mapping. Its physical API implementation is
 split into model, parser, presentation, and runtime modules behind one
 explicit `cli-api.ts` facade; the runtime module alone opens and closes the
 product runtime or performs command effects. A typed product facade derives the
-current non-public Project/Task/execution/turn/intent/receipt/finalization tuple
-from current schema-version-1 state and composes the existing application, dispatcher, and
-reliable-loop owners. A separate typed execution application
+  current non-public Project/Task/execution/turn/intent/receipt/finalization tuple
+  from current schema-version-1 state and composes the existing application,
+  dispatcher, and reliable-loop owners. A separate typed execution application
 service retains claim, inspection, and renewal. The typed
 `ReliableExecutionLoop` owns prepare/execute/observe/verify/finalize and
 reconcile-first continuation against the pure `ato.execution/v1` port. The
@@ -43,21 +39,28 @@ confirmed application decision alone may complete a Task from verified
 `turn_succeeded` evidence. The Manual dispatcher coordinates those
 owners after one explicit trigger: it durably reconciles old work, seals a
 finite candidate set, resolves every member, and publishes a summary only after
-complete readback. The package also exports one concrete Windows local Git
-workspace adapter library. It can create and authoritatively inspect one
-exactly bound detached linked worktree when a library caller injects trusted
-disjoint roots, but it is not constructed by the product runtime or CLI and
-its cleanup method always returns `policy_denied`. The repository still
+  complete readback.
+
+The package root also exports pure `ato.project-policy/v1`,
+`ato.completion/v1`, `ato.integration/v1`, and sole current `ato.workspace/v2`
+contract kits. `createPhase3ProductRuntime` requires explicitly injected policy,
+completion, integration, and workspace backends plus trusted configuration; it
+is not a default product-runtime branch. Its application owner evaluates
+preliminary policy authority, persists intents before effects, invokes adapters
+outside writer transactions, independently records and verifies observations,
+and alone coordinates gate freshness, policy-gated completion, integration
+reservation/recovery/release, and cleanup attestation issuance.
+
+The concrete local adapters are one immutable configured ProjectPolicy, one
+bounded non-shell gate runner with separate retained evidence, one local Git
+fast-forward/local-file-push backend, and the existing Windows linked-worktree
+backend extended with attestation-bound cleanup. They write no SQLite state and
+are validated only against disposable repositories. The default Manual product
+and CLI construct none of them, expose no Phase 3 command, and still do not
+execute Task content or perform a Project/workspace effect. The repository
 implements no SchedulerBackend or scheduled trigger, MCP component, Codex
-adapter, product-wired workspace adapter, ProjectPolicy,
-CompletionBackend or gates, daemon/service, supported platform integration,
-release, or deployment. The local Manual product records operator-supplied turn
-facts; it does not execute Task content or perform Project/workspace effects.
-The separate workspace application coordinator implements durable
-authorization, generation, intent, observation, verification, finalization,
-replay, and restart recovery against an injected port. Its tests use both an
-unexported Fake and the exported Windows Git adapter; no current product entry
-point selects either workspace backend.
+adapter, daemon/service, supported platform integration, release, or
+deployment.
 
 ## Authority and ownership
 
@@ -98,8 +101,12 @@ The architecture separates:
   protocol, reconciliation, verified interruption, and Manual completion
   acceptance. A separate typed workspace coordinator owns the exact
   Project/Task/run/member/execution/fence/generation binding and the durable
-  reserve/create/inspect/recover/cleanup protocol. Application owners depend on
-  injected port/control interfaces, never a concrete backend. The physical
+  reserve/create/inspect/recover/cleanup protocol. The Phase 3 application
+  coordinator owns policy evaluation, gate lifecycle/freshness,
+  completion-decision convergence, integration reservation/effects/recovery,
+  cleanup attestation, and all corresponding authorization/revision/fence CAS.
+  Application owners depend on injected port/control interfaces, never a
+  concrete backend. The physical
   `application-model`, `application-input`,
   `application-policy`, `application-domain`, and `application-service`
   modules preserve that one semantic owner behind the stable facade.
@@ -108,25 +115,28 @@ The architecture separates:
 - `persistence`: the implemented SQLite runtime-root, connection, single
   current-baseline migration, combined schema-version-1 repository, transaction, lifecycle handoff,
   execution attempt/sequence, Manual-loop and dispatcher record storage,
-  workspace generation/operation/evidence storage, backup, restore, read-only
-  doctor, and typed-corruption owner. Backup
+  workspace generation/operation/evidence storage, Phase 3 policy/gate/
+  completion/integration/cleanup evidence, backup, restore, read-only doctor,
+  and typed-corruption owner. Backup
   manifest, restore intent, and restore receipt each have an independent exact
   current JSON format at schema version 1; those format identities are not the
   database schema. Later records are added only by their implementing phase.
 - `dispatcher`: the implemented explicit-Manual reconcile-first
   run, ownership/takeover, finite fan-out, and recovery coordinator. It calls
   application and reliable owners rather than duplicating their decisions.
-- `ports`: the implemented pure `ato.execution/v1` and `ato.workspace/v1`
-  contract kits, plus planned scheduler, project-policy, and completion
-  contracts.
-- `adapters`: the implemented local Manual execution backend and outcome
-  control plus one exported, product-unwired Windows Git workspace backend;
-  the workspace Fake is test-only and unexported. Codex and every other adapter
-  remain planned, and no cleanup/integration/push capability is implied.
-- `product-runtime`: the implemented typed local facade that validates the
-  closed public CAS tuple, derives non-public durable lineage, composes the
-  current application/dispatcher/reliable owners, and returns only bounded
-  redacted product views.
+- `ports`: the implemented pure `ato.execution/v1`, `ato.project-policy/v1`,
+  `ato.completion/v1`, `ato.integration/v1`, and sole current
+  `ato.workspace/v2` contract kits, plus the planned scheduler contract.
+- `adapters`: the implemented local Manual execution backend/control,
+  configured local ProjectPolicy, bounded local CompletionBackend, local Git
+  integration backend, and Windows Git workspace backend. The Phase 3 adapters
+  are explicitly injected library surfaces tested only in disposable fixtures;
+  test Fakes are unexported. Codex and every other adapter remain planned.
+- `product-runtime`: the implemented typed local Manual facade plus a separate
+  injected Phase 3 facade. The Manual facade validates the closed public CAS
+  tuple and returns only bounded redacted product views. The Phase 3 facade
+  requires all four trusted adapters/configuration, derives non-public durable
+  tuples, and is never constructed by the default CLI runtime.
 - `interfaces`: the implemented sole current `ato.api/v1` product CLI, plus a
   planned MCP surface; every business operation shares the
   application layer or product facade. The physical `cli-api-model`,
@@ -138,18 +148,15 @@ The package root is an explicit re-export facade for these implemented
 operational owners. It does not duplicate their truth in a hand-maintained
 scaffold or capability-status registry.
 
-Only the boundaries explicitly described above are implemented. In particular,
-the Manual adapter mutates only its persistence-owned local journal through a
-committed, authorization-bound intent; it does not execute Task content, invoke
-a vendor, or touch a Project/workspace. The workspace foundation mutates only
-its current SQLite records and a test Fake through the injected pure port; it
-  has no product CLI route. The separately exported Windows Git backend owns
-  its contained local worktree effect, writes no SQLite state, and is exercised
-  only with disposable repositories; it has no cleanup, integration/ref/push,
-  or support claim. The
-product execution runtime is only the explicit local Manual control/recovery
-surface described above.
-Every other later name remains accepted design direction rather than a current
+Only the boundaries explicitly described above are implemented. The Manual
+adapter mutates only its persistence-owned local journal and does not execute
+Task content, invoke a vendor, or touch a Project/workspace. Phase 3 adapters
+perform only their closed policy, gate, local Git, or owner-attested workspace
+operation, write no SQLite state, and are exercised only with disposable
+repositories. The local-file push path is not a general remote-network route,
+and the cleanup path is not caller-selected or automatic. The default product
+execution runtime remains only the explicit local Manual control/recovery
+surface; every other later name remains design direction rather than a current
 runtime component.
 
 ## Cross-module dependency constraints
@@ -176,13 +183,19 @@ runtime component.
   writer transactions; trusted ingress, confirmation, runtime/root validation,
   semantic verification, and authorization decisions remain application-owned,
   while the backend neither writes SQLite nor selects a lifecycle transition.
+- the Phase 3 application coordinator calls only injected ProjectPolicy,
+  Completion, Integration, and Workspace ports outside writer transactions;
+  policy receipts narrow but never create authority, and only the application
+  owner chooses persistence/Domain transitions.
 - `dispatcher` coordinates application services and the reliable execution
   loop without embedding authorization, Domain eligibility/state transitions,
   adapter verification, or project-specific policy.
 - `ports` expose contracts without importing vendor SDKs; `adapters` depend inward on ports and application contracts.
-- `product-runtime` depends on typed application/dispatcher/reliable owners and
-  persistence readback, never on CLI parsing or presentation; it neither
-  selects Domain transitions nor reimplements authorization/reconciliation.
+- `product-runtime` depends on typed application/dispatcher/reliable/Phase 3
+  owners and persistence readback, never on CLI parsing or presentation; it
+  neither selects Domain transitions nor reimplements authorization or
+  reconciliation. The default constructor has no dependency on Phase 3
+  concrete adapters.
 - `interfaces` call the application layer or product facade, and `observability`
   consumes structured events without becoming a state owner. Within the CLI
   API family, model has no internal dependency, parser and presentation each

@@ -27,11 +27,12 @@ entrypoint and contains no product judgment.
 
 This is a local single-user surface, not a released compatibility or
 platform-support promise. The sole current `ato.api/v1` exposes only the local
-explicit-Manual control/recovery subset documented below. It exposes no scheduler, scheduled
-trigger, daemon, MCP, Codex or workspace-adapter route, workspace operation
-command, network service, ProjectPolicy,
-CompletionBackend/gates, secret operation, release, deployment, repair, cleanup,
-or arbitrary shell/filesystem operation.
+explicit-Manual control/recovery subset documented below. It exposes no
+scheduler, scheduled trigger, daemon, MCP, Codex or Phase 3 adapter route,
+workspace/policy/gate/integration operation command, network service, secret
+operation, release, deployment, repair, cleanup, or arbitrary shell/filesystem
+operation. The independently exported injected Phase 3 library does not extend
+this command tree.
 
 ## Invocation and global grammar
 
@@ -125,7 +126,7 @@ There is no alias for a command or option. In particular there is no Task
   JavaScript UTF-16 code units.
   Project root is an absolute traversal-free path of at most 1,024 UTF-8 bytes
   before persistence identity checks.
-- `ACTION` is one exact member of the current finite thirty-five-action vocabulary owned by the
+- `ACTION` is one exact member of the current finite forty-seven-action vocabulary owned by the
   [authorization contract](authorization-contract.md#exact-action-vocabulary).
   There is no extension field or caller-defined action. Runtime scope rejects
   Project fields; Project scope requires all three Project fields.
@@ -295,9 +296,11 @@ in an `ato.api/v1` failure envelope before runtime-root selection, trusted
 ingress, doctor, runtime creation/loading, persistence, authorization, or Domain
 evaluation. Unknown majors and commands never fall back, coerce, or guess
 another major. `authorization issue` and `authorization evaluate` accept exactly
-the current finite thirty-five actions. The independently exported pure
-`ato.workspace/v1`, workspace application library, and product-unwired Windows
-Git backend add no command ID, public result, or error to this closed tree.
+the current finite forty-seven actions. The independently exported exact
+`ato.project-policy/v1`, `ato.completion/v1`, `ato.integration/v1`, and
+`ato.workspace/v2` ports, their local adapters, and the injected Phase 3
+product-library facade add no command ID, public result, or error to this closed
+tree.
 
 The nine product-facade IDs are exhaustive:
 

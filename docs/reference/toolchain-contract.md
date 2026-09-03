@@ -104,16 +104,16 @@ first reproduce the frozen dependency install in an empty disposable project
 and generation-local store, then pack the declared distribution, install it
 into a disposable consumer without registry access, typecheck the public
   declarations without undeclared Node type dependencies, import the library
-  entry, exercise trusted bootstrap plus Project/Task commands, three sequential
-  explicit capability upgrades through vocabulary version 4 followed by the
-  fourth confirmed upgrade to vocabulary version 5, an atomic
+  entry, exercise trusted bootstrap plus Project/Task commands and five
+  sequential explicit capability upgrades through vocabulary version 6, an atomic
   execution claim, the local Manual start/inspect/outcome/finalization/
   completion library loop after restart, the typed product facade's Manual
   dispatch-to-completion restart path, and a fresh persistence backup; verify
-  the exported reconcile-first dispatcher/product operational surfaces plus the
-  pure workspace contract, typed application declarations, and the public
-  Windows Git workspace-adapter factory, constants, and narrow configuration
-  types without wiring or invoking that adapter through the product; and
+  the exported reconcile-first dispatcher/product operational surfaces, exact
+  Phase 3 port kits, typed application/product-library declarations, and the
+  local ProjectPolicy, completion, integration, and Windows Git workspace
+  adapter factories, constants, and narrow configuration types without wiring
+  or invoking those adapters through the default product; and
   invoke the console entry. The console portion compares source, built, and
   packed-installed CLI behavior for omitted and explicit current `ato.api/v1`
   JSON/human responses, retired-major refusal, invalid input, public exits, and
@@ -127,12 +127,14 @@ the pure TypeScript Domain Core including its canonical cancellation-reason pred
 ProjectRegistry identity owner, finite authorization
 owner, typed Phase 1 and claim application services, the pure execution port
   kit, production local Manual backend/control, reliable execution loop,
-reconcile-first Manual dispatcher, the pure workspace port kit and typed
-durable workspace application service, the exported product-unwired Windows
-Git workspace adapter, typed local product facade, current schema-version-1
-persistence foundation, local lifecycle surfaces, and versioned product CLI
-API; it does not maintain a parallel hand-synchronized capability-status
-registry. The packed inventory includes the
+reconcile-first Manual dispatcher, the exact ProjectPolicy/completion/
+integration/workspace port kits, typed durable workspace and Phase 3 application
+services, the explicitly injected Phase 3 product-library facade, local
+ProjectPolicy/completion/Git-integration adapters, the product-unwired Windows
+Git workspace adapter, typed local Manual product facade, current
+schema-version-1 persistence foundation, local lifecycle surfaces, and
+versioned product CLI API; it does not maintain a parallel hand-synchronized
+capability-status registry. The packed inventory includes the
 single immutable SQL file under `migrations/`. The source and compiled migration
 registry consume either a uniform LF or CRLF transport of that file and
 reconstruct the same frozen canonical bytes before checksum
@@ -143,7 +145,7 @@ wildcard. The `ato` console is the local Phase 1 and explicit-Manual Phase 2
 product CLI defined by the
 [CLI/API contract](cli-contract.md).
 
-Production source is exactly these 46 files:
+Production source is exactly these 53 files:
 
 - `src/index.ts`, `src/domain.ts`, `src/cli.ts`, `src/cli-api.ts`,
   `src/cli-api-model.ts`, `src/cli-api-parser.ts`,
@@ -155,6 +157,10 @@ Production source is exactly these 46 files:
   `src/execution-application.ts`, `src/execution-port.ts`,
   `src/execution-loop.ts`, `src/manual-execution-backend.ts`,
   `src/dispatcher-application.ts`, `src/dispatcher.ts`,
+  `src/project-policy-port.ts`, `src/local-project-policy.ts`,
+  `src/completion-port.ts`, `src/completion-application.ts`,
+  `src/local-completion-backend.ts`, `src/integration-port.ts`,
+  `src/local-git-integration-backend.ts`,
   `src/workspace-port.ts`, `src/workspace-application.ts`,
   `src/workspace-git-adapter.ts`,
   `src/node-builtins.d.ts`, and `src/product-runtime.ts`;
@@ -181,13 +187,17 @@ identity, digest, Manual-integrity, filesystem, and SQLite owners retain their
 narrow declarations; no shared CLI-family or wildcard built-in exception is
 allowed. The Windows Git workspace adapter imports exactly `node:buffer`,
 `node:child_process`, `node:crypto`, `node:fs`, `node:path`, and `node:url`; it
-uses no shell, package dependency, or wildcard built-in exception. The package
-has no production dependency and must not acquire a scheduler, MCP, production
-Codex adapter, ProjectPolicy, CompletionBackend/gates, daemon, remote effect,
-or external-effect orchestrator as part of this boundary. The Windows Git
-adapter remains an explicitly injected library surface with no product/CLI
-composition, cleanup, integration, ref mutation, or push route. The Fake
-backend remains test-only and absent from the packed inventory.
+uses no shell, package dependency, or wildcard built-in exception. The local
+ProjectPolicy adapter imports exactly `node:crypto`; the local completion
+backend imports exactly `node:child_process`, `node:crypto`, `node:fs`, and
+`node:path`; and the local Git integration backend imports exactly those same
+four built-ins. They use no shell, package dependency, or wildcard built-in
+exception. The package has no production dependency and must not acquire a
+scheduler, MCP, production Codex adapter, daemon, remote service effect, or
+default product/CLI Phase 3 composition as part of this boundary. The four
+Phase 3 adapters are explicitly injected library surfaces; their effects are
+limited to trusted configuration and local disposable files/repositories. The
+Fake backends remain test-only and absent from the packed inventory.
 
 ## Validation entry points
 
@@ -198,8 +208,8 @@ The following package scripts are the public local entry points:
 | `pnpm lint` | Repository hygiene, frozen configuration, source-boundary, and diff checks |
 | `pnpm typecheck` | Strict TypeScript checking without output |
 | `pnpm build` | Produce the ESM package and declarations |
-| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop/dispatcher/workspace/product-facade atomicity and security, port/adapter contracts, crash/restart recovery, persistence, versioned CLI, doctor, and real local feasibility contracts |
-| `pnpm test:persistence` | Run the targeted current schema-version-1 baseline, repository/decoder, Manual journal/evidence, dispatcher/workspace durable records, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
+| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop/dispatcher/workspace/Phase-3/product-facade atomicity and security, exact port/adapter contracts, gate/completion/integration/cleanup crash/restart recovery, persistence, versioned CLI, doctor, and real local disposable-fixture contracts |
+| `pnpm test:persistence` | Run the targeted current schema-version-1 baseline, repository/decoder, Manual journal/evidence, dispatcher/workspace/Phase-3 durable records, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
 | `pnpm docs:check` | Resolve exact-case repository-relative Markdown links, validate same-file and cross-file heading fragments, and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |
 | `pnpm package:smoke` | Pack and consume the declared package boundary offline |

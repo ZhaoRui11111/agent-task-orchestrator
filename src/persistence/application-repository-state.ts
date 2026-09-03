@@ -5,12 +5,29 @@ import {
 } from "../authorization.ts";
 import type { AuthorizationAction, AuthorizationGrant, AuthorizationScope } from "../authorization.ts";
 import {
+  COMPLETION_CONTRACT_ID,
+  COMPLETION_FAILURE_CATEGORIES,
+  parseCompletionBackendResult,
+} from "../completion-port.ts";
+import type { CompletionBackendRequest, CompletionGateSubject } from "../completion-port.ts";
+import {
+  INTEGRATION_CONTRACT_ID,
+  INTEGRATION_FAILURE_CATEGORIES,
+  parseIntegrationBackendResult,
+} from "../integration-port.ts";
+import type { IntegrationBackendRequest, IntegrationSubject } from "../integration-port.ts";
+import { parseProjectPolicyFacts } from "../project-policy-port.ts";
+import type { ProjectPolicyFacts } from "../project-policy-port.ts";
+import {
+  parseWorkspaceCleanupAttestation,
   workspaceFailureSemanticsAreValid,
+  workspaceCleanupQuiescenceSha256,
   workspaceGenerationStatusAfterFailure,
   workspaceGenerationStatusAfterReceipt,
   workspaceRecoveryCausationProof,
   workspaceReceiptSemanticsAreValid,
 } from "../workspace-port.ts";
+import type { WorkspaceCleanupQuiescence } from "../workspace-port.ts";
 import { runReadSnapshot } from "./database.ts";
 import type { SqliteDatabase } from "./database.ts";
 import { persistenceFailure } from "./errors.ts";
@@ -47,6 +64,7 @@ import {
   readExecutionTerminalStates,
   readManualTurns,
   readManualBackendOperations,
+  readCompletionDecisions,
   readManualCompletionDecisions,
   readDispatcherTriggerRequests,
   readDispatcherAuthorizationDecisions,
@@ -60,6 +78,24 @@ import {
   readDispatcherMemberDenialDecisions,
   readDispatcherMemberDenialAudit,
   readDispatcherRunSummaries,
+  readProjectPolicyReceipts,
+  readCompletionGateRequests,
+  readCompletionGateAuthorizationDecisions,
+  readCompletionGateIntents,
+  readCompletionGateObservations,
+  readCompletionGateReceipts,
+  readCompletionGateFinalizations,
+  readCompletionGateEvents,
+  readPolicyGatedCompletionDecisions,
+  readIntegrationTargetSequences,
+  readIntegrationReservations,
+  readIntegrationOperationRequests,
+  readIntegrationAuthorizationDecisions,
+  readIntegrationIntents,
+  readIntegrationObservations,
+  readIntegrationReceipts,
+  readIntegrationFinalizations,
+  readIntegrationEvents,
   readWorkspaceGenerations,
   readWorkspaceAuthorizationDecisions,
   readWorkspaceIntents,
@@ -67,6 +103,7 @@ import {
   readWorkspaceReceipts,
   readWorkspaceFinalizations,
   readWorkspaceEvents,
+  readWorkspaceCleanupAttestations,
   readGrantRelations,
 } from "./application-repository-readers.ts";
 import { readDomainSnapshotUntransactional } from "./repository.ts";
@@ -111,6 +148,18 @@ function requestTargetIsValid(request: ApplicationRequestRecord): boolean {
     case "execution.claim.inspect":
     case "execution.lease.renew":
     case "execution.lease.takeover":
+    case "completion.gate.run":
+    case "completion.gate.inspect":
+    case "completion.gate.cancel":
+    case "completion.accept":
+    case "integration.reserve":
+    case "integration.inspect":
+    case "integration.lease.renew":
+    case "integration.lease.takeover":
+    case "integration.apply":
+    case "integration.push":
+    case "integration.recover":
+    case "integration.release":
       return request.targetKind === "execution" && request.targetRevision !== null;
     default:
       return false;
@@ -126,6 +175,9 @@ function decisionPolicyIsValid(decision: AuthorizationDecisionRecord): boolean {
     decision.action.startsWith("authorization.") ||
     decision.action.endsWith(".inspect") ||
     decision.action === "policy.evaluate" ||
+    decision.action === "integration.lease.takeover" ||
+    decision.action === "integration.recover" ||
+    decision.action === "integration.release" ||
     decision.action === "runtime.status" ||
     decision.action === "runtime.backup" ||
     decision.action === "runtime.restore"
@@ -165,6 +217,18 @@ function decisionTargetIsValid(
     case "execution.claim.inspect":
     case "execution.lease.renew":
     case "execution.lease.takeover":
+    case "completion.gate.run":
+    case "completion.gate.inspect":
+    case "completion.gate.cancel":
+    case "completion.accept":
+    case "integration.reserve":
+    case "integration.inspect":
+    case "integration.lease.renew":
+    case "integration.lease.takeover":
+    case "integration.apply":
+    case "integration.push":
+    case "integration.recover":
+    case "integration.release":
       return decision.projectId !== null;
     default:
       return true;
@@ -209,6 +273,1362 @@ function grantRevisionWasUsableAt(
   if (grantRevision === null || !grantWasUsableAt(grant, actorId, actionValue, at)) return false;
   return (grant.revision === grantRevision && grant.revokedAt === null) ||
     (grant.revision === grantRevision + 1 && grant.revokedAt !== null && grant.revokedAt >= at);
+}
+
+const RETRYABLE_ADAPTER_FAILURES = new Set(["busy", "rate_limited", "resource_exhausted", "transient_external"]);
+const AMBIGUOUS_ADAPTER_FAILURES = new Set(["ambiguous_external_state", "integrity_failure"]);
+
+function adapterFailureSemanticsAreValid(
+  category: string,
+  retryable: boolean,
+  ambiguous: boolean,
+  categories: readonly string[],
+): boolean {
+  return categories.includes(category) && retryable === RETRYABLE_ADAPTER_FAILURES.has(category) &&
+    ambiguous === AMBIGUOUS_ADAPTER_FAILURES.has(category);
+}
+
+function projectPolicyFacts(record: ApplicationState["projectPolicyReceipts"][number]): ProjectPolicyFacts | null {
+  try {
+    const decoded: unknown = JSON.parse(record.factsJson);
+    const facts = parseProjectPolicyFacts(decoded);
+    if (facts === null || canonicalJson(facts) !== record.factsJson || sha256(record.factsJson) !== record.factsSha256) {
+      return null;
+    }
+    return facts;
+  } catch {
+    return null;
+  }
+}
+
+function genericAuthorizationMatches(
+  state: ApplicationState,
+  decisionId: string,
+  action: AuthorizationAction,
+  actorId: string,
+  projectId: string,
+  projectResourceRevision: number,
+  projectConfigRevision: number,
+  targetKind: ApplicationRequestRecord["targetKind"],
+  targetId: string,
+  targetRevision: number,
+  expectedResult: "allow" | "deny",
+  eventKind: ApplicationState["audit"][number]["eventKind"],
+): boolean {
+  const decision = state.decisions.find((candidate) => candidate.decisionId === decisionId);
+  const request = decision === undefined ? undefined : state.requests.find((candidate) => candidate.requestId === decision.requestId);
+  const event = decision === undefined ? undefined : state.audit.find((candidate) => candidate.decisionId === decision.decisionId);
+  if (decision === undefined || request === undefined || event === undefined || decision.action !== action ||
+      decision.actorId !== actorId || decision.projectId !== projectId ||
+      decision.resourceRevision !== projectResourceRevision || decision.result !== expectedResult ||
+      request.action !== action || request.actorId !== actorId || request.result !== expectedResult ||
+      request.targetKind !== targetKind || request.targetId !== targetId || request.targetRevision !== targetRevision ||
+      event.requestId !== request.requestId ||
+      event.eventKind !== (expectedResult === "allow" ? eventKind : "authorization.denied") ||
+      event.actorId !== actorId ||
+      event.targetKind !== targetKind || event.targetId !== targetId || event.targetRevision !== targetRevision ||
+      event.result !== (expectedResult === "allow" ? "accepted" : "denied")) return false;
+  if (expectedResult === "deny") return decision.reason !== "allowed";
+  if (decision.reason !== "allowed" || decision.grantId === null) return false;
+  const grant = state.grants.find((candidate) => candidate.grantId === decision.grantId);
+  return grant !== undefined && grantRevisionWasUsableAt(
+    grant,
+    actorId,
+    action,
+    decision.createdAt,
+    decision.grantRevision,
+  ) && (grant.scope.kind === "runtime" || (
+    grant.scope.projectId === projectId && grant.scope.resourceRevision === projectResourceRevision &&
+    grant.scope.configRevision === projectConfigRevision
+  ));
+}
+
+function validateProjectPolicyState(state: ApplicationState): void {
+  for (const receipt of state.projectPolicyReceipts) {
+    const project = state.projects.find((candidate) => candidate.projectId === receipt.projectId);
+    const facts = projectPolicyFacts(receipt);
+    const requestedAction = receipt.operation === "completion_requirements"
+      ? "completion.accept"
+      : receipt.operation === "evaluate_integration"
+        ? "integration.reserve"
+        : receipt.operation === "evaluate_cleanup"
+          ? "workspace.cleanup"
+          : receipt.requestedAction;
+    if (
+      project === undefined || facts === null || receipt.requestedAction !== requestedAction ||
+      project.rootKey !== receipt.projectRootKey || project.resourceRevision < receipt.projectResourceRevision ||
+      project.configRevision < receipt.projectConfigRevision ||
+      receipt.policyConfigRevision !== receipt.projectConfigRevision ||
+      (receipt.validUntil !== null && receipt.validUntil <= receipt.observedAt) ||
+      (receipt.decision === "allow" && receipt.validUntil === null) ||
+      !genericAuthorizationMatches(
+        state,
+        receipt.preliminaryAuthorizationDecisionId,
+        "policy.evaluate",
+        receipt.actorId,
+        receipt.projectId,
+        receipt.projectResourceRevision,
+        receipt.projectConfigRevision,
+        "project",
+        receipt.projectId,
+        receipt.projectResourceRevision,
+        "allow",
+        "policy.evaluated",
+      )
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "ProjectPolicy receipt identity, facts, or authorization is inconsistent");
+    }
+    const decision = state.decisions.find((candidate) => candidate.decisionId === receipt.preliminaryAuthorizationDecisionId)!;
+    if (receipt.observedAt < decision.createdAt) {
+      throw persistenceFailure("CORRUPT_ROW", "ProjectPolicy receipt predates its preliminary authorization");
+    }
+  }
+}
+
+function phaseAuthorizationIsValid(
+  state: ApplicationState,
+  decision: ApplicationState["completionGateAuthorizationDecisions"][number] |
+    ApplicationState["integrationAuthorizationDecisions"][number] |
+    ApplicationState["workspaceAuthorizationDecisions"][number],
+  action: AuthorizationAction,
+  projectId: string,
+  projectResourceRevision: number,
+  projectConfigRevision: number,
+): boolean {
+  if (decision.action !== action || (decision.result === "allow") !== (decision.reason === "allowed")) return false;
+  if (decision.result === "deny") return true;
+  if (decision.grantId === null) return false;
+  const grant = state.grants.find((candidate) => candidate.grantId === decision.grantId);
+  return grant !== undefined && grantRevisionWasUsableAt(
+    grant,
+    decision.actorId,
+    action,
+    decision.createdAt,
+    decision.grantRevision,
+  ) && (grant.scope.kind === "runtime" || (
+    grant.scope.projectId === projectId && grant.scope.resourceRevision === projectResourceRevision &&
+    grant.scope.configRevision === projectConfigRevision
+  ));
+}
+
+function completionGateSubjectForRequest(
+  request: ApplicationState["completionGateRequests"][number],
+): CompletionGateSubject {
+  return Object.freeze({
+    projectId: request.projectId,
+    projectResourceRevision: request.projectResourceRevision,
+    projectConfigRevision: request.projectConfigRevision,
+    projectRootKey: request.projectRootKey,
+    repositoryIdentity: request.repositoryIdentity,
+    headObjectId: request.headObjectId,
+    taskId: request.taskId,
+    taskRevision: request.taskRevision,
+    executionId: request.executionId,
+    executionRevision: request.executionRevision,
+    attemptNumber: request.attemptNumber,
+    fencingToken: request.fencingToken,
+    workspaceId: request.workspaceId,
+    generation: request.generation,
+    workspaceRevision: request.workspaceRevision,
+    workspaceRootKey: request.workspaceRootKey,
+    ownershipBindingSha256: request.ownershipBindingSha256,
+    policyId: request.policyId,
+    policyReceiptId: request.policyReceiptId,
+    policyConfigRevision: request.policyConfigRevision,
+    gateId: request.gateId,
+    gateVersion: request.gateVersion,
+    commandKey: request.commandKey,
+    commandIdentitySha256: request.commandIdentitySha256,
+    completionEvidenceRootKey: request.completionEvidenceRootKey,
+    toolEnvironmentSha256: request.toolEnvironmentSha256,
+  });
+}
+
+function completionPolicySubjectForRequest(
+  request: ApplicationState["completionGateRequests"][number],
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    projectId: request.projectId,
+    projectResourceRevision: request.projectResourceRevision,
+    projectConfigRevision: request.projectConfigRevision,
+    projectRootKey: request.projectRootKey,
+    repositoryIdentity: request.repositoryIdentity,
+    taskId: request.taskId,
+    taskRevision: request.taskRevision,
+    executionId: request.executionId,
+    executionRevision: request.executionRevision,
+    attemptNumber: request.attemptNumber,
+    fencingToken: request.fencingToken,
+    workspaceId: request.workspaceId,
+    generation: request.generation,
+    workspaceRevision: request.workspaceRevision,
+    ownershipBindingSha256: request.ownershipBindingSha256,
+    headObjectId: request.headObjectId,
+  });
+}
+
+function completionObservationSemanticsAreValid(
+  request: ApplicationState["completionGateRequests"][number],
+  intent: ApplicationState["completionGateIntents"][number],
+  observation: ApplicationState["completionGateObservations"][number],
+): boolean {
+  const subject = completionGateSubjectForRequest(request);
+  const base = Object.freeze({
+    contractId: COMPLETION_CONTRACT_ID,
+    operation: request.operationKind,
+    correlationId: request.correlationId,
+    causationId: request.causationId,
+    actorId: request.actorId,
+    adapterId: request.adapterId,
+    adapterVersion: request.adapterVersion,
+    subject,
+  });
+  const candidateRequest = request.operationKind === "run_gate"
+    ? Object.freeze({
+        ...base,
+        operation: "run_gate" as const,
+        operationId: intent.operationId,
+        intentId: intent.intentId,
+        idempotencyKey: intent.idempotencyKey,
+        finalAuthorizationDecisionId: observation.authorizationDecisionId,
+        timeoutMs: request.timeoutMs ?? 0,
+      })
+    : request.operationKind === "inspect_gate"
+      ? Object.freeze({
+          ...base,
+          operation: "inspect_gate" as const,
+          queryId: intent.operationId,
+          readAuthorizationDecisionId: observation.authorizationDecisionId,
+          gateOperationId: intent.gateOperationId,
+          lastObservationNumber: observation.observationNumber - 1,
+        })
+      : Object.freeze({
+          ...base,
+          operation: "cancel_gate" as const,
+          operationId: intent.operationId,
+          intentId: intent.intentId,
+          idempotencyKey: intent.idempotencyKey,
+          finalAuthorizationDecisionId: observation.authorizationDecisionId,
+          gateOperationId: intent.gateOperationId,
+          expectedObservationNumber: observation.observationNumber - 1,
+        });
+  const receiptBase = Object.freeze({
+    contractId: COMPLETION_CONTRACT_ID,
+    receiptId: observation.adapterReceiptId,
+    operation: request.operationKind,
+    correlationId: request.correlationId,
+    adapterId: request.adapterId,
+    adapterVersion: request.adapterVersion,
+    subject,
+    gateOperationId: observation.gateOperationId,
+    observationNumber: observation.observationNumber,
+    lifecycle: observation.lifecycle,
+    verdict: observation.verdict,
+    code: observation.code,
+    startedAt: observation.startedAt,
+    endedAt: observation.endedAt,
+    validUntil: observation.validUntil,
+    evidenceReference: observation.evidenceReference,
+    observedAt: observation.observedAt,
+  });
+  const receipt = request.operationKind === "inspect_gate"
+    ? Object.freeze({
+        ...receiptBase,
+        operation: "inspect_gate" as const,
+        queryId: intent.operationId,
+        readAuthorizationDecisionId: observation.authorizationDecisionId,
+      })
+    : Object.freeze({
+        ...receiptBase,
+        operation: request.operationKind,
+        operationId: intent.operationId,
+        intentId: intent.intentId,
+        idempotencyKey: intent.idempotencyKey,
+      });
+  return parseCompletionBackendResult(
+    Object.freeze({ ok: true as const, receipt }),
+    candidateRequest as CompletionBackendRequest,
+  )?.ok === true;
+}
+
+function readyWorkspaceRevisionForReceipt(
+  state: ApplicationState,
+  receipt: ApplicationState["workspaceReceipts"][number],
+): number | null {
+  const finalization = state.workspaceFinalizations.find((candidate) =>
+    candidate.verifiedReceiptId === receipt.verifiedReceiptId && candidate.outcome === "succeeded" &&
+    candidate.resultingGenerationStatus === "ready");
+  return finalization?.resultingGenerationRevision ?? null;
+}
+
+function workspaceReceiptForGateRequest(
+  state: ApplicationState,
+  request: ApplicationState["completionGateRequests"][number],
+): ApplicationState["workspaceReceipts"][number] | undefined {
+  return state.workspaceReceipts.find((candidate) => candidate.workspaceId === request.workspaceId &&
+    candidate.generation === request.generation && readyWorkspaceRevisionForReceipt(state, candidate) === request.workspaceRevision &&
+    candidate.outcome === "succeeded" && candidate.externalState === "complete" &&
+    candidate.repositoryIdentity === request.repositoryIdentity && candidate.headObjectId === request.headObjectId &&
+    candidate.ownershipBindingSha256 === request.ownershipBindingSha256);
+}
+
+function gateActionFor(operation: ApplicationState["completionGateRequests"][number]["operationKind"]):
+  Extract<AuthorizationAction, "completion.gate.run" | "completion.gate.inspect" | "completion.gate.cancel"> {
+  return operation === "run_gate" ? "completion.gate.run" : operation === "inspect_gate"
+    ? "completion.gate.inspect" : "completion.gate.cancel";
+}
+
+function gateAuditKindFor(operation: ApplicationState["completionGateRequests"][number]["operationKind"]):
+  Extract<ApplicationState["audit"][number]["eventKind"], "completion.gate.ran" | "completion.gate.inspected" | "completion.gate.cancelled"> {
+  return operation === "run_gate" ? "completion.gate.ran" : operation === "inspect_gate"
+    ? "completion.gate.inspected" : "completion.gate.cancelled";
+}
+
+function validateCompletionGateState(state: ApplicationState): void {
+  const requestById = new Map(state.completionGateRequests.map((record) => [record.requestId, record]));
+  const intentById = new Map(state.completionGateIntents.map((record) => [record.intentId, record]));
+  const intentByRequest = new Map(state.completionGateIntents.map((record) => [record.requestId, record]));
+  const decisionById = new Map(state.completionGateAuthorizationDecisions.map((record) => [record.decisionId, record]));
+  const observationById = new Map(state.completionGateObservations.map((record) => [record.observationId, record]));
+  const receiptById = new Map(state.completionGateReceipts.map((record) => [record.verifiedReceiptId, record]));
+
+  for (const request of state.completionGateRequests) {
+    const project = state.projects.find((candidate) => candidate.projectId === request.projectId);
+    const task = state.domain.tasks.find((candidate) => candidate.id === request.taskId);
+    const execution = state.executions.find((candidate) => candidate.executionId === request.executionId);
+    const workspace = state.workspaceGenerations.find((candidate) => candidate.workspaceId === request.workspaceId &&
+      candidate.generation === request.generation);
+    const workspaceReceipt = workspaceReceiptForGateRequest(state, request);
+    const policy = state.projectPolicyReceipts.find((candidate) => candidate.receiptId === request.policyReceiptId);
+    const facts = policy === undefined ? null : projectPolicyFacts(policy);
+    const requiredGate = facts?.requiredGates.find((candidate) => candidate.gateId === request.gateId &&
+      candidate.gateVersion === request.gateVersion);
+    const subject = completionPolicySubjectForRequest(request);
+    const intent = intentByRequest.get(request.requestId);
+    const decisions = state.completionGateAuthorizationDecisions.filter((candidate) => candidate.operationId === request.operationId)
+      .sort((left, right) => left.bindingRevision - right.bindingRevision);
+    const prepare = decisions[0];
+    const action = gateActionFor(request.operationKind);
+    const original = request.operationKind === "run_gate" ? request : state.completionGateRequests.find((candidate) =>
+      candidate.operationId === request.causationId && candidate.operationKind === "run_gate");
+    const sameOriginalSubject = original !== undefined && canonicalJson(completionGateSubjectForRequest(original)) ===
+      canonicalJson(completionGateSubjectForRequest(request));
+    if (
+      project === undefined || task === undefined || execution === undefined || workspace === undefined ||
+      workspaceReceipt === undefined || policy === undefined || facts === null || requiredGate === undefined ||
+      project.rootKey !== request.projectRootKey || project.resourceRevision < request.projectResourceRevision ||
+      project.configRevision < request.projectConfigRevision || task.projectId !== request.projectId ||
+      task.revision < request.taskRevision || execution.taskId !== request.taskId ||
+      execution.revision !== request.executionRevision || execution.attemptNumber !== request.attemptNumber ||
+      execution.fencingToken !== request.fencingToken || workspace.projectId !== request.projectId ||
+      workspace.taskId !== request.taskId || workspace.executionId !== request.executionId ||
+      workspace.revision < request.workspaceRevision || workspace.workspaceRootKey !== request.workspaceRootKey ||
+      policy.operation !== "completion_requirements" || policy.requestedAction !== "completion.accept" ||
+      policy.decision !== "allow" || policy.validUntil === null || policy.validUntil <= request.createdAt ||
+      policy.policyId !== request.policyId || policy.policyConfigRevision !== request.policyConfigRevision ||
+      policy.subjectSha256 !== sha256(canonicalJson(subject)) ||
+      requiredGate.commandKey !== request.commandKey ||
+      requiredGate.commandIdentitySha256 !== request.commandIdentitySha256 ||
+      requiredGate.toolEnvironmentSha256 !== request.toolEnvironmentSha256 ||
+      request.projectConfigRevision !== request.policyConfigRevision || request.contractId !== COMPLETION_CONTRACT_ID ||
+      (request.operationKind === "run_gate") !== (request.causationId === null) || !sameOriginalSubject ||
+      decisions.length === 0 || prepare?.requestId !== request.requestId || prepare.operationId !== request.operationId ||
+      prepare.bindingRevision !== 1 || prepare.phase !== "prepare" || prepare.actorId !== request.actorId ||
+      prepare.action !== action || prepare.confirmationId !== null ||
+      !phaseAuthorizationIsValid(
+        state, prepare, action, request.projectId, request.projectResourceRevision, request.projectConfigRevision,
+      ) ||
+      !genericAuthorizationMatches(
+        state, prepare.decisionId, action, request.actorId, request.projectId,
+        request.projectResourceRevision, request.projectConfigRevision, "execution", request.executionId,
+        request.executionRevision, prepare.result, gateAuditKindFor(request.operationKind),
+      ) ||
+      (prepare.result === "allow") !== (intent !== undefined)
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Completion gate request binding or preliminary authorization is inconsistent");
+    }
+    if (intent === undefined) {
+      const deniedEvents = state.completionGateEvents.filter((event) => event.operationId === request.operationId);
+      if (decisions.length !== 1 || prepare.result !== "deny" || deniedEvents.length !== 1 ||
+          deniedEvents[0]?.intentId !== null || deniedEvents[0]?.eventKind !== "completion.gate.denied" ||
+          deniedEvents[0]?.outcome !== "denied") {
+        throw persistenceFailure("CORRUPT_ROW", "Denied completion gate request evidence is inconsistent");
+      }
+    }
+  }
+
+  for (const intent of state.completionGateIntents) {
+    const request = requestById.get(intent.requestId);
+    if (request === undefined) {
+      throw persistenceFailure("CORRUPT_ROW", "Completion gate intent request is absent");
+    }
+    const decisions = state.completionGateAuthorizationDecisions.filter((candidate) => candidate.operationId === intent.operationId)
+      .sort((left, right) => left.bindingRevision - right.bindingRevision);
+    const observations = state.completionGateObservations.filter((candidate) => candidate.intentId === intent.intentId)
+      .sort((left, right) => left.observationNumber - right.observationNumber);
+    const receipts = state.completionGateReceipts.filter((candidate) => candidate.intentId === intent.intentId);
+    const finalizations = state.completionGateFinalizations.filter((candidate) => candidate.intentId === intent.intentId);
+    const events = state.completionGateEvents.filter((candidate) => candidate.intentId === intent.intentId);
+    const currentDecision = decisionById.get(intent.currentAuthorizationDecisionId);
+    const failureEmpty = intent.lastFailureCategory === null && intent.lastFailureCode === null &&
+      intent.lastFailureRetryable === null && intent.lastFailureAmbiguous === null;
+    const failureComplete = intent.lastFailureCategory !== null && intent.lastFailureCode !== null &&
+      intent.lastFailureRetryable !== null && intent.lastFailureAmbiguous !== null;
+    const failureValid = failureComplete && adapterFailureSemanticsAreValid(
+      intent.lastFailureCategory!, intent.lastFailureRetryable!, intent.lastFailureAmbiguous!, COMPLETION_FAILURE_CATEGORIES,
+    );
+    const terminal = intent.state === "finalized" || intent.state === "failed" || intent.state === "ambiguous";
+    const expectedDecisionCount = intent.state === "pending" ? 1 :
+      intent.state === "finalized" ? 3 :
+        intent.state === "ambiguous" && decisions.length === 3 ? 3 : 2;
+    if (
+      request.operationId !== intent.operationId || request.idempotencyKey !== intent.idempotencyKey ||
+      request.operationKind !== intent.operationKind || intent.createdAt !== request.createdAt || intent.updatedAt < intent.createdAt ||
+      intent.gateOperationId !== (intent.operationKind === "run_gate" ? intent.operationId : request.causationId) ||
+      decisions.length !== expectedDecisionCount || decisions.some((decision, index) =>
+        decision.bindingRevision !== index + 1 || decision.requestId !== intent.requestId ||
+        decision.operationId !== intent.operationId || decision.actorId !== request.actorId ||
+        decision.action !== gateActionFor(intent.operationKind) || decision.confirmationId !== null ||
+        (index === 0 ? decision.phase !== "prepare" : index === 1 ? decision.phase !== "act" : decision.phase !== "finalize") ||
+        !phaseAuthorizationIsValid(
+          state, decision, gateActionFor(intent.operationKind), request.projectId,
+          request.projectResourceRevision, request.projectConfigRevision,
+        )) ||
+      decisions[0]?.result !== "allow" || (decisions[1] !== undefined && intent.state !== "failed" && decisions[1].result !== "allow") ||
+      (decisions[2] !== undefined && intent.state === "finalized" && decisions[2].result !== "allow") ||
+      (decisions[2] !== undefined && intent.state === "ambiguous" && decisions[2].result !== "deny") ||
+      currentDecision === undefined || currentDecision.decisionId !== decisions.at(-1)?.decisionId ||
+      intent.authorizationBindingRevision !== currentDecision.bindingRevision ||
+      observations.length > 1 || observations.some((observation) => observation.observationNumber !== 1) ||
+      intent.lastObservationNumber !== (observations.length === 0 ? 0 : 1) ||
+      observations.some((observation) => !completionObservationSemanticsAreValid(request, intent, observation)) ||
+      (!failureEmpty && !failureValid) ||
+      (intent.state === "failed" && (!failureValid || intent.lastFailureAmbiguous !== false)) ||
+      (intent.state === "ambiguous" && !failureEmpty && (!failureValid || intent.lastFailureAmbiguous !== true)) ||
+      (!terminal && !failureEmpty) ||
+      (intent.state === "pending" || intent.state === "executing" || intent.state === "observed" ? receipts.length !== 0 : receipts.length > 1) ||
+      (intent.state === "verified" || intent.state === "finalized" ? receipts.length !== 1 : false) ||
+      (terminal ? finalizations.length !== 1 : finalizations.length !== 0) ||
+      events.filter((event) => event.eventKind === "completion.gate.prepared").length !== 1 ||
+      events.some((event) => event.operationId !== intent.operationId || event.actorId !== request.actorId ||
+        event.correlationId !== request.correlationId)
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Completion gate intent lineage or lifecycle is inconsistent");
+    }
+    const finalization = finalizations[0];
+    const receipt = receipts[0];
+    if (finalization !== undefined) {
+      const expectedOutcome = intent.state === "finalized"
+        ? receipt?.verdict === "pass" ? "accepted" : "refused"
+        : intent.state === "failed" ? "failed" : "ambiguous";
+      if (finalization.authorizationDecisionId !== intent.currentAuthorizationDecisionId ||
+          finalization.outcome !== expectedOutcome ||
+          (intent.state === "finalized" ? finalization.verifiedReceiptId !== receipt?.verifiedReceiptId :
+            finalization.verifiedReceiptId !== null)) {
+        throw persistenceFailure("CORRUPT_ROW", "Completion gate finalization is inconsistent");
+      }
+    }
+  }
+
+  for (const observation of state.completionGateObservations) {
+    const intent = intentById.get(observation.intentId);
+    const decision = decisionById.get(observation.authorizationDecisionId);
+    if (intent === undefined || decision === undefined || decision.operationId !== intent.operationId ||
+        decision.phase !== "act" || decision.bindingRevision !== 2 || decision.result !== "allow" ||
+        observation.gateOperationId !== intent.gateOperationId) {
+      throw persistenceFailure("CORRUPT_ROW", "Completion gate observation authorization is inconsistent");
+    }
+  }
+
+  for (const receipt of state.completionGateReceipts) {
+    const intent = intentById.get(receipt.intentId);
+    const observation = observationById.get(receipt.observationId);
+    if (intent === undefined || observation === undefined || observation.intentId !== receipt.intentId ||
+        observation.observationNumber !== receipt.observationNumber ||
+        observation.adapterReceiptId !== receipt.adapterReceiptId || observation.receiptSha256 !== receipt.receiptSha256 ||
+        observation.gateOperationId !== receipt.gateOperationId || observation.verdict !== receipt.verdict ||
+        observation.validUntil !== receipt.validUntil || observation.lifecycle !== "completed" ||
+        (receipt.verdict === "pass" && receipt.validUntil !== null && receipt.validUntil <= receipt.verifiedAt)) {
+      throw persistenceFailure("CORRUPT_ROW", "Completion gate verified receipt is inconsistent");
+    }
+  }
+
+  for (const finalization of state.completionGateFinalizations) {
+    const intent = intentById.get(finalization.intentId);
+    const decision = decisionById.get(finalization.authorizationDecisionId);
+    const receipt = finalization.verifiedReceiptId === null ? null : receiptById.get(finalization.verifiedReceiptId) ?? null;
+    if (intent === undefined || decision === undefined || decision.operationId !== intent.operationId ||
+        (receipt !== null && receipt.intentId !== intent.intentId) ||
+        ((finalization.outcome === "accepted" || finalization.outcome === "refused") !== (receipt !== null)) ||
+        (finalization.outcome === "accepted" && receipt?.verdict !== "pass") ||
+        (finalization.outcome === "refused" && receipt?.verdict !== "fail")) {
+      throw persistenceFailure("CORRUPT_ROW", "Completion gate finalization evidence is inconsistent");
+    }
+  }
+}
+
+function integrationSubjectForReservation(
+  reservation: ApplicationState["integrationReservations"][number],
+): IntegrationSubject {
+  return Object.freeze({
+    projectId: reservation.projectId,
+    projectResourceRevision: reservation.projectResourceRevision,
+    projectConfigRevision: reservation.projectConfigRevision,
+    projectRootKey: reservation.projectRootKey,
+    repositoryIdentity: reservation.repositoryIdentity,
+    objectFormat: reservation.objectFormat,
+    targetReference: reservation.targetReference,
+    expectedTargetObjectId: reservation.expectedTargetObjectId,
+    sourceWorkspaceId: reservation.sourceWorkspaceId,
+    sourceGeneration: reservation.sourceGeneration,
+    sourceWorkspaceRevision: reservation.sourceWorkspaceRevision,
+    sourceWorkspaceRootKey: reservation.sourceWorkspaceRootKey,
+    sourceOwnershipBindingSha256: reservation.sourceOwnershipBindingSha256,
+    sourceHeadObjectId: reservation.sourceHeadObjectId,
+    reservationId: reservation.reservationId,
+    reservationRevision: reservation.revision,
+    reservationStatus: reservation.status,
+    reservationOwnerExecutionId: reservation.ownerExecutionId,
+    reservationOwnerOperationId: reservation.ownerOperationId,
+    reservationLeaseOwnerId: reservation.leaseOwnerId,
+    reservationLeaseRevision: reservation.leaseRevision,
+    reservationFencingToken: reservation.fencingToken,
+    reservationExpiresAt: reservation.expiresAt,
+    policyReceiptId: reservation.policyReceiptId,
+    policyConfigRevision: reservation.policyConfigRevision,
+    destinationIdentity: reservation.destinationIdentity,
+    destinationReference: reservation.destinationReference,
+    expectedRemoteHead: reservation.expectedRemoteHead,
+  });
+}
+
+function integrationObservationSemanticsAreValid(
+  reservation: ApplicationState["integrationReservations"][number],
+  intent: ApplicationState["integrationIntents"][number] | null,
+  observation: ApplicationState["integrationObservations"][number],
+): boolean {
+  if (observation.operation !== "inspect" && (intent === null || intent.operationKind !== observation.operation)) return false;
+  const subject = integrationSubjectForReservation(reservation);
+  const base = Object.freeze({
+    contractId: INTEGRATION_CONTRACT_ID,
+    operation: observation.operation,
+    correlationId: "semantic-correlation",
+    causationId: null,
+    actorId: "semantic-actor",
+    adapterId: "semantic-adapter",
+    adapterVersion: "1",
+    subject,
+  });
+  const candidateRequest = observation.operation === "inspect"
+    ? Object.freeze({
+        ...base,
+        operation: "inspect" as const,
+        queryId: "semantic-query",
+        readAuthorizationDecisionId: observation.authorizationDecisionId,
+        lastObservationNumber: observation.observationNumber - 1,
+      })
+    : Object.freeze({
+        ...base,
+        operation: observation.operation,
+        operationId: intent!.operationId,
+        intentId: intent!.intentId,
+        idempotencyKey: intent!.idempotencyKey,
+        finalAuthorizationDecisionId: observation.authorizationDecisionId,
+        expectedObservationNumber: observation.observationNumber - 1,
+      });
+  const receiptBase = Object.freeze({
+    contractId: INTEGRATION_CONTRACT_ID,
+    receiptId: observation.adapterReceiptId,
+    operation: observation.operation,
+    correlationId: "semantic-correlation",
+    causationId: null,
+    actorId: "semantic-actor",
+    adapterId: "semantic-adapter",
+    adapterVersion: "1",
+    subject,
+    observationNumber: observation.observationNumber,
+    localBeforeObjectId: observation.localBeforeObjectId,
+    localAfterObjectId: observation.localAfterObjectId,
+    remoteBeforeObjectId: observation.remoteBeforeObjectId,
+    remoteAfterObjectId: observation.remoteAfterObjectId,
+    localState: observation.localState,
+    remoteState: observation.remoteState,
+    outcome: observation.outcome,
+    code: observation.code,
+    evidenceReference: observation.evidenceReference,
+    observedAt: observation.observedAt,
+  });
+  const receipt = observation.operation === "inspect"
+    ? Object.freeze({
+        ...receiptBase,
+        operation: "inspect" as const,
+        queryId: "semantic-query",
+        readAuthorizationDecisionId: observation.authorizationDecisionId,
+      })
+    : Object.freeze({
+        ...receiptBase,
+        operation: observation.operation,
+        operationId: intent!.operationId,
+        intentId: intent!.intentId,
+        idempotencyKey: intent!.idempotencyKey,
+        finalAuthorizationDecisionId: observation.authorizationDecisionId,
+        expectedObservationNumber: observation.observationNumber - 1,
+      });
+  return parseIntegrationBackendResult(
+    Object.freeze({ ok: true as const, receipt }),
+    candidateRequest as IntegrationBackendRequest,
+  )?.ok === true;
+}
+
+function workspaceReceiptForReservation(
+  state: ApplicationState,
+  reservation: ApplicationState["integrationReservations"][number],
+): ApplicationState["workspaceReceipts"][number] | undefined {
+  return state.workspaceReceipts.find((candidate) => candidate.workspaceId === reservation.sourceWorkspaceId &&
+    candidate.generation === reservation.sourceGeneration &&
+    readyWorkspaceRevisionForReceipt(state, candidate) === reservation.sourceWorkspaceRevision && candidate.outcome === "succeeded" &&
+    candidate.externalState === "complete" && candidate.repositoryIdentity === reservation.repositoryIdentity &&
+    candidate.headObjectId === reservation.sourceHeadObjectId &&
+    candidate.ownershipBindingSha256 === reservation.sourceOwnershipBindingSha256);
+}
+
+function integrationPolicySubjectForReservation(
+  state: ApplicationState,
+  reservation: ApplicationState["integrationReservations"][number],
+): Readonly<Record<string, unknown>> | null {
+  const workspace = state.workspaceGenerations.find((candidate) => candidate.workspaceId === reservation.sourceWorkspaceId &&
+    candidate.generation === reservation.sourceGeneration);
+  const execution = state.executions.find((candidate) => candidate.executionId === reservation.ownerExecutionId);
+  if (workspace === undefined || execution === undefined) return null;
+  return Object.freeze({
+    projectId: reservation.projectId,
+    projectResourceRevision: reservation.projectResourceRevision,
+    projectConfigRevision: reservation.projectConfigRevision,
+    projectRootKey: reservation.projectRootKey,
+    repositoryIdentity: reservation.repositoryIdentity,
+    taskId: execution.taskId,
+    taskRevision: workspace.taskRevision,
+    executionId: execution.executionId,
+    executionRevision: execution.revision,
+    attemptNumber: execution.attemptNumber,
+    fencingToken: execution.fencingToken,
+    workspaceId: workspace.workspaceId,
+    generation: workspace.generation,
+    workspaceRevision: reservation.sourceWorkspaceRevision,
+    ownershipBindingSha256: reservation.sourceOwnershipBindingSha256,
+    headObjectId: reservation.sourceHeadObjectId,
+    targetReference: reservation.targetReference,
+    expectedTargetObjectId: reservation.expectedTargetObjectId,
+    sourceHeadObjectId: reservation.sourceHeadObjectId,
+    destinationIdentity: reservation.destinationIdentity,
+    expectedRemoteHead: reservation.expectedRemoteHead,
+  });
+}
+
+function integrationActionFor(operation: ApplicationState["integrationOperationRequests"][number]["operationKind"]):
+  Extract<AuthorizationAction, "integration.apply" | "integration.push"> {
+  return operation === "apply" ? "integration.apply" : "integration.push";
+}
+
+function integrationAuditKindFor(operation: ApplicationState["integrationOperationRequests"][number]["operationKind"]):
+  Extract<ApplicationState["audit"][number]["eventKind"], "integration.applied" | "integration.pushed"> {
+  return operation === "apply" ? "integration.applied" : "integration.pushed";
+}
+
+function integrationRecoveryResultFor(code: string): ApplicationState["integrationIntents"][number]["recoveryResult"] {
+  return code === "inspected_unchanged" ? "recovered_no_effect" :
+    code === "inspected_local_applied" ? "recovered_local_applied" :
+      code === "inspected_pushed" ? "recovered_pushed" :
+        code === "inspected_foreign" ? "recovered_inconsistent" : null;
+}
+
+function validateIntegrationState(state: ApplicationState): void {
+  const reservationById = new Map(state.integrationReservations.map((record) => [record.reservationId, record]));
+  const requestById = new Map(state.integrationOperationRequests.map((record) => [record.requestId, record]));
+  const intentById = new Map(state.integrationIntents.map((record) => [record.intentId, record]));
+  const intentByRequest = new Map(state.integrationIntents.map((record) => [record.requestId, record]));
+  const phaseDecisionById = new Map(state.integrationAuthorizationDecisions.map((record) => [record.decisionId, record]));
+  const observationById = new Map(state.integrationObservations.map((record) => [record.observationId, record]));
+  const receiptById = new Map(state.integrationReceipts.map((record) => [record.verifiedReceiptId, record]));
+
+  for (const sequence of state.integrationTargetSequences) {
+    const reservations = state.integrationReservations.filter((candidate) => candidate.projectId === sequence.projectId &&
+      candidate.repositoryIdentity === sequence.repositoryIdentity && candidate.targetReference === sequence.targetReference)
+      .sort((left, right) => left.fencingToken - right.fencingToken);
+    if (reservations.length === 0 || sequence.lastFencingToken !== reservations.at(-1)?.fencingToken ||
+        reservations.some((reservation, index) => reservation.fencingToken !== index + 1) ||
+        reservations.slice(0, -1).some((reservation) =>
+          (reservation.status !== "released" && reservation.status !== "expired") ||
+          state.integrationIntents.some((intent) => intent.reservationId === reservation.reservationId &&
+            intent.state !== "finalized" && intent.state !== "failed"))) {
+      throw persistenceFailure("CORRUPT_ROW", "Integration target fencing sequence is inconsistent");
+    }
+  }
+
+  for (const reservation of state.integrationReservations) {
+    const project = state.projects.find((candidate) => candidate.projectId === reservation.projectId);
+    const workspace = state.workspaceGenerations.find((candidate) => candidate.workspaceId === reservation.sourceWorkspaceId &&
+      candidate.generation === reservation.sourceGeneration);
+    const workspaceReceipt = workspaceReceiptForReservation(state, reservation);
+    const execution = state.executions.find((candidate) => candidate.executionId === reservation.ownerExecutionId);
+    const policy = state.projectPolicyReceipts.find((candidate) => candidate.receiptId === reservation.policyReceiptId);
+    const policySubject = integrationPolicySubjectForReservation(state, reservation);
+    const sequence = state.integrationTargetSequences.find((candidate) => candidate.projectId === reservation.projectId &&
+      candidate.repositoryIdentity === reservation.repositoryIdentity && candidate.targetReference === reservation.targetReference);
+    const intents = state.integrationIntents.filter((candidate) => candidate.reservationId === reservation.reservationId);
+    const unfinished = intents.filter((candidate) => candidate.state !== "finalized" && candidate.state !== "failed");
+    const reservedEvent = state.integrationEvents.find((candidate) => candidate.reservationId === reservation.reservationId &&
+      candidate.eventKind === "integration.reserved");
+    const reservationRequest = reservedEvent === undefined ? undefined : state.requests.find((candidate) =>
+      candidate.correlationId === reservedEvent.correlationId && candidate.action === "integration.reserve" &&
+      candidate.targetId === reservation.ownerExecutionId && candidate.createdAt === reservation.createdAt);
+    const reservationDecision = reservationRequest === undefined ? undefined : state.decisions.find((candidate) =>
+      candidate.requestId === reservationRequest.requestId);
+    if (
+      project === undefined || workspace === undefined || workspaceReceipt === undefined || execution === undefined ||
+      policy === undefined || policySubject === null || sequence === undefined || reservedEvent === undefined ||
+      reservationDecision === undefined || reservation.expectedTargetObjectId === reservation.sourceHeadObjectId ||
+      reservation.objectFormat !== "sha1" || reservation.createdAt > reservation.updatedAt ||
+      project.rootKey !== reservation.projectRootKey || project.resourceRevision < reservation.projectResourceRevision ||
+      project.configRevision < reservation.projectConfigRevision || workspace.projectId !== reservation.projectId ||
+      workspace.executionId !== reservation.ownerExecutionId || workspace.revision < reservation.sourceWorkspaceRevision ||
+      workspace.workspaceRootKey !== reservation.sourceWorkspaceRootKey || execution.taskId !== workspace.taskId ||
+      execution.revision !== workspace.executionRevision || execution.attemptNumber !== workspace.attemptNumber ||
+      execution.fencingToken !== workspace.fencingToken || policy.operation !== "evaluate_integration" ||
+      policy.requestedAction !== "integration.reserve" || policy.decision !== "allow" ||
+      policy.policyConfigRevision !== reservation.policyConfigRevision ||
+      policy.subjectSha256 !== sha256(canonicalJson(policySubject)) || policy.validUntil === null ||
+      policy.validUntil <= reservation.createdAt || reservation.fencingToken > sequence.lastFencingToken ||
+      reservedEvent.operationId !== reservation.ownerOperationId || reservedEvent.intentId !== null ||
+      reservedEvent.outcome !== "accepted" || reservedEvent.reasonCode !== "reserved" ||
+      !genericAuthorizationMatches(
+        state, reservationDecision.decisionId, "integration.reserve", reservedEvent.actorId,
+        reservation.projectId, reservation.projectResourceRevision, reservation.projectConfigRevision,
+        "execution", reservation.ownerExecutionId, execution.revision, "allow", "integration.reserved",
+      ) ||
+      unfinished.length > 1 ||
+      ((reservation.status === "released" || reservation.status === "expired") && unfinished.length !== 0) ||
+      (reservation.status === "active" && unfinished.some((intent) => intent.state === "ambiguous")) ||
+      (reservation.status === "ambiguous" && unfinished.some((intent) => intent.state !== "ambiguous")) ||
+      (reservation.currentEvidenceSha256 !== null && !state.integrationObservations.some((observation) =>
+        observation.reservationId === reservation.reservationId && observation.receiptSha256 === reservation.currentEvidenceSha256))
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Integration reservation identity, policy, fence, or terminality is inconsistent");
+    }
+  }
+
+  for (const request of state.integrationOperationRequests) {
+    const reservation = reservationById.get(request.reservationId);
+    const intent = intentByRequest.get(request.requestId);
+    const decisions = state.integrationAuthorizationDecisions.filter((candidate) => candidate.operationId === request.operationId)
+      .sort((left, right) => left.bindingRevision - right.bindingRevision);
+    const prepare = decisions[0];
+    const action = integrationActionFor(request.operationKind);
+    const ownerExecution = reservation === undefined ? undefined : state.executions.find((candidate) =>
+      candidate.executionId === reservation.ownerExecutionId);
+    if (
+      reservation === undefined || ownerExecution === undefined || request.causationId !== null ||
+      request.contractId !== INTEGRATION_CONTRACT_ID || request.expectedFencingToken !== reservation.fencingToken ||
+      request.expectedReservationRevision > reservation.revision || request.expectedLeaseRevision > reservation.leaseRevision ||
+      decisions.length === 0 || prepare?.requestId !== request.requestId || prepare.operationId !== request.operationId ||
+      prepare.bindingRevision !== 1 || prepare.phase !== "prepare" || prepare.actorId !== request.actorId ||
+      prepare.action !== action || prepare.confirmationId === null ||
+      !phaseAuthorizationIsValid(
+        state, prepare, action, reservation.projectId,
+        reservation.projectResourceRevision, reservation.projectConfigRevision,
+      ) ||
+      !genericAuthorizationMatches(
+        state, prepare.decisionId, action, request.actorId, reservation.projectId,
+        reservation.projectResourceRevision, reservation.projectConfigRevision, "execution",
+        reservation.ownerExecutionId, ownerExecution.revision, prepare.result, integrationAuditKindFor(request.operationKind),
+      ) ||
+      (prepare.result === "allow") !== (intent !== undefined)
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Integration operation request or preliminary authorization is inconsistent");
+    }
+    if (intent === undefined) {
+      const denied = state.integrationEvents.filter((event) => event.operationId === request.operationId);
+      if (decisions.length !== 1 || prepare.result !== "deny" || denied.length !== 1 ||
+          denied[0]?.intentId !== null || denied[0]?.eventKind !== "integration.operation.denied" ||
+          denied[0]?.outcome !== "denied") {
+        throw persistenceFailure("CORRUPT_ROW", "Denied integration operation evidence is inconsistent");
+      }
+    }
+  }
+
+  for (const intent of state.integrationIntents) {
+    const request = requestById.get(intent.requestId);
+    const reservation = reservationById.get(intent.reservationId);
+    if (request === undefined || reservation === undefined) {
+      throw persistenceFailure("CORRUPT_ROW", "Integration intent request or reservation is absent");
+    }
+    const decisions = state.integrationAuthorizationDecisions.filter((candidate) => candidate.operationId === intent.operationId)
+      .sort((left, right) => left.bindingRevision - right.bindingRevision);
+    const observations = state.integrationObservations.filter((candidate) => candidate.intentId === intent.intentId)
+      .sort((left, right) => left.observationNumber - right.observationNumber);
+    const effectObservations = observations.filter((candidate) => candidate.operation !== "inspect");
+    const recoveryObservations = observations.filter((candidate) => candidate.operation === "inspect");
+    const receipts = state.integrationReceipts.filter((candidate) => candidate.intentId === intent.intentId);
+    const finalizations = state.integrationFinalizations.filter((candidate) => candidate.intentId === intent.intentId);
+    const currentPhaseDecision = phaseDecisionById.get(intent.currentAuthorizationDecisionId);
+    const currentGenericDecision = state.decisions.find((candidate) => candidate.decisionId === intent.currentAuthorizationDecisionId);
+    const lastRecovery = recoveryObservations.at(-1);
+    const expectedPhaseCount = intent.state === "pending" ? 1 :
+      intent.state === "finalized" && intent.recoveryResult === null ? 3 :
+        intent.state === "ambiguous" && decisions.length === 3 ? 3 : 2;
+    const failureEmpty = intent.lastFailureCategory === null && intent.lastFailureCode === null &&
+      intent.lastFailureRetryable === null && intent.lastFailureAmbiguous === null;
+    const failureComplete = intent.lastFailureCategory !== null && intent.lastFailureCode !== null &&
+      intent.lastFailureRetryable !== null && intent.lastFailureAmbiguous !== null;
+    const failureValid = failureComplete && adapterFailureSemanticsAreValid(
+      intent.lastFailureCategory!, intent.lastFailureRetryable!, intent.lastFailureAmbiguous!, INTEGRATION_FAILURE_CATEGORIES,
+    );
+    const latestLinkedObservation = observations.at(-1)?.observationNumber ?? null;
+    const reservationObservationMaximum = state.integrationObservations.filter((candidate) =>
+      candidate.reservationId === reservation.reservationId).reduce((maximum, candidate) =>
+        Math.max(maximum, candidate.observationNumber), 0);
+    const recoveryAuthorizationValid = lastRecovery === undefined ? false : genericAuthorizationMatches(
+      state, lastRecovery.authorizationDecisionId, "integration.recover", request.actorId,
+      reservation.projectId, reservation.projectResourceRevision, reservation.projectConfigRevision,
+      "execution", reservation.ownerExecutionId,
+      state.executions.find((candidate) => candidate.executionId === reservation.ownerExecutionId)?.revision ?? 0,
+      "allow", "integration.recovered",
+    );
+    if (
+      request.operationId !== intent.operationId || request.idempotencyKey !== intent.idempotencyKey ||
+      request.operationKind !== intent.operationKind || intent.reservationFencingToken !== reservation.fencingToken ||
+      intent.createdAt !== request.createdAt || intent.updatedAt < intent.createdAt || decisions.length !== expectedPhaseCount ||
+      decisions.some((decision, index) => decision.bindingRevision !== index + 1 ||
+        decision.requestId !== intent.requestId || decision.operationId !== intent.operationId ||
+        decision.actorId !== request.actorId || decision.action !== integrationActionFor(intent.operationKind) ||
+        decision.confirmationId !== decisions[0]?.confirmationId || decision.confirmationId === null ||
+        (index === 0 ? decision.phase !== "prepare" : index === 1 ? decision.phase !== "act" : decision.phase !== "finalize") ||
+        !phaseAuthorizationIsValid(
+          state, decision, integrationActionFor(intent.operationKind), reservation.projectId,
+          reservation.projectResourceRevision, reservation.projectConfigRevision,
+        )) ||
+      decisions[0]?.result !== "allow" ||
+      (intent.state !== "failed" && decisions[1] !== undefined && decisions[1].result !== "allow") ||
+      (intent.state === "finalized" && intent.recoveryResult === null && decisions[2]?.result !== "allow") ||
+      (intent.state === "ambiguous" && decisions[2] !== undefined && decisions[2].result !== "deny") ||
+      effectObservations.length > 1 ||
+      observations.some((observation) => !integrationObservationSemanticsAreValid(reservation, intent, observation)) ||
+      observations.some((observation, index) => index > 0 &&
+        observation.observationNumber <= observations[index - 1]!.observationNumber) ||
+      (latestLinkedObservation !== null && intent.lastObservationNumber !== latestLinkedObservation) ||
+      intent.lastObservationNumber > reservationObservationMaximum ||
+      (!failureEmpty && !failureValid) ||
+      (intent.state === "failed" && (!failureValid || intent.lastFailureAmbiguous !== false)) ||
+      (intent.state === "ambiguous" && !failureEmpty && (!failureValid || intent.lastFailureAmbiguous !== true)) ||
+      ((intent.state === "pending" || intent.state === "executing" || intent.state === "observed" ||
+        intent.state === "verified" || intent.state === "finalized") && !failureEmpty) ||
+      (recoveryObservations.length === 0 && (currentPhaseDecision === undefined ||
+        currentPhaseDecision.decisionId !== decisions.at(-1)?.decisionId ||
+        intent.authorizationBindingRevision !== currentPhaseDecision.bindingRevision)) ||
+      (recoveryObservations.length > 0 && (!recoveryAuthorizationValid ||
+        currentGenericDecision?.decisionId !== lastRecovery?.authorizationDecisionId ||
+        lastRecovery === undefined || intent.currentAuthorizationDecisionId !== lastRecovery.authorizationDecisionId ||
+        intent.authorizationBindingRevision !== decisions.length + recoveryObservations.length)) ||
+      (intent.state === "pending" || intent.state === "executing" || intent.state === "observed" ? receipts.length !== 0 : receipts.length > 1) ||
+      (intent.state === "verified" || intent.state === "finalized" ? receipts.length !== 1 : false) ||
+      (intent.state === "finalized" || intent.state === "failed" ? finalizations.length !== 1 : finalizations.length !== 0)
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Integration intent lineage, authorization, or lifecycle is inconsistent");
+    }
+    const receipt = receipts[0];
+    const finalization = finalizations[0];
+    if (finalization !== undefined) {
+      const expectedRecovery = receipt === undefined ? null : integrationRecoveryResultFor(receipt.code);
+      const normalRefusal = intent.state === "failed" && receipt !== undefined;
+      if (finalization.authorizationDecisionId !== intent.currentAuthorizationDecisionId ||
+          (receipt === undefined ? finalization.verifiedReceiptId !== null :
+            finalization.verifiedReceiptId !== receipt.verifiedReceiptId) ||
+          (intent.state === "finalized" && (finalization.outcome !== receipt?.outcome ||
+            finalization.recoveryResult !== intent.recoveryResult)) ||
+          (intent.recoveryResult !== null && (expectedRecovery !== intent.recoveryResult ||
+            finalization.recoveryResult !== expectedRecovery)) ||
+          (normalRefusal && (finalization.outcome !== "refused" || receipt?.outcome !== "refused")) ||
+          (intent.state === "failed" && !normalRefusal && finalization.outcome !== "failed")) {
+        throw persistenceFailure("CORRUPT_ROW", "Integration finalization is inconsistent");
+      }
+    }
+  }
+
+  for (const observation of state.integrationObservations) {
+    const reservation = reservationById.get(observation.reservationId);
+    const intent = observation.intentId === null ? null : intentById.get(observation.intentId) ?? null;
+    const phaseDecision = phaseDecisionById.get(observation.authorizationDecisionId);
+    const genericDecision = state.decisions.find((candidate) => candidate.decisionId === observation.authorizationDecisionId);
+    const ownerExecution = reservation === undefined ? undefined : state.executions.find((candidate) =>
+      candidate.executionId === reservation.ownerExecutionId);
+    const inspectAction = intent === null ? "integration.inspect" as const : "integration.recover" as const;
+    if (reservation === undefined || ownerExecution === undefined || !integrationObservationSemanticsAreValid(reservation, intent, observation) ||
+        (observation.operation === "inspect" ? !genericAuthorizationMatches(
+          state, observation.authorizationDecisionId, inspectAction,
+          genericDecision?.actorId ?? "", reservation.projectId, reservation.projectResourceRevision,
+          reservation.projectConfigRevision, "execution", reservation.ownerExecutionId, ownerExecution.revision,
+          "allow", intent === null ? "integration.inspected" : "integration.recovered",
+        ) : phaseDecision === undefined || phaseDecision.operationId !== intent?.operationId ||
+          phaseDecision.phase !== "act" || phaseDecision.bindingRevision !== 2 || phaseDecision.result !== "allow")) {
+      throw persistenceFailure("CORRUPT_ROW", "Integration observation identity, authorization, or receipt matrix is inconsistent");
+    }
+  }
+
+  for (const receipt of state.integrationReceipts) {
+    const intent = intentById.get(receipt.intentId);
+    const observation = observationById.get(receipt.observationId);
+    if (intent === undefined || observation === undefined || observation.intentId !== receipt.intentId ||
+        observation.observationNumber !== receipt.observationNumber ||
+        observation.adapterReceiptId !== receipt.adapterReceiptId || observation.receiptSha256 !== receipt.receiptSha256 ||
+        observation.outcome !== receipt.outcome || observation.code !== receipt.code ||
+        receipt.verifiedAt < observation.observedAt) {
+      throw persistenceFailure("CORRUPT_ROW", "Integration verified receipt is inconsistent");
+    }
+  }
+
+  for (const finalization of state.integrationFinalizations) {
+    const intent = intentById.get(finalization.intentId);
+    const receipt = finalization.verifiedReceiptId === null ? null : receiptById.get(finalization.verifiedReceiptId) ?? null;
+    if (intent === undefined || (receipt !== null && receipt.intentId !== intent.intentId) ||
+        ((finalization.outcome === "succeeded" || finalization.outcome === "refused") !== (receipt !== null))) {
+      throw persistenceFailure("CORRUPT_ROW", "Integration finalization evidence is inconsistent");
+    }
+  }
+
+  for (const event of state.integrationEvents) {
+    const reservation = reservationById.get(event.reservationId);
+    const intent = event.intentId === null ? null : intentById.get(event.intentId) ?? null;
+    if (reservation === undefined || (event.intentId !== null && intent === null) ||
+        (intent !== null && intent.reservationId !== event.reservationId) ||
+        (event.observationNumber !== null && !state.integrationObservations.some((observation) =>
+          observation.reservationId === event.reservationId && observation.observationNumber === event.observationNumber))) {
+      throw persistenceFailure("CORRUPT_ROW", "Integration event evidence is inconsistent");
+    }
+  }
+}
+
+function workspaceEvidenceSha256For(
+  workspace: ApplicationState["workspaceGenerations"][number],
+  receipt: ApplicationState["workspaceReceipts"][number],
+  readyRevision: number,
+): string {
+  return sha256(canonicalJson({
+    workspaceId: workspace.workspaceId,
+    generation: workspace.generation,
+    workspaceRevision: readyRevision,
+    workspaceRootKey: workspace.workspaceRootKey,
+    verifiedReceiptId: receipt.verifiedReceiptId,
+    receiptSha256: receipt.receiptSha256,
+    repositoryIdentity: receipt.repositoryIdentity,
+    branchReference: receipt.branchReference,
+    headObjectId: receipt.headObjectId,
+    ownershipBindingSha256: receipt.ownershipBindingSha256,
+  }));
+}
+
+function policyCompletionWorkspace(
+  state: ApplicationState,
+  parent: ApplicationState["completionDecisions"][number],
+  child: ApplicationState["policyGatedCompletionDecisions"][number],
+): Readonly<{
+  workspace: ApplicationState["workspaceGenerations"][number];
+  receipt: ApplicationState["workspaceReceipts"][number];
+}> | null {
+  const candidates = state.workspaceGenerations.flatMap((workspace) => {
+    if (workspace.executionId !== parent.executionId || workspace.taskId !== parent.taskId ||
+        workspace.taskRevision !== parent.preTaskRevision) return [];
+    return state.workspaceReceipts.filter((receipt) => receipt.workspaceId === workspace.workspaceId &&
+      receipt.generation === workspace.generation && receipt.outcome === "succeeded" &&
+      receipt.externalState === "complete" && receipt.headObjectId === child.headObjectId &&
+      receipt.repositoryIdentity !== null && receipt.branchReference !== undefined &&
+      readyWorkspaceRevisionForReceipt(state, receipt) !== null &&
+      workspaceEvidenceSha256For(workspace, receipt, readyWorkspaceRevisionForReceipt(state, receipt)!) === child.workspaceEvidenceSha256)
+      .map((receipt) => Object.freeze({ workspace, receipt }));
+  });
+  return candidates.length === 1 ? candidates[0]! : null;
+}
+
+function completionPolicySubjectForDecision(
+  project: ApplicationState["projects"][number],
+  parent: ApplicationState["completionDecisions"][number],
+  workspace: ApplicationState["workspaceGenerations"][number],
+  receipt: ApplicationState["workspaceReceipts"][number],
+  readyRevision: number,
+): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    projectId: project.projectId,
+    projectResourceRevision: project.resourceRevision,
+    projectConfigRevision: project.configRevision,
+    projectRootKey: project.rootKey,
+    repositoryIdentity: receipt.repositoryIdentity,
+    taskId: parent.taskId,
+    taskRevision: parent.preTaskRevision,
+    executionId: parent.executionId,
+    executionRevision: parent.executionRevision,
+    attemptNumber: parent.attemptNumber,
+    fencingToken: parent.fencingToken,
+    workspaceId: workspace.workspaceId,
+    generation: workspace.generation,
+    workspaceRevision: readyRevision,
+    ownershipBindingSha256: receipt.ownershipBindingSha256,
+    headObjectId: receipt.headObjectId,
+  });
+}
+
+function gateSetDigestIsValid(
+  state: ApplicationState,
+  parent: ApplicationState["completionDecisions"][number],
+  child: ApplicationState["policyGatedCompletionDecisions"][number],
+  policy: ApplicationState["projectPolicyReceipts"][number],
+  facts: ProjectPolicyFacts,
+  workspace: ApplicationState["workspaceGenerations"][number],
+  workspaceReceipt: ApplicationState["workspaceReceipts"][number],
+): boolean {
+  const requirements = [...facts.requiredGates].sort((left, right) =>
+    `${left.gateId}\u0000${left.gateVersion}`.localeCompare(`${right.gateId}\u0000${right.gateVersion}`));
+  if (requirements.length === 0) return child.gateSetSha256 === sha256(canonicalJson([]));
+  const first = requirements[0]!;
+  const configurations = state.completionGateRequests.filter((request) => request.operationKind === "inspect_gate" &&
+    request.policyReceiptId === policy.receiptId && request.gateId === first.gateId &&
+    request.gateVersion === first.gateVersion).map((request) =>
+      `${request.adapterId}\u0000${request.adapterVersion}\u0000${request.completionEvidenceRootKey}`);
+  for (const configuration of new Set(configurations)) {
+    const [adapterId, adapterVersion, evidenceRootKey] = configuration.split("\u0000");
+    const projection: unknown[] = [];
+    let complete = true;
+    for (const gate of requirements) {
+      const candidates = state.completionGateRequests.filter((request) => request.operationKind === "inspect_gate" &&
+        request.projectId === policy.projectId && request.projectResourceRevision === policy.projectResourceRevision &&
+        request.projectConfigRevision === policy.projectConfigRevision && request.projectRootKey === policy.projectRootKey &&
+        request.repositoryIdentity === workspaceReceipt.repositoryIdentity && request.taskId === parent.taskId &&
+        request.taskRevision === parent.preTaskRevision && request.executionId === parent.executionId &&
+        request.executionRevision === parent.executionRevision && request.attemptNumber === parent.attemptNumber &&
+        request.fencingToken === parent.fencingToken && request.workspaceId === workspace.workspaceId &&
+        request.generation === workspace.generation && request.workspaceRevision ===
+          readyWorkspaceRevisionForReceipt(state, workspaceReceipt) &&
+        request.workspaceRootKey === workspace.workspaceRootKey &&
+        request.ownershipBindingSha256 === workspaceReceipt.ownershipBindingSha256 &&
+        request.headObjectId === workspaceReceipt.headObjectId && request.policyReceiptId === policy.receiptId &&
+        request.policyId === policy.policyId && request.policyConfigRevision === policy.policyConfigRevision &&
+        request.gateId === gate.gateId && request.gateVersion === gate.gateVersion &&
+        request.commandKey === gate.commandKey && request.commandIdentitySha256 === gate.commandIdentitySha256 &&
+        request.toolEnvironmentSha256 === gate.toolEnvironmentSha256 && request.adapterId === adapterId &&
+        request.adapterVersion === adapterVersion && request.completionEvidenceRootKey === evidenceRootKey)
+        .flatMap((request) => {
+          const intent = state.completionGateIntents.find((candidate) => candidate.requestId === request.requestId &&
+            candidate.state === "finalized");
+          const finalization = intent === undefined ? undefined : state.completionGateFinalizations.find((candidate) =>
+            candidate.intentId === intent.intentId && candidate.outcome === "accepted" &&
+            candidate.finalizedAt <= child.createdAt);
+          const receipt = finalization?.verifiedReceiptId === null || finalization?.verifiedReceiptId === undefined
+            ? undefined : state.completionGateReceipts.find((candidate) =>
+              candidate.verifiedReceiptId === finalization.verifiedReceiptId && candidate.verdict === "pass" &&
+              (candidate.validUntil === null || candidate.validUntil > child.createdAt));
+          return intent === undefined || finalization === undefined || receipt === undefined
+            ? [] : [Object.freeze({ request, receipt })];
+        }).sort((left, right) => right.receipt.verifiedAt.localeCompare(left.receipt.verifiedAt));
+      const evidence = candidates[0];
+      if (evidence === undefined) {
+        complete = false;
+        break;
+      }
+      projection.push(Object.freeze({
+        gateId: gate.gateId,
+        gateVersion: gate.gateVersion,
+        commandKey: gate.commandKey,
+        commandIdentitySha256: gate.commandIdentitySha256,
+        toolEnvironmentSha256: gate.toolEnvironmentSha256,
+        requestId: evidence.request.requestId,
+        gateOperationId: evidence.receipt.gateOperationId,
+        verifiedReceiptId: evidence.receipt.verifiedReceiptId,
+        receiptSha256: evidence.receipt.receiptSha256,
+        validUntil: evidence.receipt.validUntil,
+      }));
+    }
+    if (complete && sha256(canonicalJson(projection)) === child.gateSetSha256) return true;
+  }
+  return false;
+}
+
+function integrationEvidenceDigestIsValid(
+  state: ApplicationState,
+  parent: ApplicationState["completionDecisions"][number],
+  child: ApplicationState["policyGatedCompletionDecisions"][number],
+  facts: ProjectPolicyFacts,
+  projectId: string,
+  workspace: ApplicationState["workspaceGenerations"][number],
+  workspaceReceipt: ApplicationState["workspaceReceipts"][number],
+): boolean {
+  if (facts.integration === "not_required") {
+    return child.integrationEvidenceSha256 === sha256(canonicalJson({ disposition: "not_required" }));
+  }
+  const reservations = state.integrationReservations.filter((candidate) => candidate.ownerExecutionId === parent.executionId &&
+    candidate.projectId === projectId && candidate.repositoryIdentity === workspaceReceipt.repositoryIdentity &&
+    candidate.sourceWorkspaceId === workspace.workspaceId && candidate.sourceGeneration === workspace.generation &&
+    candidate.sourceWorkspaceRevision === readyWorkspaceRevisionForReceipt(state, workspaceReceipt) &&
+    candidate.sourceOwnershipBindingSha256 === workspaceReceipt.ownershipBindingSha256 &&
+    candidate.sourceHeadObjectId === workspaceReceipt.headObjectId && candidate.createdAt <= child.createdAt);
+  return reservations.some((reservation) => {
+    const evidence = (["apply", "push"] as const).map((operation) => {
+      const intent = state.integrationIntents.filter((candidate) => candidate.reservationId === reservation.reservationId &&
+        candidate.operationKind === operation && candidate.state === "finalized" && candidate.updatedAt <= child.createdAt)
+        .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))[0];
+      const finalization = intent === undefined ? undefined : state.integrationFinalizations.find((candidate) =>
+        candidate.intentId === intent.intentId && candidate.outcome === "succeeded" &&
+        candidate.finalizedAt <= child.createdAt);
+      const receipt = finalization?.verifiedReceiptId === null || finalization?.verifiedReceiptId === undefined
+        ? undefined : state.integrationReceipts.find((candidate) => candidate.verifiedReceiptId === finalization.verifiedReceiptId &&
+          candidate.outcome === "succeeded");
+      return intent === undefined || finalization === undefined || receipt === undefined ? null : Object.freeze({
+        operation,
+        intentId: intent.intentId,
+        finalizationId: finalization.finalizationId,
+        verifiedReceiptId: receipt.verifiedReceiptId,
+        receiptSha256: receipt.receiptSha256,
+      });
+    });
+    return !evidence.some((item) => item === null) && sha256(canonicalJson({
+      reservationId: reservation.reservationId,
+      reservationFencingToken: reservation.fencingToken,
+      sourceHeadObjectId: reservation.sourceHeadObjectId,
+      evidence,
+    })) === child.integrationEvidenceSha256;
+  });
+}
+
+function validatePolicyGatedCompletionState(state: ApplicationState): void {
+  for (const child of state.policyGatedCompletionDecisions) {
+    const parent = state.completionDecisions.find((candidate) => candidate.completionDecisionId === child.completionDecisionId);
+    const execution = parent === undefined ? undefined : state.executions.find((candidate) =>
+      candidate.executionId === parent.executionId);
+    const task = parent === undefined ? undefined : state.domain.tasks.find((candidate) => candidate.id === parent.taskId);
+    const project = task === undefined ? undefined : state.projects.find((candidate) => candidate.projectId === task.projectId);
+    const terminal = parent === undefined ? undefined : state.executionTerminalStates.find((candidate) =>
+      candidate.completionDecisionId === parent.completionDecisionId);
+    const policy = state.projectPolicyReceipts.find((candidate) => candidate.receiptId === child.policyReceiptId);
+    const facts = policy === undefined ? null : projectPolicyFacts(policy);
+    const workspaceEvidence = parent === undefined ? null : policyCompletionWorkspace(state, parent, child);
+    const executionReceipt = state.executionReceipts.find((candidate) =>
+      candidate.verifiedReceiptId === child.executionSuccessVerifiedReceiptId);
+    const executionFinalization = state.executionFinalizations.find((candidate) =>
+      candidate.finalizationId === child.executionSuccessFinalizationId);
+    const completionAuthorization = state.decisions.find((candidate) =>
+      candidate.decisionId === child.authorizationDecisionId);
+    if (
+      parent?.kind !== "policy_gated" || execution === undefined || task === undefined || project === undefined ||
+      terminal === undefined || policy === undefined || facts === null || workspaceEvidence === null ||
+      executionReceipt === undefined || executionFinalization === undefined ||
+      child.createdAt !== parent.createdAt || terminal.createdAt !== child.createdAt ||
+      terminal.verifiedReceiptId !== child.executionSuccessVerifiedReceiptId ||
+      terminal.finalizationId !== child.executionSuccessFinalizationId ||
+      executionReceipt.lifecycle !== "turn_succeeded" || executionFinalization.outcome !== "accepted" ||
+      executionFinalization.verifiedReceiptId !== executionReceipt.verifiedReceiptId ||
+      policy.operation !== "completion_requirements" || policy.requestedAction !== "completion.accept" ||
+      policy.decision !== "allow" || policy.validUntil === null || policy.validUntil <= child.createdAt ||
+      policy.subjectSha256 !== sha256(canonicalJson(completionPolicySubjectForDecision(
+        Object.freeze({ ...project, resourceRevision: policy.projectResourceRevision, configRevision: policy.projectConfigRevision }),
+        parent,
+        workspaceEvidence.workspace,
+        workspaceEvidence.receipt,
+        readyWorkspaceRevisionForReceipt(state, workspaceEvidence.receipt)!,
+      ))) ||
+      child.headObjectId !== workspaceEvidence.receipt.headObjectId ||
+      !gateSetDigestIsValid(state, parent, child, policy, facts, workspaceEvidence.workspace, workspaceEvidence.receipt) ||
+      !integrationEvidenceDigestIsValid(
+        state, parent, child, facts, project.projectId, workspaceEvidence.workspace, workspaceEvidence.receipt,
+      ) ||
+      child.preservationStateSha256 !== (facts.preservation === "required"
+        ? child.integrationEvidenceSha256
+        : sha256(canonicalJson({ disposition: "not_required" }))) ||
+      !genericAuthorizationMatches(
+        state, child.authorizationDecisionId, "completion.accept", completionAuthorization?.actorId ?? "",
+        project.projectId, policy.projectResourceRevision, policy.projectConfigRevision,
+        "execution", parent.executionId, parent.executionRevision, "allow", "completion.accepted",
+      ) ||
+      state.requests.find((candidate) => candidate.requestId === child.requestId)?.requestId !== child.requestId ||
+      state.audit.find((candidate) => candidate.auditId === child.auditId)?.decisionId !== child.authorizationDecisionId
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Policy-gated completion evidence or authorization lineage is inconsistent");
+    }
+  }
+  const confirmationClaims = [
+    ...state.manualCompletionDecisions.map((record) => `manual:${record.confirmationId}`),
+    ...state.policyGatedCompletionDecisions.map((record) => `policy:${record.confirmationId}`),
+    ...state.executionIntents.filter((record) => record.confirmationId !== null)
+      .map((record) => `execution:${record.confirmationId!}`),
+    ...state.workspaceIntents.filter((record) => record.operationKind === "cleanup" && record.confirmationId !== null)
+      .map((record) => `cleanup:${record.confirmationId!}`),
+    ...new Map(state.integrationAuthorizationDecisions.filter((record) => record.confirmationId !== null)
+      .map((record) => [record.operationId, `integration:${record.confirmationId!}`])).values(),
+  ];
+  const confirmationIds = confirmationClaims.map((claim) => claim.slice(claim.indexOf(":") + 1));
+  if (new Set(confirmationIds).size !== confirmationIds.length) {
+    throw persistenceFailure("CORRUPT_ROW", "High-risk confirmation was consumed by more than one operation");
+  }
+}
+
+function cleanupInventorySha256For(
+  state: ApplicationState,
+  receipt: ApplicationState["workspaceReceipts"][number],
+): string | null {
+  const observation = state.workspaceObservations.find((candidate) => candidate.observationId === receipt.observationId);
+  return observation === undefined ? null : sha256(canonicalJson({
+    trackedCount: observation.trackedCount,
+    modifiedCount: observation.modifiedCount,
+    untrackedCount: observation.untrackedCount,
+    ignoredCount: observation.ignoredCount,
+    receiptSha256: receipt.receiptSha256,
+  }));
+}
+
+function cleanupPolicySubjectForAttestation(
+  state: ApplicationState,
+  attestation: NonNullable<ReturnType<typeof parseWorkspaceCleanupAttestation>>,
+  receipt: ApplicationState["workspaceReceipts"][number],
+): Readonly<Record<string, unknown>> | null {
+  const observedInventorySha256 = cleanupInventorySha256For(state, receipt);
+  if (observedInventorySha256 === null) return null;
+  return Object.freeze({
+    projectId: attestation.projectId,
+    projectResourceRevision: attestation.projectResourceRevision,
+    projectConfigRevision: attestation.projectConfigRevision,
+    projectRootKey: attestation.projectRootKey,
+    repositoryIdentity: attestation.repositoryIdentity,
+    taskId: attestation.taskId,
+    taskRevision: attestation.taskCompletedRevision,
+    executionId: attestation.executionId,
+    executionRevision: attestation.executionRevision,
+    attemptNumber: attestation.attemptNumber,
+    fencingToken: attestation.fencingToken,
+    workspaceId: attestation.workspaceId,
+    generation: attestation.generation,
+    workspaceRevision: attestation.workspaceRevision - 1,
+    ownershipBindingSha256: attestation.ownershipBindingSha256,
+    headObjectId: attestation.expectedHeadObjectId,
+    completionDecisionId: attestation.completionDecisionId,
+    executionTerminalCreatedAt: attestation.executionTerminalCreatedAt,
+    gateSetSha256: attestation.gateSetSha256,
+    preservationStateSha256: attestation.preservationStateSha256,
+    integrationDisposition: attestation.integrationDisposition,
+    integrationReservationId: attestation.integrationReservationId,
+    observedInventorySha256,
+  });
+}
+
+function validateCleanupAttestationState(state: ApplicationState): void {
+  for (const record of state.workspaceCleanupAttestations) {
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(record.attestationJson);
+    } catch {
+      throw persistenceFailure("CORRUPT_ROW", "Workspace cleanup attestation JSON is malformed");
+    }
+    const attestation = parseWorkspaceCleanupAttestation(decoded);
+    const intent = state.workspaceIntents.find((candidate) => candidate.intentId === record.intentId);
+    const generation = state.workspaceGenerations.find((candidate) => candidate.workspaceId === record.workspaceId &&
+      candidate.generation === record.generation);
+    const project = state.projects.find((candidate) => candidate.projectId === record.projectId);
+    const task = state.domain.tasks.find((candidate) => candidate.id === record.taskId);
+    const execution = state.executions.find((candidate) => candidate.executionId === record.executionId);
+    const parent = task?.completion === undefined ? undefined : state.completionDecisions.find((candidate) =>
+      candidate.completionDecisionId === task.completion?.decisionId);
+    const child = parent === undefined ? undefined : state.policyGatedCompletionDecisions.find((candidate) =>
+      candidate.completionDecisionId === parent.completionDecisionId);
+    const terminal = execution === undefined ? undefined : state.executionTerminalStates.find((candidate) =>
+      candidate.executionId === execution.executionId);
+    if (attestation === null || canonicalJson(attestation) !== record.attestationJson || intent === undefined ||
+        generation === undefined || project === undefined || task === undefined || execution === undefined ||
+        parent === undefined || child === undefined || terminal === undefined) {
+      throw persistenceFailure("CORRUPT_ROW", "Workspace cleanup attestation has no complete durable subject");
+    }
+    const policy = state.projectPolicyReceipts.find((candidate) => candidate.receiptId === attestation.policyReceiptId);
+    const policyFacts = policy === undefined ? null : projectPolicyFacts(policy);
+    const actDecision = state.workspaceAuthorizationDecisions.find((candidate) =>
+      candidate.decisionId === attestation.cleanupAuthorizationDecisionId);
+    const ownershipReceipts = state.workspaceReceipts.filter((receipt) => receipt.workspaceId === attestation.workspaceId &&
+      receipt.generation === attestation.generation &&
+      readyWorkspaceRevisionForReceipt(state, receipt) === attestation.workspaceRevision - 1 &&
+      receipt.outcome === "succeeded" && receipt.externalState === "complete" &&
+      receipt.repositoryIdentity === attestation.repositoryIdentity &&
+      receipt.headObjectId === attestation.expectedHeadObjectId &&
+      receipt.ownershipBindingSha256 === attestation.ownershipBindingSha256);
+    const matchingPolicySubjects = policy === undefined ? [] : ownershipReceipts.filter((receipt) => {
+      const subject = cleanupPolicySubjectForAttestation(state, attestation, receipt);
+      return subject !== null && sha256(canonicalJson(subject)) === policy.subjectSha256;
+    });
+    const integrationReservation = attestation.integrationReservationId === null ? null :
+      state.integrationReservations.find((candidate) => candidate.reservationId === attestation.integrationReservationId) ?? null;
+    const quiescence: WorkspaceCleanupQuiescence = Object.freeze({
+      activeExecutionOwnerCount: 0,
+      currentIntegrationReservationCount: 0,
+      executionId: attestation.executionId,
+      executionTerminalCreatedAt: attestation.executionTerminalCreatedAt,
+      generation: attestation.generation,
+      observedAt: attestation.issuedAt,
+      taskId: attestation.taskId,
+      taskRevision: attestation.taskCompletedRevision,
+      unfinishedCompletionGateIntentCount: 0,
+      unfinishedIntegrationIntentCount: 0,
+      unfinishedWorkspaceIntentCount: 0,
+      workspaceId: attestation.workspaceId,
+      workspaceRevision: attestation.workspaceRevision,
+    });
+    const integrationIsValid = attestation.integrationDisposition === "not_required"
+      ? integrationReservation === null && policyFacts !== null && policyFacts.integration === "not_required"
+      : integrationReservation !== null && policyFacts !== null && policyFacts.integration === "required" &&
+        integrationReservation.status === attestation.integrationDisposition &&
+        integrationReservation.revision === attestation.integrationReservationRevision &&
+        integrationReservation.fencingToken === attestation.integrationReservationFencingToken &&
+        integrationReservation.ownerExecutionId === attestation.executionId &&
+        integrationReservation.targetReference === attestation.expectedBranchReference;
+    if (
+      record.attestationId !== attestation.attestationId || record.operationId !== attestation.operationId ||
+      record.intentId !== attestation.intentId || record.projectId !== attestation.projectId ||
+      record.taskId !== attestation.taskId || record.executionId !== attestation.executionId ||
+      record.workspaceId !== attestation.workspaceId || record.generation !== attestation.generation ||
+      record.attestationSha256 !== attestation.attestationSha256 ||
+      record.quiescenceSha256 !== attestation.quiescenceSha256 || record.issuedAt !== attestation.issuedAt ||
+      record.validUntil !== attestation.validUntil || workspaceCleanupQuiescenceSha256(quiescence) !== record.quiescenceSha256 ||
+      intent.operationKind !== "cleanup" || intent.action !== "workspace.cleanup" || intent.operationId !== record.operationId ||
+      intent.confirmationId !== attestation.confirmationId || intent.state === "pending" ||
+      generation.projectId !== attestation.projectId || generation.taskId !== attestation.taskId ||
+      generation.executionId !== attestation.executionId || generation.revision < attestation.workspaceRevision ||
+      generation.workspaceRootKey !== attestation.workspaceRootKey ||
+      project.rootKey !== attestation.projectRootKey || project.resourceRevision < attestation.projectResourceRevision ||
+      project.configRevision < attestation.projectConfigRevision || task.state !== "completed" ||
+      task.revision !== attestation.taskCompletedRevision || task.completion?.decisionId !== attestation.completionDecisionId ||
+      parent.kind !== "policy_gated" || parent.executionId !== attestation.executionId ||
+      parent.attemptNumber !== attestation.attemptNumber || parent.fencingToken !== attestation.fencingToken ||
+      child.gateSetSha256 !== attestation.gateSetSha256 ||
+      child.preservationStateSha256 !== attestation.preservationStateSha256 ||
+      child.headObjectId !== attestation.expectedHeadObjectId || execution.revision !== attestation.executionRevision ||
+      execution.attemptNumber !== attestation.attemptNumber || execution.fencingToken !== attestation.fencingToken ||
+      terminal.status !== "completed" || terminal.completionDecisionId !== attestation.completionDecisionId ||
+      terminal.createdAt !== attestation.executionTerminalCreatedAt || policy === undefined || policyFacts === null ||
+      policy.operation !== "evaluate_cleanup" || policy.requestedAction !== "workspace.cleanup" ||
+      policy.decision !== "allow" || policyFacts.cleanup !== "allowed_after_completion" ||
+      policy.receiptSha256 !== attestation.policyReceiptSha256 ||
+      policy.policyConfigRevision !== attestation.policyConfigRevision || policy.validUntil === null ||
+      policy.validUntil <= attestation.issuedAt || matchingPolicySubjects.length !== 1 || actDecision === undefined ||
+      actDecision.operationId !== attestation.operationId ||
+      actDecision.bindingRevision !== attestation.cleanupAuthorizationBindingRevision ||
+      actDecision.bindingRevision !== 2 || actDecision.phase !== "act" || actDecision.result !== "allow" ||
+      actDecision.projectId !== attestation.projectId ||
+      actDecision.projectResourceRevision !== attestation.projectResourceRevision ||
+      actDecision.projectConfigRevision !== attestation.projectConfigRevision ||
+      actDecision.executionId !== attestation.executionId ||
+      actDecision.executionRevision !== attestation.executionRevision ||
+      actDecision.fencingToken !== attestation.fencingToken || actDecision.workspaceId !== attestation.workspaceId ||
+      actDecision.generation !== attestation.generation || actDecision.generationRevision !== attestation.workspaceRevision ||
+      actDecision.grantId !== attestation.grantId || actDecision.grantRevision !== attestation.grantRevision ||
+      actDecision.createdAt !== attestation.issuedAt || !phaseAuthorizationIsValid(
+        state, actDecision, "workspace.cleanup", attestation.projectId,
+        attestation.projectResourceRevision, attestation.projectConfigRevision,
+      ) || !integrationIsValid
+    ) {
+      throw persistenceFailure("CORRUPT_ROW", "Workspace cleanup attestation identity, policy, or quiescence is inconsistent");
+    }
+  }
 }
 
 function workspaceGenerationKey(workspaceId: string, generation: number): string {
@@ -474,6 +1894,7 @@ function validateWorkspaceState(state: ApplicationState): void {
   for (const observation of state.workspaceObservations) {
     const intent = intentById.get(observation.intentId);
     const decision = decisionById.get(observation.authorizationDecisionId);
+    const cleanupAttestation = state.workspaceCleanupAttestations.find((candidate) => candidate.intentId === observation.intentId);
     if (
       intent === undefined || decision === undefined || decision.operationId !== intent.operationId ||
       decision.phase !== "act" || decision.bindingRevision !== 2 || decision.result !== "allow" ||
@@ -483,7 +1904,11 @@ function validateWorkspaceState(state: ApplicationState): void {
         observation.outcome,
         observation.externalState,
       ) ||
-      observation.modifiedCount > observation.trackedCount
+      observation.modifiedCount > observation.trackedCount ||
+      (intent.operationKind === "cleanup"
+        ? cleanupAttestation === undefined ||
+          observation.cleanupAttestationSha256 !== cleanupAttestation.attestationSha256
+        : observation.cleanupAttestationSha256 !== null)
     ) {
       throw persistenceFailure("CORRUPT_ROW", "Workspace observation lineage is incomplete or inconsistent");
     }
@@ -500,6 +1925,10 @@ function validateWorkspaceState(state: ApplicationState): void {
       observation.externalState !== receipt.externalState || observation.outcome !== receipt.outcome ||
       observation.code !== receipt.code || intent.workspaceId !== receipt.workspaceId ||
       intent.generation !== receipt.generation || generation.revision < receipt.generationRevision ||
+      observation.repositoryIdentity !== receipt.repositoryIdentity ||
+      observation.branchReference !== receipt.branchReference || observation.headObjectId !== receipt.headObjectId ||
+      observation.ownershipBindingSha256 !== receipt.ownershipBindingSha256 ||
+      observation.cleanupAttestationSha256 !== receipt.cleanupAttestationSha256 ||
       !workspaceReceiptSemanticsAreValid(
         intent.operationKind,
         receipt.code,
@@ -643,6 +2072,7 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
   const executionTerminalStates = readExecutionTerminalStates(database);
   const manualTurns = readManualTurns(database);
   const manualBackendOperations = readManualBackendOperations(database);
+  const completionDecisions = readCompletionDecisions(database);
   const manualCompletionDecisions = readManualCompletionDecisions(database);
   const dispatcherTriggerRequests = readDispatcherTriggerRequests(database);
   const dispatcherAuthorizationDecisions = readDispatcherAuthorizationDecisions(database);
@@ -656,6 +2086,24 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
   const dispatcherMemberDenialDecisions = readDispatcherMemberDenialDecisions(database);
   const dispatcherMemberDenialAudit = readDispatcherMemberDenialAudit(database);
   const dispatcherRunSummaries = readDispatcherRunSummaries(database);
+  const projectPolicyReceipts = readProjectPolicyReceipts(database);
+  const completionGateRequests = readCompletionGateRequests(database);
+  const completionGateAuthorizationDecisions = readCompletionGateAuthorizationDecisions(database);
+  const completionGateIntents = readCompletionGateIntents(database);
+  const completionGateObservations = readCompletionGateObservations(database);
+  const completionGateReceipts = readCompletionGateReceipts(database);
+  const completionGateFinalizations = readCompletionGateFinalizations(database);
+  const completionGateEvents = readCompletionGateEvents(database);
+  const policyGatedCompletionDecisions = readPolicyGatedCompletionDecisions(database);
+  const integrationTargetSequences = readIntegrationTargetSequences(database);
+  const integrationReservations = readIntegrationReservations(database);
+  const integrationOperationRequests = readIntegrationOperationRequests(database);
+  const integrationAuthorizationDecisions = readIntegrationAuthorizationDecisions(database);
+  const integrationIntents = readIntegrationIntents(database);
+  const integrationObservations = readIntegrationObservations(database);
+  const integrationReceipts = readIntegrationReceipts(database);
+  const integrationFinalizations = readIntegrationFinalizations(database);
+  const integrationEvents = readIntegrationEvents(database);
   const workspaceGenerations = readWorkspaceGenerations(database);
   const workspaceAuthorizationDecisions = readWorkspaceAuthorizationDecisions(database);
   const workspaceIntents = readWorkspaceIntents(database);
@@ -663,6 +2111,7 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
   const workspaceReceipts = readWorkspaceReceipts(database);
   const workspaceFinalizations = readWorkspaceFinalizations(database);
   const workspaceEvents = readWorkspaceEvents(database);
+  const workspaceCleanupAttestations = readWorkspaceCleanupAttestations(database);
   const grantRelations = readGrantRelations(database);
   const domainProjectIds = new Set(domain.projects.map((project) => project.id));
   if (projects.some((project) => !domainProjectIds.has(project.projectId) || project.updatedAt < project.createdAt)) {
@@ -1412,7 +2861,38 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
   if (manualConfirmationIds.size !== executionIntents.filter((intent) => intent.confirmationId !== null).length) {
     throw persistenceFailure("CORRUPT_ROW", "Manual outcome confirmation was consumed more than once");
   }
+  const completionDecisionById = new Map(completionDecisions.map((completion) => [completion.completionDecisionId, completion]));
+  const manualCompletionById = new Map(manualCompletionDecisions.map((completion) => [completion.completionDecisionId, completion]));
+  const policyCompletionById = new Map(policyGatedCompletionDecisions.map((completion) => [completion.completionDecisionId, completion]));
+  if (completionDecisionById.size !== completionDecisions.length ||
+      manualCompletionById.size !== manualCompletionDecisions.length ||
+      policyCompletionById.size !== policyGatedCompletionDecisions.length) {
+    throw persistenceFailure("CORRUPT_ROW", "Completion decision identity inventory is not unique");
+  }
+  for (const parent of completionDecisions) {
+    const manual = manualCompletionById.get(parent.completionDecisionId);
+    const policyGated = policyCompletionById.get(parent.completionDecisionId);
+    const execution = executionById.get(parent.executionId);
+    const task = taskById.get(parent.taskId);
+    const terminal = terminalByExecution.get(parent.executionId);
+    if ((parent.kind === "manual") !== (manual !== undefined) ||
+        (parent.kind === "policy_gated") !== (policyGated !== undefined) ||
+        (manual !== undefined && policyGated !== undefined) || execution === undefined || task === undefined ||
+        execution.taskId !== parent.taskId || execution.attemptNumber !== parent.attemptNumber ||
+        execution.fencingToken !== parent.fencingToken || execution.revision !== parent.executionRevision ||
+        parent.postTaskRevision !== parent.preTaskRevision + 1 || task.state !== "completed" ||
+        task.revision !== parent.postTaskRevision || task.completion?.decisionId !== parent.completionDecisionId ||
+        terminal?.status !== "completed" || terminal.completionDecisionId !== parent.completionDecisionId ||
+        terminal.preTaskRevision !== parent.preTaskRevision || terminal.postTaskRevision !== parent.postTaskRevision ||
+        terminal.executionRevision !== parent.executionRevision
+    ) throw persistenceFailure("CORRUPT_ROW", "Generic completion decision lineage is incomplete or inconsistent");
+  }
+  if (manualCompletionDecisions.some((child) => !completionDecisionById.has(child.completionDecisionId)) ||
+      policyGatedCompletionDecisions.some((child) => !completionDecisionById.has(child.completionDecisionId))) {
+    throw persistenceFailure("CORRUPT_ROW", "Completion subtype has no generic parent");
+  }
   for (const completion of manualCompletionDecisions) {
+    const parent = completionDecisionById.get(completion.completionDecisionId);
     const request = executionRequestById.get(completion.requestId);
     const decision = executionDecisionById.get(completion.decisionId);
     const event = executionOperationAudit.find((candidate) => candidate.auditId === completion.auditId);
@@ -1422,6 +2902,9 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     const task = taskById.get(completion.taskId);
     const terminal = terminalByExecution.get(completion.executionId);
     if (
+      parent?.kind !== "manual" || parent.taskId !== completion.taskId || parent.executionId !== completion.executionId ||
+      parent.attemptNumber !== completion.attemptNumber || parent.fencingToken !== completion.fencingToken ||
+      parent.preTaskRevision !== completion.preTaskRevision || parent.postTaskRevision !== completion.postTaskRevision ||
       request?.action !== "execution.completion.accept" || request.result !== "allow" ||
       decision?.requestId !== completion.requestId || decision.action !== "execution.completion.accept" || decision.result !== "allow" ||
       event?.requestId !== completion.requestId || event.decisionId !== completion.decisionId ||
@@ -1682,17 +3165,30 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     executionOperationRequests, executionAuthorizationDecisions, executionOperationAudit,
     executionIntents, executionIntentAuthorizationBindings, executionObservations,
     executionReceipts, executionFinalizations, executionTerminalStates,
-    manualTurns, manualBackendOperations, manualCompletionDecisions,
+    manualTurns, manualBackendOperations, completionDecisions, manualCompletionDecisions,
     dispatcherTriggerRequests, dispatcherAuthorizationDecisions, dispatcherRuns, dispatcherAudit,
     dispatcherReconciliationItems, dispatcherReconciliationSummaries,
     dispatcherMemberships, dispatcherMembers,
     dispatcherMemberDenialRequests, dispatcherMemberDenialDecisions, dispatcherMemberDenialAudit,
     dispatcherRunSummaries,
+    projectPolicyReceipts,
+    completionGateRequests, completionGateAuthorizationDecisions, completionGateIntents,
+    completionGateObservations, completionGateReceipts, completionGateFinalizations, completionGateEvents,
+    policyGatedCompletionDecisions,
+    integrationTargetSequences, integrationReservations, integrationOperationRequests,
+    integrationAuthorizationDecisions, integrationIntents, integrationObservations,
+    integrationReceipts, integrationFinalizations, integrationEvents,
     workspaceGenerations, workspaceAuthorizationDecisions, workspaceIntents,
     workspaceObservations, workspaceReceipts, workspaceFinalizations, workspaceEvents,
+    workspaceCleanupAttestations,
     lifecycle: Object.freeze([]) as readonly ApplicationLifecycleAuthorization[],
   });
+  validateProjectPolicyState(stateWithoutLifecycle);
+  validateCompletionGateState(stateWithoutLifecycle);
+  validateIntegrationState(stateWithoutLifecycle);
+  validatePolicyGatedCompletionState(stateWithoutLifecycle);
   validateWorkspaceState(stateWithoutLifecycle);
+  validateCleanupAttestationState(stateWithoutLifecycle);
   for (const authorization of lifecycle) {
     const request = requestById.get(authorization.requestId);
     const decision = decisions.find((candidate) => candidate.decisionId === authorization.decisionId);

@@ -56,6 +56,7 @@ import {
   CLAIM_CAPABILITY_ACTION_SET_SHA256,
   DISPATCHER_CAPABILITY_ACTION_SET_SHA256,
   MANUAL_CAPABILITY_ACTION_SET_SHA256,
+  WORKSPACE_CAPABILITY_ACTION_SET_SHA256,
   assessCapabilityUpgrade,
   assessRenewal,
   auditRecord,
@@ -259,7 +260,9 @@ function createApplicationServiceInternal(
             ? MANUAL_CAPABILITY_ACTION_SET_SHA256
             : assessment.targetVocabularyVersion === 4
               ? DISPATCHER_CAPABILITY_ACTION_SET_SHA256
-              : CURRENT_CAPABILITY_ACTION_SET_SHA256,
+              : assessment.targetVocabularyVersion === 5
+                ? WORKSPACE_CAPABILITY_ACTION_SET_SHA256
+                : CURRENT_CAPABILITY_ACTION_SET_SHA256,
         requestId: identity.requestId,
         createdAt: identity.now,
         expiresAt: command.expiresAt,
@@ -406,7 +409,9 @@ function createApplicationServiceInternal(
               ? MANUAL_CAPABILITY_ACTION_SET_SHA256
               : assessment.vocabularyVersion === 4
                 ? DISPATCHER_CAPABILITY_ACTION_SET_SHA256
-                : CURRENT_CAPABILITY_ACTION_SET_SHA256,
+                : assessment.vocabularyVersion === 5
+                  ? WORKSPACE_CAPABILITY_ACTION_SET_SHA256
+                  : CURRENT_CAPABILITY_ACTION_SET_SHA256,
         requestId: identity.requestId,
         createdAt: identity.now,
         expiresAt: command.expiresAt,

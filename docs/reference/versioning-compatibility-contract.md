@@ -2,14 +2,15 @@
 
 ## Status and authority
 
-This file is the sole normative owner of schema, planned public API, and adapter
+This file is the sole normative owner of schema, public API, and adapter
 versioning; forward migration and downgrade-by-restore policy; and the evidence
 required for a platform or external API support claim. The project now has one
 internal current SQLite baseline at schema version `1`, a provisional package-root
   Domain/ProjectRegistry/authorization/application/claim/Manual-loop/dispatcher/
-  workspace/persistence surface, implemented closed pure `ato.execution/v1` and
-`ato.workspace/v1` local ports, and
-one implemented provisional `ato.api/v1` local explicit-Manual product CLI major.
+  workspace/Phase-3/persistence surface, implemented closed pure
+`ato.execution/v1`, `ato.project-policy/v1`, `ato.completion/v1`,
+`ato.integration/v1`, and `ato.workspace/v2` local ports, and one implemented
+provisional `ato.api/v1` local explicit-Manual product CLI major.
 It still has no released product,
 validated platform, or supported external API.
 
@@ -25,9 +26,9 @@ create or change this policy.
   `0` means a genuinely fresh database with no application object and shipped
   versions begin at `1`. The current and only accepted target is `1`.
   `0001-current-baseline.sql` directly owns the complete implemented local
-  explicit-Manual Phase 2 plus durable workspace-foundation storage shape,
-  including lifecycle state-digest version 1 and authorization vocabularies 1
-  through 5. Schema version and
+  explicit-Manual Phase 2 plus fresh-only Phase 3 storage shape, including
+  lifecycle state-digest version 2 and authorization vocabularies 1 through 6.
+  Schema version and
   authorization vocabulary are independent counters. Exact migration
   identity, checksum, allocation, and mechanics are owned by the
   [persistence contract](persistence-contract.md#migration-identity-and-atomicity).
@@ -68,8 +69,9 @@ there. Omitting the version and selecting `ato.api/v1` explicitly are identical;
 all other majors are unsupported before runtime construction or protected state
 evaluation. This major is not a released stability or platform-support promise.
 The package may expose independent library ports and services without adding a
-CLI command: `ato.workspace/v1` and the workspace application service therefore
-do not change the closed 33-command/37-error `ato.api/v1` grammar.
+CLI command: the Phase 3 ports, adapters, application service, and product
+facade therefore do not change the closed 33-command/37-error `ato.api/v1`
+grammar or the three backup/restore JSON formats.
 
 ### Unreleased current-v1 reset
 
@@ -128,12 +130,22 @@ generation tuple, and the adapter must echo it and bind it to restart-readable
 physical evidence. The old shape is invalid: there is no old reader, alias,
 fallback, migration, dual write, or deprecation window.
 
-That named reset closes `ato.workspace/v1` again. Any later required field or
-identity change, operation-side-effect change, receipt code/state/outcome
-change, evidence-reference rule change, or error-meaning change requires
-`ato.workspace/v2`; an adapter version bump cannot reinterpret v1. The
-exported Windows Git backend remains product-unwired and its exact-host evidence
-does not establish platform compatibility or support.
+EP-03C consumes the required major change under the separately authorized
+fresh-only development baseline. The sole current workspace contract is now
+`ato.workspace/v2`: it preserves reserve/create/inspect/recover semantics and
+adds the required cleanup-attestation request/receipt binding plus an owned
+cleanup effect. `ato.workspace/v1` is retired and rejected; there is no v1
+reader, alias, fallback, migration, dual write, or deprecation window. The
+Windows Git workspace backend implements only v2, remains product/CLI-unwired,
+and its exact-host evidence does not establish platform compatibility or
+support.
+
+EP-03C is also the first implementation of exact `ato.project-policy/v1`,
+`ato.completion/v1`, and `ato.integration/v1`. Each is closed at that identity:
+a later required-field, identity, operation, side-effect, receipt, lifecycle,
+authorization-boundary, or error-meaning change requires the corresponding new
+port major. Their local adapters and injected Phase 3 product-library facade do
+not alter the current `ato.api/v1` CLI or backup/restore artifact versions.
 
 ## Forward migration
 

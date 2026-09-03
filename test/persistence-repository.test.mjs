@@ -37,13 +37,13 @@ function fullDomainSnapshot() {
       {
         id: "done",
         projectId: "project",
-        state: "completed",
-        revision: 2,
-        body: "completed body",
+        state: "ready",
+        revision: 1,
+        body: "ready body",
         parentId: null,
         dependencyIds: [],
         waiting: null,
-        completion: { decisionId: "decision", acceptedTaskRevision: 1 },
+        completion: null,
         cancellation: null,
         supersedesTaskId: null,
       },
@@ -110,7 +110,7 @@ function fullDomainSnapshot() {
   return result.value;
 }
 
-test("repository round-trips every frozen Domain Core persistence field exactly", async () => {
+test("repository round-trips every directly initializable frozen Domain Core persistence field exactly", async () => {
   const fixture = createPersistenceFixture("repository-roundtrip");
   let store;
   try {
@@ -123,6 +123,32 @@ test("repository round-trips every frozen Domain Core persistence field exactly"
       () => initializeDomainForOwner(store, snapshot),
       (error) => expectPersistenceError(error, "REVISION_CONFLICT"),
     );
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("initialization refuses to synthesize missing completion application lineage", async () => {
+  const fixture = createPersistenceFixture("repository-completed-init");
+  let store;
+  try {
+    store = await openPersistence(fixture.layout, { applicationVersion: "completed-init" });
+    const completed = createDomainSnapshot({
+      projects: [{ id: "project", enabled: true }],
+      tasks: [{
+        id: "completed", projectId: "project", state: "completed", revision: 2,
+        body: "body", parentId: null, dependencyIds: [], waiting: null,
+        completion: { decisionId: "decision", acceptedTaskRevision: 1 },
+        cancellation: null, supersedesTaskId: null,
+      }],
+    });
+    assert.equal(completed.ok, true);
+    assert.throws(
+      () => initializeDomainForOwner(store, completed.value),
+      (error) => expectPersistenceError(error, "INVALID_INPUT"),
+    );
+    assert.deepEqual(readDomainForOwner(store), { projects: [], tasks: [] });
   } finally {
     if (store) await store.close();
     cleanupPersistenceFixture(fixture);

@@ -15,16 +15,18 @@ completion. It also implements one explicit-Manual dispatcher with
 durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
 immutable finite membership, one terminal outcome per member, and
 completeness-gated summaries. One typed product facade exposes only these
-existing owners to the sole current `ato.api/v1`, deriving non-public operation lineage
-from current durable state. The fresh-only workspace foundation additionally
-implements the pure `ato.workspace/v1` port plus durable generation,
-authorization, intent, observation, verification, finalization, response-loss,
-and restart handling against an unexported test Fake and an exported,
-product-unwired Windows Git backend. The latter binds a direct-exclusive
-physical manifest to current Git/filesystem observation and still has no
-cleanup/integration/ref/push effect. There is no SchedulerBackend or scheduled
-trigger, ProjectPolicy, CompletionBackend, or completion gate; those sections
-remain requirements for their implementing plans.
+existing owners to the sole current `ato.api/v1`, deriving non-public operation
+lineage from current durable state. The fresh-only Phase 3 library additionally
+implements pure `ato.project-policy/v1`, `ato.completion/v1`,
+`ato.integration/v1`, and sole current `ato.workspace/v2` ports; durable policy
+receipts, completion gates and decisions, integration reservations/effects/
+recovery, cleanup attestations, and generic completion/terminal-execution
+convergence. Its configured local adapters perform bounded gate, expected-old
+local ref, configured local-file push, and owner-attested cleanup effects
+outside writer transactions. The default product runtime and CLI construct none
+of them. There is still no SchedulerBackend or scheduled trigger, MCP, Codex
+adapter, general network integration, release, deployment, or platform-support
+claim.
 
 Task-state meaning comes from the [domain contract](domain-contract.md), record
 layout from the [persistence contract](persistence-contract.md), permission from
@@ -103,12 +105,25 @@ action, Project resource/config/root identity, Task revision, dispatcher run/
 member/membership revisions, execution revision/attempt/fence, system workspace
 ID/generation/revision, trusted workspace-root identity, creator operation,
 base reference, application-derived immutable ownership-binding digest,
-nullable cleaned predecessor, adapter/contract versions,
-correlation/causation, and expected generation status. A stable workspace ID
+nullable cleaned predecessor, adapter/contract versions, correlation/causation,
+expected generation status, and a null cleanup attestation for every
+non-cleanup operation. Cleanup additionally binds the exact current
+application-issued `ato.workspace-cleanup-attestation/v1` record. A stable workspace ID
 does not weaken this tuple: reuse requires the same positive generation and
 revision, while replacement requires the exact cleaned predecessor and
 generation `n+1`. The backend receives this frozen subject, not an inferred path
 or a prior authorization decision.
+
+Phase 3 policy receipts bind their exact query/action, actor, Project resource/
+config/root/repository identity, subject revisions, policy/config/adapter
+identity, decision, finite required facts, observation time and validity. Gate
+intents additionally bind Task/execution/fence/workspace/generation/HEAD,
+gate/command/tool/evidence-root identities. Integration reservations bind the
+exact Project/repository/target ref, distinct expected target/source objects,
+source workspace, destination identity/ref/expected remote, policy receipt,
+lease owner/revision/fence/expiry, and owner execution/operation. A change to
+any member is a new operation or a stale/conflicting receipt; a key, similar
+content, descendant commit, or later observation cannot collapse two tuples.
 
 ## Claim, lease, and fencing
 
@@ -326,9 +341,67 @@ owner, root, generation, and authorization tuple before any backend call.
 Only `cleaned` may be the predecessor of generation `n+1`; no retry, restart,
 path discovery, or branch similarity allocates a duplicate or adopts external
 state. These guarantees cover the durable coordinator and the exact injected
-backend. The Windows Git implementation supplies local create/inspect/recover
-evidence only; it adds no product wiring, cleanup, integration, remote effect,
-or platform-support claim.
+backend. The Windows Git implementation supplies local
+create/inspect/recover/attested-cleanup evidence; it adds no default product
+wiring, general remote effect, or platform-support claim.
+
+## Phase 3 gate, completion, integration, and cleanup protocol
+
+ProjectPolicy evaluation is read-only and precedes final mutation authority. A
+successful evaluation stores the exact bounded receipt and facts; a policy
+allow is evidence, never a grant, intent, reservation, Domain transition, or
+adapter effect. A later operation reopens and verifies the receipt, exact
+subject/configuration tuple, decision, and validity before using it.
+
+Completion-gate intents use `pending`, `executing`, `observed`, `verified`,
+`finalized`, `ambiguous`, or `failed`. Run and cancel persist intent and final
+authorization before the effect; inspect is a separately authorized read.
+Adapter calls occur outside writer transactions. Ordered observations,
+verified receipts, finalizations, and events are committed in separate short
+transactions with fresh application time and exact Task/execution/fence/
+workspace/HEAD/policy/gate CAS. Response loss or untrusted evidence becomes
+ambiguity and is inspected rather than rerun. A pass is completion evidence
+only after its retained evidence is independently reopened and every freshness
+identity still matches.
+
+One generic `completion_decisions` parent has exactly one `manual` or
+`policy_gated` child. The Manual path preserves its existing evidence contract.
+The Phase 3 path, in one final transaction, proves execution success, exact
+fresh required passing gates, current workspace/HEAD/policy/integration/
+preservation state, current `completion.accept` grant and confirmation, and the
+Task/execution/fence CAS; it inserts parent and child, applies the existing
+Domain running-to-completed transition, inserts the unique terminal-execution
+fact, appends audit, and reads back. Turn success, a gate result, ref update,
+push, policy allow, or cleanup alone never performs that unit.
+
+Integration apply/push intents use the same seven-state set. `pending` moves to
+`executing` before Git access, then to `observed`, `verified`, and `finalized`
+for a normal success. Only the exact authoritative nonforeign no-effect
+`apply_refused` or `push_rejected` row moves to `failed` while preserving an
+active reservation for a new separately authorized operation. A foreign or
+unknown effect observation atomically makes the intent and reservation
+`ambiguous`; no new effect is allowed. Recovery performs only a separately
+authorized `inspect`. `inspected_ambiguous` retains both rows. Any authoritative
+inspection finalizes the original intent with exactly
+`recovered_no_effect|recovered_local_applied|recovered_pushed|recovered_inconsistent`
+and only then terminalizes the reservation as `released` before stored expiry
+or `expired` at/after expiry. No higher fence exists until both rows are
+terminal.
+
+Cleanup begins with the unique durable `pending` workspace intent. The final
+authorization transaction recomputes zero-owner quiescence while excluding only
+that exact pending row, issues the current cleanup attestation through its
+intent FK, and advances the same intent to `executing`. Immediate point-of-use
+revalidation excludes only that executing row and rereads the trusted actor,
+exact current grant and expiry, cleanup-policy receipt/configuration and expiry,
+attested authorization, resource tuple, Project identity, and cleaning
+revision. The policy subject remains bound to the immediately preceding ready
+revision; intent, attestation, and quiescence separately bind the durable
+cleaning revision. Any authority or identity drift refuses before adapter
+access. The adapter then quarantines and removes only the verified closed
+inventory. A returned digest is observed and verified before finalization;
+response loss or post-effect uncertainty remains `recovery_required` rather
+than fabricating rollback or deleting more data.
 
 ## Private staging and publication
 

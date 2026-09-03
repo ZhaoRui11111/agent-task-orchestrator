@@ -46,7 +46,14 @@ declare module "node:fs" {
     readonly mode?: number;
   }
 
-  export const constants: Readonly<Record<string, number>>;
+  export const constants: Readonly<{
+    readonly O_RDONLY: number;
+    readonly O_WRONLY: number;
+    readonly O_RDWR: number;
+    readonly O_CREAT: number;
+    readonly O_EXCL: number;
+    readonly O_NOFOLLOW?: number;
+  }>;
   export function closeSync(fileDescriptor: number): void;
   export function existsSync(path: string): boolean;
   export function fchmodSync(fileDescriptor: number, mode: number): void;
@@ -98,6 +105,27 @@ declare module "node:buffer" {
 }
 
 declare module "node:child_process" {
+  interface ChildReadable {
+    on(event: "data", listener: (chunk: Uint8Array) => void): this;
+  }
+
+  interface ChildProcess {
+    readonly pid?: number;
+    readonly stdout: ChildReadable | null;
+    readonly stderr: ChildReadable | null;
+    on(event: "error", listener: (error: Error) => void): this;
+    on(event: "close", listener: (code: number | null, signal: string | null) => void): this;
+    kill(signal?: string): boolean;
+  }
+
+  interface SpawnOptions {
+    readonly cwd?: string;
+    readonly env?: Readonly<Record<string, string | undefined>>;
+    readonly windowsHide?: boolean;
+    readonly shell?: boolean;
+    readonly stdio?: readonly ["ignore", "pipe", "pipe"];
+  }
+
   interface SpawnSyncOptions {
     readonly cwd?: string;
     readonly env?: Readonly<Record<string, string | undefined>>;
@@ -125,6 +153,8 @@ declare module "node:child_process" {
     args: readonly string[],
     options?: SpawnSyncOptions,
   ): SpawnSyncReturns;
+
+  export function spawn(command: string, args: readonly string[], options?: SpawnOptions): ChildProcess;
 }
 
 declare module "node:os" {

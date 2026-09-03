@@ -4,7 +4,7 @@
 
 This file is the sole owner of security assets, actors, trust boundaries, abuse
 cases, mitigations, residual risks, negative-test obligations, and explicit
-security non-claims for the planned local-first orchestrator. The repository
+security non-claims for the local-first orchestrator. The repository
 implements the Phase 1 persistence/local task-management subset and the local
 explicit-Manual Phase 2 product: validated
 runtime and Project roots, identity-bound lifecycle/connection files, strict
@@ -20,17 +20,20 @@ journal/control, reconcile-first recovery, verified interruption, separately
 confirmed Manual completion, redaction, stale-fence refusal, and an
 explicit-Manual dispatcher with bounded trusted ingress, run-owner fencing,
 reconcile-before-seal ordering, immutable membership, and complete outcomes,
-plus a pure/durable workspace foundation with exact tuple and immutable
-ownership-digest binding, separate cleanup confirmation, no-blind-replay
-recovery, strict hostile receipt parsing, bounded redacted transition evidence,
-an unexported test Fake, and an exported product-unwired Windows Git backend.
-That backend implements direct-exclusive creation, ownership-manifest and
-authoritative inspect/recover controls while denying cleanup before any root,
-worker, or Git access. It still has no MCP server, SchedulerBackend or scheduled
-trigger, production Codex adapter, product-wired Git/filesystem workspace route,
-ProjectPolicy, CompletionBackend/gates, team identity/RBAC, or supported
-platform security boundary. The sole current `ato.api/v1` facade and CLI expose
-only that local Manual subset; the backend does not execute Task content.
+plus a durable injected Phase 3 library with exact tuple and immutable
+ownership-digest binding, exact ProjectPolicy/completion/integration/workspace-
+v2 ports, separately authorized policy/gate/completion/integration/cleanup
+actions, no-blind-replay recovery, strict hostile receipt parsing, gate
+freshness, integration fencing/partial-success classification, attestation-
+bound owned cleanup, bounded redacted transition evidence, test Fakes, and local
+Windows adapters. The workspace backend implements direct-exclusive creation,
+ownership-manifest, authoritative inspect/recover, and verified quarantine-
+then-delete cleanup; the completion and Git integration adapters execute only
+bounded configured local effects. It still has no MCP server, SchedulerBackend
+or scheduled trigger, production Codex adapter, default product/CLI Phase 3
+route, team identity/RBAC, external-service integration, or supported platform
+security boundary. The sole current `ato.api/v1` facade and CLI expose only the
+local Manual subset; no backend executes Task content.
 
 The model assumes one local operator and treats repository content, Task text,
 prompts, adapter responses, tool output, filesystem entries, Git metadata, MCP
@@ -92,7 +95,7 @@ into a support claim.
 | T6 | SQLite corruption, disabled foreign keys, forged migration history, stale/partial backup, concurrent writer, or newer-schema access causes silent state loss or false completion. | Enforce the [persistence contract](../reference/persistence-contract.md): verified connection settings, one application product ingress, bounded transactions, the immutable current-baseline checksum, refusal of every noncurrent database before writable open, combined typed decoding, integrity checks, read-only failure, and restore to a private generation. | SQLite/OS/hardware defects and loss of every valid backup can make recovery impossible. |
 | T7 | Duplicate/missed future scheduler triggers or current dispatcher worker death duplicates execution, skips reconciliation, or loses candidate outcomes. | The current explicit-Manual dispatcher enforces the [scheduler contract](../reference/scheduler-contract.md) reconcile-first sequence and reliability claim/fence/idempotency/fan-out records with exact run-owner takeover. Future scheduled delivery must additionally treat delivery as at least once. | Extended scheduler outage would delay future scheduled work; no availability or deadline guarantee exists. |
 | T8 | CLI or a future MCP surface exposes arbitrary shell, SQL, filesystem, cleanup, or external actions; malformed/oversized input bypasses application rules. | Offer only narrow versioned command schemas; validate size/type/version before runtime open; call the same application/authorization owners; omit arbitrary shell/SQL/filesystem endpoints; require distinct current grants and confirmation for the implemented high-risk actions. | A compromised local account remains outside the application's checks; no MCP surface exists yet. |
-| T9 | A stale lease holder, replayed receipt, or stale gate writes after takeover or HEAD/policy change. | The current claim and Manual-loop owners bind execution, owner, lease/execution/Task revisions, Project revisions, attempt/fence, intent, independently observed receipt, and finalization; they reconcile before replacement and reject old-fence writes. The current workspace foundation additionally binds workspace generation/revision, run/member lineage, immutable ownership digest, and adapter receipt digest. The Windows backend binds that digest into its administrative name, canonical manifest, and verified physical observation. Future gate completion must also bind gate identity under the [gate freshness owner](../reference/completion-workspace-contract.md#gate-identity-and-freshness). | The Manual journal, workspace Fake, and exact-host Windows backend are locally inspectable; any effect whose physical state cannot prove absence or exact ownership remains ambiguous and requires operator resolution. |
+| T9 | A stale lease holder, replayed receipt, or stale gate writes after takeover or HEAD/policy change. | The current claim and Manual-loop owners bind execution, owner, lease/execution/Task revisions, Project revisions, attempt/fence, intent, independently observed receipt, and finalization; they reconcile before replacement and reject old-fence writes. Workspace and Phase 3 additionally bind generation/revision, run/member lineage, immutable ownership digest, policy/config receipt, full gate identity/freshness, integration reservation/lease/object/ref state, cleanup attestation, and adapter receipt digests. The local adapters reopen owner-bound evidence at point of use, and the final completion transaction rechecks current authorization, Task revision, execution fence, HEAD, policy, gates, integration, and preservation facts. | The Manual journal and local library adapters are inspectable only in their configured local scope; any effect whose physical state cannot prove absence or exact ownership remains ambiguous and requires operator resolution. |
 | T10 | A policy adapter, dependency, or external API changes behavior/version without detection. | Use exact port/version negotiation, policy revision binding, evidence-bound support claims, and incompatibility errors from the [adapter](../reference/adapter-contracts.md) and [versioning](../reference/versioning-compatibility-contract.md) owners. | A correctly versioned but compromised dependency can still act maliciously within granted OS permissions. |
 
 ## Negative-test obligations
@@ -100,25 +103,24 @@ into a support claim.
 An implementation cannot close its security route until automated tests
 produce binary evidence for every applicable row.
 
-The current implementation covers the runtime-root and ProjectRegistry
-portions of N1, the local content/authorization portion of N3, the application
-audit plus CLI/doctor disclosure subset of N4, the current schema-version-1 SQLite/application/
-lifecycle/Manual-loop/dispatcher/workspace-record portions of N5 and N11, the local Manual intent/effect/
+The current implementation covers the runtime-root and ProjectRegistry portions
+of N1, the local content/authorization portion of N3, the application audit plus
+CLI/doctor disclosure subset of N4, the current schema-version-1 SQLite/
+application/lifecycle/Manual-loop/dispatcher/workspace/Phase-3 record portions
+of N5 and N11, the local Manual/gate/workspace/integration intent/effect/
 inspection/receipt/finalization/crash/restart/stale-fence subset of N6 and N10,
-the explicit-Manual dispatcher worker-death/fan-out subset of N7, and the sole-current-v1
-CLI portion of N8. The test Fake additionally covers workspace-v1 shape,
-authorization, durable transition/restart/ambiguity/fence/corruption/redaction
-logic. On one exact Windows/Git host, the exported backend covers applicable N1
-path, name, repository-topology, object/tree, junction/reparse, ownership,
-production capability-probe, effect-propagation, identity-handshake,
-single-link inventory, direct-exclusive publication, and inspect/recover cases. It
-covers only N2's fail-closed outcome by denying cleanup before any physical
-access; it does not implement cleanup eligibility. Operational logger,
-SchedulerBackend/scheduled delivery, MCP, production Codex adapter,
-product-wired workspace/external-service integration, ProjectPolicy,
-CompletionBackend/gate, and publication portions remain future obligations;
-the local Manual/Fake/adapter-library evidence cannot satisfy them or a support
-claim.
+the explicit-Manual dispatcher worker-death/fan-out subset of N7, and the sole-
+current-v1 CLI portion of N8. Port/Fake tests cover exact workspace-v2, policy,
+completion, and integration shapes plus authorization, freshness, durable
+transition/restart/ambiguity/fence/corruption/redaction logic. On one exact
+Windows/Git host, local adapters cover applicable N1/N2 path, name, repository-
+topology, object/tree, junction/reparse/hardlink, ownership, evidence-root,
+identity-handshake, closed inventory, direct-exclusive creation, local fast-
+forward/push, authoritative inspection/recovery, and attestation-bound cleanup
+cases. Operational logger, SchedulerBackend/scheduled delivery, MCP, production
+Codex adapter, default product/CLI Phase 3 composition, and external-service
+publication remain future obligations; local adapter-library evidence cannot
+satisfy them or a support claim.
 
 | ID | Required negative test | Passing outcome |
 | --- | --- | --- |
@@ -132,7 +134,7 @@ claim.
 | N8 | Malformed, unknown-version, overlong, control-character, unauthorized, and injection-bearing CLI or future MCP request; request for arbitrary shell/SQL/filesystem operation | Ingress rejects before runtime mutation; excluded endpoints do not exist; the current CLI produces only its stable redacted public error. |
 | N9 | Replay pass receipt after Task, fence, workspace generation, HEAD, policy, gate version, or validity time changes | Completion/integration rejects it as stale and dependency remains locked. |
 | N10 | Timeout, lost adapter response, changed remote ref, or incompatible adapter/API version | No blind retry or support claim; authoritative inspection determines success/absence, otherwise state is ambiguous or incompatible. |
-| N11 | Missing/false trusted bootstrap, renewal, upgrade, grant-management, Project, restore, Manual-report, completion, or workspace-cleanup confirmation; second bootstrap; skipped vocabulary step; wrong local principal/runtime-root identity, action, scope, revision, dispatcher owner, run/member/generation revision, or workspace-root identity, including finalized replay; not-yet-valid, expired, or revoked grant between prepare, Act, observation, Finalize, or dispatcher/workspace transitions; baseline creation or renewal attempted authority expansion; stale lifecycle/effect handoff; cached prior inspection allow/deny; disabled Project policy; replayed request/decision/confirmation; forged inspect cancellation or workspace receipt; Project/Task text that claims authority | No unauthorized Project/Task/dependency/grant/backup/restore/execution/Manual effect, dispatcher claim, workspace backend effect, result disclosure, or completion; each mutation/finalization/run/workspace transition consumes its own current immutable authorization binding, each inspection attempt obtains a fresh current evaluation, denial never wedges later authorized recovery, and finalized replay revalidates principal/runtime-root identity; baseline creation and never-upgraded renewal create no newer execution, dispatcher, or workspace grant; forged receipt shape cannot override the authoritative Manual journal or durable workspace lineage; bounded denials are atomic and sanitized; content never changes actor, action, policy, confirmation, capability epoch, grant, owner, run/member/generation revision, fence, receipt, or completion state. |
+| N11 | Missing/false trusted bootstrap, renewal, upgrade, grant-management, Project, restore, Manual-report, completion, integration, push, or workspace-cleanup confirmation; second bootstrap; skipped vocabulary step; wrong local principal/runtime-root identity, action, scope, revision, dispatcher/reservation owner, run/member/generation/lease revision, or workspace-root identity, including finalized replay; not-yet-valid, expired, or revoked grant between prepare, Act, observation, Finalize, or dispatcher/workspace/Phase-3 transitions; baseline creation or renewal attempted authority expansion; stale lifecycle/effect handoff; cached prior policy/inspection allow/deny; disabled Project policy; replayed request/decision/confirmation; forged gate cancellation, receipt, integration observation, or cleanup attestation; Project/Task/repository text that claims authority | No unauthorized Project/Task/dependency/grant/backup/restore/execution/Manual/gate/workspace/integration/cleanup effect, dispatcher/reservation claim, result disclosure, or completion; each mutation/finalization/run/workspace/Phase-3 transition consumes its own current immutable authorization binding, each inspection and finalization obtains a fresh current evaluation, denial never wedges later authorized recovery, and finalized replay revalidates principal/runtime-root identity; baseline creation and never-upgraded renewal create no newer execution, dispatcher, workspace, or Phase-3 grant; forged shapes cannot override authoritative durable lineage; bounded denials are atomic and sanitized; content never changes actor, action, policy, confirmation, capability epoch, grant, owner, run/member/generation/lease revision, fence, receipt, attestation, reservation, or completion state. |
 
 Test fixtures are untrusted and disposable. Fake/contract tests may prove local
 logic but cannot satisfy a real platform/API support row.
@@ -155,14 +157,14 @@ logic but cannot satisfy a real platform/API support row.
 
 ## Explicit non-claims
 
-The implemented controls are limited to the Phase 1 local boundaries and the
-local explicit-Manual Phase 2 product, reliable loop, dispatcher, durable
-workspace foundation, and product-unwired Windows Git backend named above.
+The implemented controls are limited to the Phase 1 local boundaries, the
+local explicit-Manual Phase 2 product, reliable loop and dispatcher, and the
+injected local workspace/Phase 3 library and adapters named above.
 This model does not claim release
 readiness, multi-user isolation, RBAC,
 cloud security, remote availability, arbitrary-code sandboxing, malware
 detection, perfect secret/PII detection, guaranteed rollback of external
-effects, product-wired filesystem/Git workspace containment, implemented or
-automatic safe cleanup, Git integration/ref/push behavior, supported MCP
-exposure, or support for any
+effects, default product/CLI filesystem/Git containment, general or automatic
+cleanup, arbitrary Git integration/ref/push behavior, supported MCP exposure,
+or support for any
 platform/API absent validated compatibility evidence.

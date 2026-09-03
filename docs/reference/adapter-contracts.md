@@ -4,20 +4,22 @@
 
 This file is the sole normative owner of port directions, current port
 identifiers and versions, operation shapes, receipt envelopes, and adapter
-error taxonomy. The package implements the pure `ato.execution/v1` contract
-kit, the pure `ato.workspace/v1` contract kit, one production `manual-local`
-adapter backed by the current schema-version-1 local Manual journal, its narrow
-`ato.manual-outcome-control/v1` control, and one exported Windows local Git
-workspace backend. Fake backends are test-only and unexported. The Manual dispatcher composes that
-unchanged execution port and adds no adapter contract. The sole current
-`ato.api/v1` product facade can invoke the dispatcher and reliable loop, but it
-does not change `ato.execution/v1`, turn the local journal into Task-content
-execution, or add an adapter. The typed workspace application service composes
-`ato.workspace/v1`. The Windows backend is a direct library surface only: the
-current product runtime and CLI do not construct it, it has no integration/ref/
-push behavior, and its cleanup operation always refuses. Scheduler,
-ProjectPolicy, and Completion ports remain planned. No vendor, operating
-system, external API, or released product platform is currently supported.
+error taxonomy. The package implements the pure `ato.execution/v1`,
+`ato.project-policy/v1`, `ato.completion/v1`, `ato.integration/v1`, and sole
+current `ato.workspace/v2` contract kits. Concrete local implementations are
+the durable `manual-local` execution adapter/control, configured
+`local-project-policy`, bounded `local-completion`,
+`local-git-integration`, and `windows-git-local` workspace backend. Fake
+backends are test-only and unexported. Scheduler remains planned.
+
+The Phase 3 ports and local adapters are direct injected library surfaces. The
+default product runtime and sole current `ato.api/v1` CLI construct none of
+them and add no Phase 3 command. The local Git integration adapter can mutate
+only a validated expected-old target ref and an explicitly configured canonical
+local bare destination; the workspace adapter performs cleanup only with the
+exact current application-issued attestation. Disposable exact-host evidence
+does not create a vendor, operating-system, external-API, release, or platform
+support claim.
 
 Business rules remain with their linked owners. An adapter translates a
 versioned port and cannot change Task state semantics, authorize an operation,
@@ -26,10 +28,11 @@ declare an unverified external effect successful, or write SQLite directly.
 | Port | Direction relative to core | Current contract ID | Responsibility boundary |
 | --- | --- | --- | --- |
 | Execution | Outbound: reliable application loop calls adapter; the implemented Manual dispatcher calls that loop | `ato.execution/v1` | Start, resume, inspect, or request cancellation of one no-workspace execution turn |
-| Workspace | Outbound: workspace application coordinator calls injected backend | `ato.workspace/v1` | Reserve, create, inspect, recover, or request cleanup of one exactly bound workspace generation; implementations are the test Fake and exported product-unwired Windows Git backend, whose cleanup always refuses |
+| Workspace | Outbound: workspace application coordinator calls injected backend | `ato.workspace/v2` | Reserve, create, inspect, recover, or attestation-bound cleanup of one exactly bound workspace generation |
 | Scheduler | Outbound lifecycle plus inbound trigger delivery | `ato.scheduler/v1` | Register/inspect/remove a schedule and deliver a bounded dispatch trigger |
 | ProjectPolicy | Outbound: application calls adapter | `ato.project-policy/v1` | Evaluate mutation, completion requirements, integration, and cleanup policy |
 | Completion | Outbound: application calls adapter | `ato.completion/v1` | Run and inspect named completion gates and return bound gate evidence |
+| Integration | Outbound: Phase 3 application coordinator calls injected backend | `ato.integration/v1` | Inspect, expected-old fast-forward, or ordinary configured local-file push for one fenced reservation |
 
 The [versioning and compatibility contract](versioning-compatibility-contract.md)
 owns how these versions evolve and which version combinations may be claimed as
@@ -41,7 +44,7 @@ Each implemented port section below owns one exact closed call shape; unknown,
 missing, accessor-backed, or cross-class fields are rejected. The generic
 classes describe responsibility boundaries shared by current and later ports,
 not a field union that an implemented v1 call may extend. In particular,
-`ato.workspace/v1` uses the exact specialized envelope documented in its
+`ato.workspace/v2` uses the exact specialized envelope documented in its
 section and keeps actor, authorization-decision, confirmation, and policy facts
 inside the durable application owner rather than forwarding them to the
 backend. Fields from another class are never accepted as nullable placeholders.
@@ -194,18 +197,23 @@ and rechecks its referenced finite grant; replay may return an already committed
 operation, but a new mutation cannot consume a revoked, expired, stale, or
 prepare-only decision.
 
-## WorkspaceBackend: `ato.workspace/v1`
+## WorkspaceBackend: `ato.workspace/v2`
 
 This pure closed contract kit is implemented and exported. It contains no
 filesystem, Git, child-process, vendor, scheduler, policy, or CLI code. The
 concrete `windows-git-local` adapter version `1.0.0` lives in its own module and
 depends inward on this port; an unexported disposable Fake remains available to
-tests. The concrete adapter and one-host fixtures do not turn the pure port into
-a platform-support claim.
+tests. The adapter supports the five closed operations including attestation-
+bound cleanup, but is never default-constructed by the product runtime or CLI.
+The concrete adapter and one-host fixtures do not turn the pure port into a
+platform-support claim.
 
 Every request has exactly `contractId`, `operation`, `operationId`,
 `idempotencyKey`, `correlationId`, nullable `causationId`, `adapterId`,
-`adapterVersion`, and `subject`. The exact subject binds:
+`adapterVersion`, `subject`, and nullable `cleanupAttestation`. The attestation
+is null for reserve/create/inspect/recover and is the exact current
+`ato.workspace-cleanup-attestation/v1` record for cleanup. The exact subject
+binds:
 
 - Project ID, resource/config revisions, and opaque canonical root identity;
 - Task ID/revision;
@@ -228,7 +236,9 @@ fail before backend dispatch. The operation is exactly one of:
 - `recover` for `workspace.recover`, causally reconciling one durable ambiguous
   operation; or
 - `cleanup` for `workspace.cleanup`, requesting removal only after the
-  application owner has obtained its separate confirmation and current allow.
+  application owner has obtained its separate confirmation and current allow,
+  persisted the unique cleanup intent, proved completed execution and
+  zero-owner quiescence, and issued the current attestation.
 
 A successful backend result contains only `ok: true` plus one exact receipt.
 The receipt repeats contract/operation/idempotency/adapter/workspace/root
@@ -242,7 +252,10 @@ untracked/ignored counts, nullable opaque evidence reference, and canonical UTC
 observation time. Complete state requires canonical path, repository and
 registration identities, base/HEAD identities, `safe`, and ownership match;
 absent, removed, and refused states cannot smuggle a path/registration/branch/
-HEAD value. Receipt code, outcome, and state must form one allowed combination.
+HEAD value. `cleanupAttestationSha256` is null for the four non-cleanup
+operations and exactly echoes the verified attestation digest for a successful
+cleanup receipt. Receipt code, outcome, and state must form one allowed
+combination.
 
 A failed result contains only `ok: false` plus category, bounded stable code,
 retryable/ambiguous flags, nullable canonical retry time, and nullable opaque
@@ -256,9 +269,9 @@ matching `[A-Za-z0-9][A-Za-z0-9._:-]*`; a raw path, URL credential, message,
 payload, SQL, stack, or secret is invalid.
 
 The [completion and workspace contract](completion-workspace-contract.md) owns
-the implemented durable generation topology, Windows adapter path/reparse and
-physical ownership rules, and the still-planned Git integration and
-cleanup-eligibility rules.
+the implemented durable generation topology, cleanup-attestation and
+quiescence rules, Windows adapter path/reparse and physical ownership rules,
+and integration/cleanup eligibility.
 The [reliability protocol](reliability-protocol.md) owns intent, observation,
 verification, finalization, response-loss, and restart handling.
 
@@ -291,6 +304,12 @@ belong to the [scheduler contract](scheduler-contract.md).
 
 ## ProjectPolicy: `ato.project-policy/v1`
 
+This pure closed contract kit and the configured `local-project-policy`
+adapter version `1.0.0` are implemented and exported. The local adapter takes
+an immutable trusted configuration snapshot and returns deterministic bounded
+receipts; it performs no filesystem, Git, network, SQL, grant, or Domain
+mutation. The default product runtime and CLI do not construct it.
+
 Operations are:
 
 - `evaluate_mutation(action, subject, current_revision, proposed_change,
@@ -316,6 +335,21 @@ policy/configuration and do not enter generic core.
 
 ## CompletionBackend: `ato.completion/v1`
 
+This pure closed contract kit and the `local-completion` adapter version
+`1.0.0` are implemented and exported. Trusted construction binds a finite gate
+configuration, canonical executable identity, exact argument/environment tuple,
+workspace identity, and separate retained evidence root. The workspace binding
+also fixes the direct Git executable, Project/workspace directories, `.git`
+pointer, linked Git directory, common/object namespaces, detached `HEAD`, lock
+file, ownership manifest, repository identity, and locked worktree-registration
+identities. Construction and every operation reject an escaped or changed
+topology, unsafe repository configuration, ownership substitution, symbolic or
+changed `HEAD`, and dirty inventory; `run_gate` repeats that check immediately
+before spawning. The adapter invokes the executable directly with `shell=false`,
+applies timeout/output bounds, and persists only closed metadata and output
+digests. Raw output is neither a receipt nor durable application evidence. The
+default product runtime and CLI do not construct it.
+
 Operations are:
 
 - `run_gate` (mutating-effect, `completion.gate.run`): consume a policy-required gate ID/version, Task/execution/workspace
@@ -331,6 +365,59 @@ repository identity and HEAD object ID, policy/config revision, start/end time,
 verdict `pass|fail|indeterminate`, tool/environment evidence reference, and
 nullable validity end. Gate identity and freshness are owned by the
 [completion and workspace contract](completion-workspace-contract.md#gate-identity-and-freshness).
+The local evidence record additionally persists hashes of the physical
+directory and result-file device/inode/mode identities. Inspection acquires the
+leaf through a no-follow read descriptor and compares descriptor, pathname,
+parent-directory, retained-root, single-link, byte-count, and final inventory
+identities before accepting those hashes. Publication uses exclusive no-follow
+descriptor creation and the same parent/root checks. Exact-byte replacement,
+hardlinking, leaf or directory swaps, and reparse substitution therefore become
+indeterminate evidence rather than a reopened pass.
+
+## IntegrationBackend: `ato.integration/v1`
+
+This pure closed contract kit and the `local-git-integration` adapter version
+`1.0.0` are implemented and exported. The default product runtime and CLI do
+not construct them. Trusted construction binds one canonical non-bare Project
+repository, source workspace, distinct expected target/source SHA-1 objects,
+target ref, Git executable identity, and canonical local bare destination/ref.
+Repository content cannot select an executable, target, destination, protocol,
+credential helper, hook, filter, or configuration override.
+
+The binding records and reopens the Project, source, and destination repository
+directories plus each Git directory, common directory, object namespace,
+worktree directory, and `.git` control file/directory. Every one must remain
+inside the trusted disposable root, the source must share the Project's exact
+common/object identity, and the destination must remain bare. The source
+ownership manifest, direct detached `HEAD`, lock file, clean inventory, and
+locked worktree registration are stable-file/identity checked at construction,
+on every inspection/preflight, and again immediately after the pre-effect
+interlock before `update-ref` or push. Pointer replacement, metadata-only HEAD
+advance, symbolic HEAD, external common/object state, alternates, or topology
+identity drift refuses before a ref effect.
+
+Operations are exactly:
+
+- `inspect` (read/inspection, `integration.inspect`): observe both configured
+  refs without mutation and classify the source-first local/remote tuple;
+- `apply` (mutating effect, `integration.apply`): require a clean repository,
+  prove the target is not checked out by any worktree, prove source descends
+  from expected target, and invoke expected-old `update-ref` only; and
+- `push` (mutating effect, `integration.push`): require local source state and
+  invoke one ordinary non-force object-to-ref refspec only against the already
+  validated local bare path. File transport is enabled only for that bound
+  invocation; network protocols and repository-selected remotes remain closed.
+
+The exact receipt codes are `inspected_unchanged`,
+`inspected_local_applied`, `inspected_pushed`, `inspected_foreign`,
+`inspected_ambiguous`, `applied`, `already_applied`, `apply_refused`,
+`apply_ambiguous`, `pushed`, `already_pushed`, `push_rejected`, and
+`push_ambiguous`. Every receipt has one non-null opaque evidence reference and
+reports closed local/remote states plus nullable before/after objects. The
+[completion and workspace contract](completion-workspace-contract.md#git-partial-success-protocol)
+owns the exhaustive source-first equality and recovery meaning; the
+[reliability protocol](reliability-protocol.md) owns durable intent and
+finalization.
 
 ## Adapter error taxonomy
 

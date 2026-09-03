@@ -311,6 +311,14 @@ const expectedEntries = [
   "package/dist/cli.d.ts.map",
   "package/dist/cli.js",
   "package/dist/cli.js.map",
+  "package/dist/completion-application.d.ts",
+  "package/dist/completion-application.d.ts.map",
+  "package/dist/completion-application.js",
+  "package/dist/completion-application.js.map",
+  "package/dist/completion-port.d.ts",
+  "package/dist/completion-port.d.ts.map",
+  "package/dist/completion-port.js",
+  "package/dist/completion-port.js.map",
   "package/dist/domain.d.ts",
   "package/dist/domain.d.ts.map",
   "package/dist/domain.js",
@@ -339,6 +347,22 @@ const expectedEntries = [
   "package/dist/index.d.ts.map",
   "package/dist/index.js",
   "package/dist/index.js.map",
+  "package/dist/integration-port.d.ts",
+  "package/dist/integration-port.d.ts.map",
+  "package/dist/integration-port.js",
+  "package/dist/integration-port.js.map",
+  "package/dist/local-completion-backend.d.ts",
+  "package/dist/local-completion-backend.d.ts.map",
+  "package/dist/local-completion-backend.js",
+  "package/dist/local-completion-backend.js.map",
+  "package/dist/local-git-integration-backend.d.ts",
+  "package/dist/local-git-integration-backend.d.ts.map",
+  "package/dist/local-git-integration-backend.js",
+  "package/dist/local-git-integration-backend.js.map",
+  "package/dist/local-project-policy.d.ts",
+  "package/dist/local-project-policy.d.ts.map",
+  "package/dist/local-project-policy.js",
+  "package/dist/local-project-policy.js.map",
   "package/dist/manual-execution-backend.d.ts",
   "package/dist/manual-execution-backend.d.ts.map",
   "package/dist/manual-execution-backend.js",
@@ -423,6 +447,10 @@ const expectedEntries = [
   "package/dist/product-runtime.d.ts.map",
   "package/dist/product-runtime.js",
   "package/dist/product-runtime.js.map",
+  "package/dist/project-policy-port.d.ts",
+  "package/dist/project-policy-port.d.ts.map",
+  "package/dist/project-policy-port.js",
+  "package/dist/project-policy-port.js.map",
   "package/dist/project-registry.d.ts",
   "package/dist/project-registry.d.ts.map",
   "package/dist/project-registry.js",
@@ -443,7 +471,7 @@ const expectedEntries = [
   "package/package.json",
 ].sort();
 
-invariant(expectedEntries.length === 184, `packed expected inventory count drifted: ${expectedEntries.length}`);
+invariant(expectedEntries.length === 212, `packed expected inventory count drifted: ${expectedEntries.length}`);
 
 const packageManagerVersion = pnpm(["--version"], repoRoot).stdout.trim();
 invariant(packageManagerVersion === "11.19.0", `pnpm version drifted: ${packageManagerVersion}`);
@@ -761,10 +789,16 @@ void windowsGitBackend;
         trustedMilliseconds = Date.parse(issuedAt) + 4000;
         const workspaceUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
         if (!workspaceUpgrade.ok || workspaceUpgrade.value.epochRevision !== 4 ||
-            workspaceUpgrade.value.capabilityCount !== m.AUTHORIZATION_ACTIONS.length) {
+            workspaceUpgrade.value.capabilityCount !== m.WORKSPACE_STAGE_AUTHORIZATION_ACTIONS.length) {
           throw new Error("package workspace capability upgrade was rejected");
         }
         trustedMilliseconds = Date.parse(issuedAt) + 5000;
+        const completionIntegrationUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
+        if (!completionIntegrationUpgrade.ok || completionIntegrationUpgrade.value.epochRevision !== 5 ||
+            completionIntegrationUpgrade.value.capabilityCount !== m.AUTHORIZATION_ACTIONS.length) {
+          throw new Error("package completion/integration capability upgrade was rejected");
+        }
+        trustedMilliseconds = Date.parse(issuedAt) + 6000;
         let manualBackend = m.createManualExecutionBackend(store, { ingress: trusted });
         let product = m.createProductRuntime(store, trusted, manualBackend, manualBackend);
         const dispatched = product.dispatchRun({
@@ -799,7 +833,7 @@ void windowsGitBackend;
           throw new Error("package product inspection did not bind the dispatched execution");
         }
         const executionId = inspected.value.executionId;
-        trustedMilliseconds = Date.parse(issuedAt) + 6000;
+        trustedMilliseconds = Date.parse(issuedAt) + 7000;
         const reportCommand = {
           kind: "manual.outcome-report",
           ...publicCommon(executionId, "package-report"),
@@ -820,7 +854,7 @@ void windowsGitBackend;
         product = m.createProductRuntime(store, trusted, manualBackend, manualBackend);
         const reportReplay = product.recordManualOutcome(reportCommand);
         if (!reportReplay.ok || !reportReplay.value.replayed) throw new Error("package Manual restart replay was not stable");
-        trustedMilliseconds = Date.parse(issuedAt) + 7000;
+        trustedMilliseconds = Date.parse(issuedAt) + 8000;
         const completed = product.acceptManualCompletion({
           kind: "execution.accept-manual-completion",
           ...publicCommon(executionId, "package-completion"),
@@ -842,13 +876,17 @@ void windowsGitBackend;
           claim: inspected.value.fencingToken === 1 && inspected.value.taskRevision === 3,
           manual: inspected.value.lifecycle === "queued" && reported.value.lifecycle === "turn_succeeded" && completed.value.lifecycle === "completed",
           dispatcherExport: typeof m.createManualDispatcher === "function",
-          workspaceExport: m.WORKSPACE_CONTRACT_ID === "ato.workspace/v1" &&
+          workspaceExport: m.WORKSPACE_CONTRACT_ID === "ato.workspace/v2" &&
             typeof m.createWorkspaceApplicationService === "function" &&
             typeof m.parseWorkspaceBackendRequest === "function" &&
             typeof m.parseWorkspaceBackendResult === "function" &&
             m.WINDOWS_GIT_WORKSPACE_ADAPTER_ID === "windows-git-local" &&
             m.WINDOWS_GIT_WORKSPACE_ADAPTER_VERSION === "1.0.0" &&
-            typeof m.createWindowsGitWorkspaceBackend === "function",
+            typeof m.createWindowsGitWorkspaceBackend === "function" &&
+            typeof m.createPhase3ProductRuntime === "function" &&
+            typeof m.createLocalProjectPolicy === "function" &&
+            typeof m.createLocalCompletionBackend === "function" &&
+            typeof m.createLocalGitIntegrationBackend === "function",
           schema: m.currentSchemaVersion(),
           backup: verified.generationId === backup.generationId,
         }));

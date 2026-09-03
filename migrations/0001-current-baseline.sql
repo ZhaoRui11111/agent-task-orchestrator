@@ -48,6 +48,7 @@ CREATE TABLE tasks (
   supersedes_task_id TEXT,
   FOREIGN KEY (project_id) REFERENCES projects(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (parent_id) REFERENCES tasks(task_id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
+  FOREIGN KEY (completion_decision_id) REFERENCES completion_decisions(completion_decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
   FOREIGN KEY (supersedes_task_id) REFERENCES tasks(task_id) ON UPDATE RESTRICT ON DELETE RESTRICT DEFERRABLE INITIALLY DEFERRED,
   CHECK (parent_id IS NULL OR length(parent_id) > 0),
   CHECK (supersedes_task_id IS NULL OR length(supersedes_task_id) > 0),
@@ -142,6 +143,9 @@ CREATE TABLE application_requests (
     'dependency.add', 'dependency.remove', 'authorization.grant.list', 'runtime.status',
     'runtime.backup', 'runtime.restore', 'execution.claim', 'execution.claim.inspect',
     'execution.lease.renew', 'execution.lease.takeover',
+    'completion.gate.run', 'completion.gate.inspect', 'completion.gate.cancel', 'completion.accept',
+    'integration.reserve', 'integration.inspect', 'integration.lease.renew', 'integration.lease.takeover',
+    'integration.apply', 'integration.push', 'integration.recover', 'integration.release',
     'authorization.capability.renew', 'authorization.capability.upgrade'
   )),
   target_kind TEXT NOT NULL CHECK (target_kind IN ('runtime', 'project', 'task', 'grant', 'backup', 'execution')),
@@ -196,7 +200,7 @@ CREATE TABLE authorization_capability_epochs (
   epoch_revision INTEGER NOT NULL UNIQUE CHECK (epoch_revision > 0),
   actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
   runtime_root_key TEXT NOT NULL CHECK (length(runtime_root_key) > 0),
-  vocabulary_version INTEGER NOT NULL CHECK (vocabulary_version IN (1, 2, 3, 4, 5)),
+  vocabulary_version INTEGER NOT NULL CHECK (vocabulary_version IN (1, 2, 3, 4, 5, 6)),
   action_set_sha256 TEXT NOT NULL CHECK (length(action_set_sha256) = 64 AND action_set_sha256 NOT GLOB '*[^0-9A-F]*'),
   request_id TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL CHECK (length(created_at) > 0),
@@ -218,7 +222,10 @@ CREATE TABLE authorization_grants (
     'runtime.backup', 'runtime.restore', 'execution.claim', 'execution.claim.inspect',
     'execution.lease.renew', 'execution.lease.takeover',
     'execution.start', 'execution.inspect', 'execution.resume', 'execution.retry', 'execution.cancel', 'execution.completion.accept', 'dispatch.run',
-    'workspace.reserve', 'workspace.create', 'workspace.inspect', 'workspace.recover', 'workspace.cleanup'
+    'workspace.reserve', 'workspace.create', 'workspace.inspect', 'workspace.recover', 'workspace.cleanup',
+    'completion.gate.run', 'completion.gate.inspect', 'completion.gate.cancel', 'completion.accept',
+    'integration.reserve', 'integration.inspect', 'integration.lease.renew', 'integration.lease.takeover',
+    'integration.apply', 'integration.push', 'integration.recover', 'integration.release'
   )),
   scope_kind TEXT NOT NULL CHECK (scope_kind IN ('runtime', 'project')),
   scope_project_id TEXT,
@@ -271,6 +278,9 @@ CREATE TABLE authorization_decisions (
     'dependency.add', 'dependency.remove', 'authorization.grant.list', 'runtime.status',
     'runtime.backup', 'runtime.restore', 'execution.claim', 'execution.claim.inspect',
     'execution.lease.renew', 'execution.lease.takeover',
+    'completion.gate.run', 'completion.gate.inspect', 'completion.gate.cancel', 'completion.accept',
+    'integration.reserve', 'integration.inspect', 'integration.lease.renew', 'integration.lease.takeover',
+    'integration.apply', 'integration.push', 'integration.recover', 'integration.release',
     'authorization.capability.renew', 'authorization.capability.upgrade'
   )),
   result TEXT NOT NULL CHECK (result IN ('allow', 'deny')),
@@ -303,7 +313,11 @@ CREATE TABLE application_audit (
     'dependency.added', 'dependency.removed', 'policy.evaluated', 'authorization.denied',
     'capability.renewed', 'capability.upgraded', 'runtime.status.inspected',
     'backup.authorized', 'restore.authorized', 'execution.claimed',
-    'execution.claim.inspected', 'execution.lease.renewed', 'execution.lease.taken_over'
+    'execution.claim.inspected', 'execution.lease.renewed', 'execution.lease.taken_over',
+    'completion.gate.ran', 'completion.gate.inspected', 'completion.gate.cancelled', 'completion.accepted',
+    'integration.reserved', 'integration.inspected', 'integration.lease.renewed',
+    'integration.lease.taken_over', 'integration.applied', 'integration.pushed',
+    'integration.recovered', 'integration.released'
   )),
   result TEXT NOT NULL CHECK (result IN ('accepted', 'denied')),
   actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
@@ -331,7 +345,7 @@ CREATE TABLE application_lifecycle_authorizations (
   decision_id TEXT NOT NULL UNIQUE,
   audit_id TEXT NOT NULL UNIQUE,
   authorized_state_sha256 TEXT NOT NULL CHECK (length(authorized_state_sha256) = 64 AND authorized_state_sha256 NOT GLOB '*[^0-9A-F]*'),
-  state_digest_version INTEGER NOT NULL CHECK (state_digest_version = 1),
+  state_digest_version INTEGER NOT NULL CHECK (state_digest_version = 2),
   expected_request_count INTEGER NOT NULL CHECK (expected_request_count >= 1),
   expected_decision_count INTEGER NOT NULL CHECK (expected_decision_count >= 1),
   expected_audit_count INTEGER NOT NULL CHECK (expected_audit_count >= 1),
@@ -795,6 +809,21 @@ CREATE TABLE execution_finalizations (
   FOREIGN KEY (authorization_decision_id) REFERENCES execution_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT
 ) STRICT;
 
+CREATE TABLE completion_decisions (
+  completion_decision_id TEXT PRIMARY KEY NOT NULL CHECK (length(completion_decision_id) BETWEEN 1 AND 128),
+  kind TEXT NOT NULL CHECK (kind IN ('manual', 'policy_gated')),
+  task_id TEXT NOT NULL CHECK (length(task_id) > 0),
+  execution_id TEXT NOT NULL UNIQUE CHECK (length(execution_id) BETWEEN 1 AND 128),
+  attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+  fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+  pre_task_revision INTEGER NOT NULL CHECK (pre_task_revision > 0),
+  post_task_revision INTEGER NOT NULL CHECK (post_task_revision = pre_task_revision + 1),
+  execution_revision INTEGER NOT NULL CHECK (execution_revision > 0),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
 CREATE TABLE execution_terminal_states (
   execution_id TEXT PRIMARY KEY NOT NULL CHECK (length(execution_id) BETWEEN 1 AND 128),
   status TEXT NOT NULL CHECK (status IN ('completed', 'cancelled')),
@@ -812,7 +841,7 @@ CREATE TABLE execution_terminal_states (
   FOREIGN KEY (execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (verified_receipt_id) REFERENCES execution_verified_receipts(verified_receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (finalization_id) REFERENCES execution_finalizations(finalization_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
-  FOREIGN KEY (completion_decision_id) REFERENCES manual_completion_decisions(completion_decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+  FOREIGN KEY (completion_decision_id) REFERENCES completion_decisions(completion_decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT
 ) STRICT;
 
 CREATE TABLE manual_backend_turns (
@@ -905,6 +934,7 @@ CREATE TABLE manual_completion_decisions (
   audit_id TEXT NOT NULL UNIQUE,
   confirmation_id TEXT NOT NULL UNIQUE CHECK (length(confirmation_id) BETWEEN 1 AND 128),
   created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  FOREIGN KEY (completion_decision_id) REFERENCES completion_decisions(completion_decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (verified_receipt_id) REFERENCES execution_verified_receipts(verified_receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
@@ -913,6 +943,28 @@ CREATE TABLE manual_completion_decisions (
   FOREIGN KEY (decision_id) REFERENCES execution_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (audit_id) REFERENCES execution_operation_audit(audit_id) ON UPDATE RESTRICT ON DELETE RESTRICT
 ) STRICT;
+
+CREATE TRIGGER completion_decisions_no_update BEFORE UPDATE ON completion_decisions BEGIN
+  SELECT RAISE(ABORT, 'completion decisions are immutable');
+END;
+
+CREATE TRIGGER completion_decisions_no_delete BEFORE DELETE ON completion_decisions BEGIN
+  SELECT RAISE(ABORT, 'completion decisions are immutable');
+END;
+
+CREATE TRIGGER manual_completion_decisions_insert_guard
+BEFORE INSERT ON manual_completion_decisions
+WHEN NOT EXISTS (
+  SELECT 1 FROM completion_decisions AS parent
+  WHERE parent.completion_decision_id=NEW.completion_decision_id AND parent.kind='manual'
+    AND parent.task_id=NEW.task_id AND parent.execution_id=NEW.execution_id
+    AND parent.attempt_number=NEW.attempt_number AND parent.fencing_token=NEW.fencing_token
+    AND parent.pre_task_revision=NEW.pre_task_revision AND parent.post_task_revision=NEW.post_task_revision
+    AND parent.created_at=NEW.created_at
+)
+BEGIN
+  SELECT RAISE(ABORT, 'manual completion parent is absent or inconsistent');
+END;
 
 CREATE TRIGGER execution_attempts_update_guard
 BEFORE UPDATE ON execution_attempts
@@ -1580,6 +1632,464 @@ BEGIN
   SELECT RAISE(ABORT, 'dispatcher run summary is incomplete or inconsistent');
 END;
 
+CREATE TABLE project_policy_receipts (
+  receipt_id TEXT PRIMARY KEY NOT NULL CHECK (length(receipt_id) BETWEEN 1 AND 128),
+  policy_query_id TEXT NOT NULL UNIQUE CHECK (length(policy_query_id) BETWEEN 1 AND 128),
+  operation TEXT NOT NULL CHECK (operation IN ('evaluate_mutation', 'completion_requirements', 'evaluate_integration', 'evaluate_cleanup')),
+  preliminary_authorization_decision_id TEXT NOT NULL CHECK (length(preliminary_authorization_decision_id) BETWEEN 1 AND 128),
+  requested_action TEXT NOT NULL CHECK (length(requested_action) BETWEEN 1 AND 128),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  project_id TEXT NOT NULL CHECK (length(project_id) > 0),
+  project_resource_revision INTEGER NOT NULL CHECK (project_resource_revision > 0),
+  project_config_revision INTEGER NOT NULL CHECK (project_config_revision > 0),
+  project_root_key TEXT NOT NULL CHECK (length(project_root_key) BETWEEN 1 AND 128),
+  repository_identity TEXT NOT NULL CHECK (length(repository_identity) BETWEEN 1 AND 128),
+  subject_sha256 TEXT NOT NULL CHECK (length(subject_sha256) = 64 AND subject_sha256 NOT GLOB '*[^0-9A-F]*'),
+  policy_id TEXT NOT NULL CHECK (length(policy_id) BETWEEN 1 AND 128),
+  policy_key TEXT NOT NULL CHECK (length(policy_key) BETWEEN 1 AND 128),
+  policy_config_revision INTEGER NOT NULL CHECK (policy_config_revision > 0),
+  adapter_id TEXT NOT NULL CHECK (length(adapter_id) BETWEEN 1 AND 128),
+  adapter_version TEXT NOT NULL CHECK (length(adapter_version) BETWEEN 1 AND 128),
+  decision TEXT NOT NULL CHECK (decision IN ('allow', 'deny', 'defer')),
+  reason_code TEXT NOT NULL CHECK (length(reason_code) BETWEEN 1 AND 64),
+  facts_json TEXT NOT NULL CHECK (length(facts_json) BETWEEN 2 AND 16384),
+  facts_sha256 TEXT NOT NULL CHECK (length(facts_sha256) = 64 AND facts_sha256 NOT GLOB '*[^0-9A-F]*'),
+  receipt_sha256 TEXT NOT NULL UNIQUE CHECK (length(receipt_sha256) = 64 AND receipt_sha256 NOT GLOB '*[^0-9A-F]*'),
+  valid_until TEXT,
+  evidence_reference TEXT CHECK (evidence_reference IS NULL OR length(evidence_reference) BETWEEN 1 AND 128),
+  observed_at TEXT NOT NULL CHECK (length(observed_at) > 0),
+  CHECK ((decision='allow' AND valid_until IS NOT NULL) OR decision<>'allow'),
+  FOREIGN KEY (preliminary_authorization_decision_id) REFERENCES authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE completion_gate_requests (
+  request_id TEXT PRIMARY KEY NOT NULL CHECK (length(request_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL UNIQUE CHECK (length(operation_id) BETWEEN 1 AND 128),
+  idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+  operation_kind TEXT NOT NULL CHECK (operation_kind IN ('run_gate', 'inspect_gate', 'cancel_gate')),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  correlation_id TEXT NOT NULL CHECK (length(correlation_id) BETWEEN 1 AND 128),
+  causation_id TEXT CHECK (causation_id IS NULL OR length(causation_id) BETWEEN 1 AND 128),
+  project_id TEXT NOT NULL CHECK (length(project_id) > 0),
+  project_resource_revision INTEGER NOT NULL CHECK (project_resource_revision > 0),
+  project_config_revision INTEGER NOT NULL CHECK (project_config_revision > 0),
+  project_root_key TEXT NOT NULL CHECK (length(project_root_key) BETWEEN 1 AND 128),
+  repository_identity TEXT NOT NULL CHECK (length(repository_identity) BETWEEN 1 AND 128),
+  task_id TEXT NOT NULL CHECK (length(task_id) > 0),
+  task_revision INTEGER NOT NULL CHECK (task_revision > 0),
+  execution_id TEXT NOT NULL CHECK (length(execution_id) BETWEEN 1 AND 128),
+  execution_revision INTEGER NOT NULL CHECK (execution_revision > 0),
+  attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+  fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+  workspace_id TEXT NOT NULL CHECK (length(workspace_id) BETWEEN 1 AND 128),
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  workspace_revision INTEGER NOT NULL CHECK (workspace_revision > 0),
+  workspace_root_key TEXT NOT NULL CHECK (length(workspace_root_key) BETWEEN 1 AND 128),
+  ownership_binding_sha256 TEXT NOT NULL CHECK (length(ownership_binding_sha256) = 64 AND ownership_binding_sha256 NOT GLOB '*[^0-9A-F]*'),
+  head_object_id TEXT NOT NULL CHECK (length(head_object_id) = 40 AND head_object_id NOT GLOB '*[^0-9a-f]*'),
+  policy_receipt_id TEXT NOT NULL CHECK (length(policy_receipt_id) BETWEEN 1 AND 128),
+  policy_id TEXT NOT NULL CHECK (length(policy_id) BETWEEN 1 AND 128),
+  policy_config_revision INTEGER NOT NULL CHECK (policy_config_revision > 0),
+  gate_id TEXT NOT NULL CHECK (length(gate_id) BETWEEN 1 AND 128),
+  gate_version TEXT NOT NULL CHECK (length(gate_version) BETWEEN 1 AND 128),
+  command_key TEXT NOT NULL CHECK (length(command_key) BETWEEN 1 AND 128),
+  command_identity_sha256 TEXT NOT NULL CHECK (length(command_identity_sha256) = 64 AND command_identity_sha256 NOT GLOB '*[^0-9A-F]*'),
+  completion_evidence_root_key TEXT NOT NULL CHECK (length(completion_evidence_root_key) BETWEEN 1 AND 128),
+  tool_environment_sha256 TEXT NOT NULL CHECK (length(tool_environment_sha256) = 64 AND tool_environment_sha256 NOT GLOB '*[^0-9A-F]*'),
+  contract_id TEXT NOT NULL CHECK (contract_id='ato.completion/v1'),
+  adapter_id TEXT NOT NULL CHECK (length(adapter_id) BETWEEN 1 AND 128),
+  adapter_version TEXT NOT NULL CHECK (length(adapter_version) BETWEEN 1 AND 128),
+  timeout_ms INTEGER CHECK (timeout_ms IS NULL OR timeout_ms BETWEEN 1 AND 3600000),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  CHECK ((operation_kind='run_gate' AND timeout_ms IS NOT NULL) OR (operation_kind<>'run_gate' AND timeout_ms IS NULL)),
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, generation) REFERENCES workspace_generations(workspace_id, generation) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (policy_receipt_id) REFERENCES project_policy_receipts(receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE completion_gate_authorization_decisions (
+  decision_id TEXT PRIMARY KEY NOT NULL CHECK (length(decision_id) BETWEEN 1 AND 128),
+  request_id TEXT NOT NULL CHECK (length(request_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 128),
+  binding_revision INTEGER NOT NULL CHECK (binding_revision > 0),
+  phase TEXT NOT NULL CHECK (phase IN ('prepare', 'act', 'finalize')),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  action TEXT NOT NULL CHECK (action IN ('completion.gate.run', 'completion.gate.inspect', 'completion.gate.cancel')),
+  result TEXT NOT NULL CHECK (result IN ('allow', 'deny')),
+  reason TEXT NOT NULL CHECK (reason IN ('allowed', 'actor_mismatch', 'action_mismatch', 'scope_mismatch', 'scope_revision_stale', 'grant_expired', 'grant_not_yet_valid', 'grant_revoked', 'grant_missing', 'policy_denied', 'confirmation_required')),
+  policy_result TEXT NOT NULL CHECK (policy_result IN ('allow', 'deny', 'read_not_applicable')),
+  grant_id TEXT,
+  grant_revision INTEGER,
+  confirmation_id TEXT,
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  UNIQUE(operation_id, binding_revision),
+  CHECK ((result='allow' AND reason='allowed' AND grant_id IS NOT NULL AND grant_revision > 0) OR (result='deny' AND reason<>'allowed')),
+  CHECK ((grant_id IS NULL AND grant_revision IS NULL) OR (length(grant_id) > 0 AND grant_revision > 0)),
+  CHECK (confirmation_id IS NULL OR length(confirmation_id) BETWEEN 1 AND 128),
+  FOREIGN KEY (request_id) REFERENCES completion_gate_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (grant_id) REFERENCES authorization_grants(grant_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE completion_gate_intents (
+  intent_id TEXT PRIMARY KEY NOT NULL CHECK (length(intent_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL UNIQUE CHECK (length(operation_id) BETWEEN 1 AND 128),
+  idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+  request_id TEXT NOT NULL UNIQUE CHECK (length(request_id) BETWEEN 1 AND 128),
+  operation_kind TEXT NOT NULL CHECK (operation_kind IN ('run_gate', 'inspect_gate', 'cancel_gate')),
+  state TEXT NOT NULL CHECK (state IN ('pending', 'executing', 'observed', 'verified', 'finalized', 'ambiguous', 'failed')),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  current_authorization_decision_id TEXT NOT NULL UNIQUE CHECK (length(current_authorization_decision_id) BETWEEN 1 AND 128),
+  authorization_binding_revision INTEGER NOT NULL CHECK (authorization_binding_revision > 0),
+  gate_operation_id TEXT NOT NULL CHECK (length(gate_operation_id) BETWEEN 1 AND 128),
+  last_observation_number INTEGER NOT NULL CHECK (last_observation_number >= 0),
+  last_failure_category TEXT CHECK (last_failure_category IS NULL OR length(last_failure_category) BETWEEN 1 AND 64),
+  last_failure_code TEXT CHECK (last_failure_code IS NULL OR length(last_failure_code) BETWEEN 1 AND 64),
+  last_failure_retryable INTEGER CHECK (last_failure_retryable IS NULL OR last_failure_retryable IN (0,1)),
+  last_failure_ambiguous INTEGER CHECK (last_failure_ambiguous IS NULL OR last_failure_ambiguous IN (0,1)),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+  CHECK ((last_failure_category IS NULL AND last_failure_code IS NULL AND last_failure_retryable IS NULL AND last_failure_ambiguous IS NULL)
+    OR (last_failure_category IS NOT NULL AND last_failure_code IS NOT NULL AND last_failure_retryable IN (0,1) AND last_failure_ambiguous IN (0,1))),
+  FOREIGN KEY (request_id) REFERENCES completion_gate_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (current_authorization_decision_id) REFERENCES completion_gate_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE completion_gate_observations (
+  observation_id TEXT PRIMARY KEY NOT NULL CHECK (length(observation_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL CHECK (length(intent_id) BETWEEN 1 AND 128),
+  observation_number INTEGER NOT NULL CHECK (observation_number > 0),
+  adapter_receipt_id TEXT NOT NULL UNIQUE CHECK (length(adapter_receipt_id) BETWEEN 1 AND 128),
+  receipt_sha256 TEXT NOT NULL CHECK (length(receipt_sha256)=64 AND receipt_sha256 NOT GLOB '*[^0-9A-F]*'),
+  authorization_decision_id TEXT NOT NULL CHECK (length(authorization_decision_id) BETWEEN 1 AND 128),
+  gate_operation_id TEXT NOT NULL CHECK (length(gate_operation_id) BETWEEN 1 AND 128),
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('running', 'completed', 'cancel_requested', 'cancelled', 'unknown')),
+  verdict TEXT NOT NULL CHECK (verdict IN ('pass', 'fail', 'indeterminate')),
+  code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
+  started_at TEXT,
+  ended_at TEXT,
+  valid_until TEXT,
+  evidence_reference TEXT NOT NULL CHECK (length(evidence_reference) BETWEEN 1 AND 128),
+  observed_at TEXT NOT NULL CHECK (length(observed_at) > 0),
+  UNIQUE(intent_id, observation_number),
+  CHECK ((lifecycle='completed' AND started_at IS NOT NULL AND ended_at IS NOT NULL AND ended_at>=started_at)
+    OR (lifecycle<>'completed' AND verdict='indeterminate' AND valid_until IS NULL)),
+  CHECK (verdict='pass' OR valid_until IS NULL),
+  FOREIGN KEY (intent_id) REFERENCES completion_gate_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (authorization_decision_id) REFERENCES completion_gate_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE completion_gate_verified_receipts (
+  verified_receipt_id TEXT PRIMARY KEY NOT NULL CHECK (length(verified_receipt_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL UNIQUE CHECK (length(intent_id) BETWEEN 1 AND 128),
+  observation_id TEXT NOT NULL UNIQUE CHECK (length(observation_id) BETWEEN 1 AND 128),
+  observation_number INTEGER NOT NULL CHECK (observation_number > 0),
+  adapter_receipt_id TEXT NOT NULL UNIQUE CHECK (length(adapter_receipt_id) BETWEEN 1 AND 128),
+  receipt_sha256 TEXT NOT NULL CHECK (length(receipt_sha256)=64 AND receipt_sha256 NOT GLOB '*[^0-9A-F]*'),
+  gate_operation_id TEXT NOT NULL CHECK (length(gate_operation_id) BETWEEN 1 AND 128),
+  verdict TEXT NOT NULL CHECK (verdict IN ('pass', 'fail')),
+  valid_until TEXT,
+  verified_at TEXT NOT NULL CHECK (length(verified_at) > 0),
+  CHECK (verdict='pass' OR valid_until IS NULL),
+  FOREIGN KEY (intent_id) REFERENCES completion_gate_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (observation_id) REFERENCES completion_gate_observations(observation_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE completion_gate_finalizations (
+  finalization_id TEXT PRIMARY KEY NOT NULL CHECK (length(finalization_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL UNIQUE CHECK (length(intent_id) BETWEEN 1 AND 128),
+  verified_receipt_id TEXT UNIQUE,
+  authorization_decision_id TEXT NOT NULL CHECK (length(authorization_decision_id) BETWEEN 1 AND 128),
+  outcome TEXT NOT NULL CHECK (outcome IN ('accepted', 'refused', 'ambiguous', 'failed')),
+  code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
+  finalized_at TEXT NOT NULL CHECK (length(finalized_at) > 0),
+  CHECK ((outcome IN ('accepted','refused') AND verified_receipt_id IS NOT NULL) OR (outcome IN ('ambiguous','failed') AND verified_receipt_id IS NULL)),
+  FOREIGN KEY (intent_id) REFERENCES completion_gate_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (verified_receipt_id) REFERENCES completion_gate_verified_receipts(verified_receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (authorization_decision_id) REFERENCES completion_gate_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE completion_gate_events (
+  event_id TEXT PRIMARY KEY NOT NULL CHECK (length(event_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 128),
+  intent_id TEXT,
+  event_kind TEXT NOT NULL CHECK (event_kind IN ('completion.gate.prepared','completion.gate.denied','completion.gate.executing','completion.gate.observed','completion.gate.verified','completion.gate.finalized','completion.gate.reconciled')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('accepted','denied','refused','ambiguous','failed')),
+  reason_code TEXT NOT NULL CHECK (length(reason_code) BETWEEN 1 AND 64),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  correlation_id TEXT NOT NULL CHECK (length(correlation_id) BETWEEN 1 AND 128),
+  observation_number INTEGER CHECK (observation_number IS NULL OR observation_number > 0),
+  evidence_reference TEXT CHECK (evidence_reference IS NULL OR length(evidence_reference) BETWEEN 1 AND 128),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  FOREIGN KEY (intent_id) REFERENCES completion_gate_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE policy_gated_completion_decisions (
+  completion_decision_id TEXT PRIMARY KEY NOT NULL CHECK (length(completion_decision_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL UNIQUE CHECK (length(operation_id) BETWEEN 1 AND 128),
+  idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+  execution_success_verified_receipt_id TEXT NOT NULL CHECK (length(execution_success_verified_receipt_id) BETWEEN 1 AND 128),
+  execution_success_finalization_id TEXT NOT NULL CHECK (length(execution_success_finalization_id) BETWEEN 1 AND 128),
+  policy_receipt_id TEXT NOT NULL CHECK (length(policy_receipt_id) BETWEEN 1 AND 128),
+  gate_set_sha256 TEXT NOT NULL CHECK (length(gate_set_sha256)=64 AND gate_set_sha256 NOT GLOB '*[^0-9A-F]*'),
+  workspace_evidence_sha256 TEXT NOT NULL CHECK (length(workspace_evidence_sha256)=64 AND workspace_evidence_sha256 NOT GLOB '*[^0-9A-F]*'),
+  head_object_id TEXT NOT NULL CHECK (length(head_object_id)=40 AND head_object_id NOT GLOB '*[^0-9a-f]*'),
+  integration_evidence_sha256 TEXT NOT NULL CHECK (length(integration_evidence_sha256)=64 AND integration_evidence_sha256 NOT GLOB '*[^0-9A-F]*'),
+  preservation_state_sha256 TEXT NOT NULL CHECK (length(preservation_state_sha256)=64 AND preservation_state_sha256 NOT GLOB '*[^0-9A-F]*'),
+  request_id TEXT NOT NULL UNIQUE CHECK (length(request_id) BETWEEN 1 AND 128),
+  authorization_decision_id TEXT NOT NULL UNIQUE CHECK (length(authorization_decision_id) BETWEEN 1 AND 128),
+  audit_id TEXT NOT NULL UNIQUE CHECK (length(audit_id) BETWEEN 1 AND 128),
+  confirmation_id TEXT NOT NULL UNIQUE CHECK (length(confirmation_id) BETWEEN 1 AND 128),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  FOREIGN KEY (completion_decision_id) REFERENCES completion_decisions(completion_decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (execution_success_verified_receipt_id) REFERENCES execution_verified_receipts(verified_receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (execution_success_finalization_id) REFERENCES execution_finalizations(finalization_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (policy_receipt_id) REFERENCES project_policy_receipts(receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (request_id) REFERENCES application_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (authorization_decision_id) REFERENCES authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (audit_id) REFERENCES application_audit(audit_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE integration_target_sequences (
+  project_id TEXT NOT NULL CHECK (length(project_id) > 0),
+  repository_identity TEXT NOT NULL CHECK (length(repository_identity) BETWEEN 1 AND 128),
+  target_reference TEXT NOT NULL CHECK (length(target_reference) BETWEEN 1 AND 255),
+  last_fencing_token INTEGER NOT NULL CHECK (last_fencing_token > 0),
+  PRIMARY KEY (project_id, repository_identity, target_reference),
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE integration_reservations (
+  reservation_id TEXT PRIMARY KEY NOT NULL CHECK (length(reservation_id) BETWEEN 1 AND 128),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  status TEXT NOT NULL CHECK (status IN ('active','ambiguous','released','expired')),
+  project_id TEXT NOT NULL CHECK (length(project_id) > 0),
+  project_resource_revision INTEGER NOT NULL CHECK (project_resource_revision > 0),
+  project_config_revision INTEGER NOT NULL CHECK (project_config_revision > 0),
+  project_root_key TEXT NOT NULL CHECK (length(project_root_key) BETWEEN 1 AND 128),
+  repository_identity TEXT NOT NULL CHECK (length(repository_identity) BETWEEN 1 AND 128),
+  object_format TEXT NOT NULL CHECK (object_format='sha1'),
+  target_reference TEXT NOT NULL CHECK (length(target_reference) BETWEEN 1 AND 255),
+  expected_target_object_id TEXT NOT NULL CHECK (length(expected_target_object_id)=40 AND expected_target_object_id NOT GLOB '*[^0-9a-f]*'),
+  source_workspace_id TEXT NOT NULL CHECK (length(source_workspace_id) BETWEEN 1 AND 128),
+  source_generation INTEGER NOT NULL CHECK (source_generation > 0),
+  source_workspace_revision INTEGER NOT NULL CHECK (source_workspace_revision > 0),
+  source_workspace_root_key TEXT NOT NULL CHECK (length(source_workspace_root_key) BETWEEN 1 AND 128),
+  source_ownership_binding_sha256 TEXT NOT NULL CHECK (length(source_ownership_binding_sha256)=64 AND source_ownership_binding_sha256 NOT GLOB '*[^0-9A-F]*'),
+  source_head_object_id TEXT NOT NULL CHECK (length(source_head_object_id)=40 AND source_head_object_id NOT GLOB '*[^0-9a-f]*'),
+  owner_execution_id TEXT NOT NULL CHECK (length(owner_execution_id) BETWEEN 1 AND 128),
+  owner_operation_id TEXT NOT NULL CHECK (length(owner_operation_id) BETWEEN 1 AND 128),
+  lease_owner_id TEXT NOT NULL CHECK (length(lease_owner_id) BETWEEN 1 AND 128),
+  lease_revision INTEGER NOT NULL CHECK (lease_revision > 0),
+  fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+  expires_at TEXT NOT NULL CHECK (length(expires_at) > 0),
+  policy_receipt_id TEXT NOT NULL CHECK (length(policy_receipt_id) BETWEEN 1 AND 128),
+  policy_config_revision INTEGER NOT NULL CHECK (policy_config_revision > 0),
+  destination_identity TEXT NOT NULL CHECK (length(destination_identity) BETWEEN 1 AND 128),
+  destination_reference TEXT NOT NULL CHECK (length(destination_reference) BETWEEN 1 AND 255),
+  expected_remote_head TEXT CHECK (expected_remote_head IS NULL OR (length(expected_remote_head)=40 AND expected_remote_head NOT GLOB '*[^0-9a-f]*')),
+  current_evidence_sha256 TEXT CHECK (current_evidence_sha256 IS NULL OR (length(current_evidence_sha256)=64 AND current_evidence_sha256 NOT GLOB '*[^0-9A-F]*')),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+  CHECK (expected_target_object_id<>source_head_object_id),
+  FOREIGN KEY (project_id, repository_identity, target_reference) REFERENCES integration_target_sequences(project_id, repository_identity, target_reference) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (source_workspace_id, source_generation) REFERENCES workspace_generations(workspace_id, generation) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (owner_execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (policy_receipt_id) REFERENCES project_policy_receipts(receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE UNIQUE INDEX integration_reservations_one_current_target
+  ON integration_reservations(project_id, repository_identity, target_reference)
+  WHERE status IN ('active','ambiguous');
+
+CREATE TABLE integration_operation_requests (
+  request_id TEXT PRIMARY KEY NOT NULL CHECK (length(request_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL UNIQUE CHECK (length(operation_id) BETWEEN 1 AND 128),
+  idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+  operation_kind TEXT NOT NULL CHECK (operation_kind IN ('apply','push')),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  correlation_id TEXT NOT NULL CHECK (length(correlation_id) BETWEEN 1 AND 128),
+  causation_id TEXT CHECK (causation_id IS NULL OR length(causation_id) BETWEEN 1 AND 128),
+  reservation_id TEXT NOT NULL CHECK (length(reservation_id) BETWEEN 1 AND 128),
+  expected_reservation_revision INTEGER NOT NULL CHECK (expected_reservation_revision > 0),
+  expected_lease_revision INTEGER NOT NULL CHECK (expected_lease_revision > 0),
+  expected_fencing_token INTEGER NOT NULL CHECK (expected_fencing_token > 0),
+  contract_id TEXT NOT NULL CHECK (contract_id='ato.integration/v1'),
+  adapter_id TEXT NOT NULL CHECK (length(adapter_id) BETWEEN 1 AND 128),
+  adapter_version TEXT NOT NULL CHECK (length(adapter_version) BETWEEN 1 AND 128),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  FOREIGN KEY (reservation_id) REFERENCES integration_reservations(reservation_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE integration_authorization_decisions (
+  decision_id TEXT PRIMARY KEY NOT NULL CHECK (length(decision_id) BETWEEN 1 AND 128),
+  request_id TEXT NOT NULL CHECK (length(request_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 128),
+  binding_revision INTEGER NOT NULL CHECK (binding_revision > 0),
+  phase TEXT NOT NULL CHECK (phase IN ('prepare','act','finalize')),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  action TEXT NOT NULL CHECK (action IN ('integration.apply','integration.push')),
+  result TEXT NOT NULL CHECK (result IN ('allow','deny')),
+  reason TEXT NOT NULL CHECK (reason IN ('allowed', 'actor_mismatch', 'action_mismatch', 'scope_mismatch', 'scope_revision_stale', 'grant_expired', 'grant_not_yet_valid', 'grant_revoked', 'grant_missing', 'policy_denied', 'confirmation_required')),
+  policy_result TEXT NOT NULL CHECK (policy_result IN ('allow','deny','read_not_applicable')),
+  grant_id TEXT,
+  grant_revision INTEGER,
+  confirmation_id TEXT,
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  UNIQUE(operation_id,binding_revision),
+  CHECK ((result='allow' AND reason='allowed' AND grant_id IS NOT NULL AND grant_revision>0) OR (result='deny' AND reason<>'allowed')),
+  CHECK ((grant_id IS NULL AND grant_revision IS NULL) OR (length(grant_id)>0 AND grant_revision>0)),
+  CHECK (confirmation_id IS NULL OR length(confirmation_id) BETWEEN 1 AND 128),
+  FOREIGN KEY (request_id) REFERENCES integration_operation_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (grant_id) REFERENCES authorization_grants(grant_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE integration_intents (
+  intent_id TEXT PRIMARY KEY NOT NULL CHECK (length(intent_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL UNIQUE CHECK (length(operation_id) BETWEEN 1 AND 128),
+  idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+  request_id TEXT NOT NULL UNIQUE CHECK (length(request_id) BETWEEN 1 AND 128),
+  reservation_id TEXT NOT NULL CHECK (length(reservation_id) BETWEEN 1 AND 128),
+  reservation_fencing_token INTEGER NOT NULL CHECK (reservation_fencing_token > 0),
+  operation_kind TEXT NOT NULL CHECK (operation_kind IN ('apply','push')),
+  state TEXT NOT NULL CHECK (state IN ('pending','executing','observed','verified','finalized','ambiguous','failed')),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  current_authorization_decision_id TEXT NOT NULL UNIQUE CHECK (length(current_authorization_decision_id) BETWEEN 1 AND 128),
+  authorization_binding_revision INTEGER NOT NULL CHECK (authorization_binding_revision > 0),
+  last_observation_number INTEGER NOT NULL CHECK (last_observation_number >= 0),
+  recovery_result TEXT CHECK (recovery_result IS NULL OR recovery_result IN ('recovered_no_effect','recovered_local_applied','recovered_pushed','recovered_inconsistent')),
+  last_failure_category TEXT CHECK (last_failure_category IS NULL OR length(last_failure_category) BETWEEN 1 AND 64),
+  last_failure_code TEXT CHECK (last_failure_code IS NULL OR length(last_failure_code) BETWEEN 1 AND 64),
+  last_failure_retryable INTEGER CHECK (last_failure_retryable IS NULL OR last_failure_retryable IN (0,1)),
+  last_failure_ambiguous INTEGER CHECK (last_failure_ambiguous IS NULL OR last_failure_ambiguous IN (0,1)),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+  CHECK ((last_failure_category IS NULL AND last_failure_code IS NULL AND last_failure_retryable IS NULL AND last_failure_ambiguous IS NULL)
+    OR (last_failure_category IS NOT NULL AND last_failure_code IS NOT NULL AND last_failure_retryable IN (0,1) AND last_failure_ambiguous IN (0,1))),
+  CHECK ((state='finalized' AND recovery_result IS NULL) OR state<>'finalized' OR recovery_result IS NOT NULL),
+  FOREIGN KEY (request_id) REFERENCES integration_operation_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (reservation_id) REFERENCES integration_reservations(reservation_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TRIGGER integration_intent_authorization_insert_guard
+BEFORE INSERT ON integration_intents
+WHEN NOT EXISTS (
+  SELECT 1 FROM integration_authorization_decisions
+  WHERE decision_id=NEW.current_authorization_decision_id
+) AND NOT EXISTS (
+  SELECT 1 FROM authorization_decisions
+  WHERE decision_id=NEW.current_authorization_decision_id AND action='integration.recover'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'integration intent authorization decision absent');
+END;
+
+CREATE TRIGGER integration_intent_authorization_update_guard
+BEFORE UPDATE OF current_authorization_decision_id ON integration_intents
+WHEN NOT EXISTS (
+  SELECT 1 FROM integration_authorization_decisions
+  WHERE decision_id=NEW.current_authorization_decision_id
+) AND NOT EXISTS (
+  SELECT 1 FROM authorization_decisions
+  WHERE decision_id=NEW.current_authorization_decision_id AND action='integration.recover'
+)
+BEGIN
+  SELECT RAISE(ABORT, 'integration intent authorization decision absent');
+END;
+
+CREATE TABLE integration_observations (
+  observation_id TEXT PRIMARY KEY NOT NULL CHECK (length(observation_id) BETWEEN 1 AND 128),
+  reservation_id TEXT NOT NULL CHECK (length(reservation_id) BETWEEN 1 AND 128),
+  intent_id TEXT CHECK (intent_id IS NULL OR length(intent_id) BETWEEN 1 AND 128),
+  observation_number INTEGER NOT NULL CHECK (observation_number > 0),
+  operation TEXT NOT NULL CHECK (operation IN ('inspect','apply','push')),
+  adapter_receipt_id TEXT NOT NULL UNIQUE CHECK (length(adapter_receipt_id) BETWEEN 1 AND 128),
+  receipt_sha256 TEXT NOT NULL CHECK (length(receipt_sha256)=64 AND receipt_sha256 NOT GLOB '*[^0-9A-F]*'),
+  authorization_decision_id TEXT NOT NULL CHECK (length(authorization_decision_id) BETWEEN 1 AND 128),
+  local_before_object_id TEXT CHECK (local_before_object_id IS NULL OR (length(local_before_object_id)=40 AND local_before_object_id NOT GLOB '*[^0-9a-f]*')),
+  local_after_object_id TEXT CHECK (local_after_object_id IS NULL OR (length(local_after_object_id)=40 AND local_after_object_id NOT GLOB '*[^0-9a-f]*')),
+  remote_before_object_id TEXT CHECK (remote_before_object_id IS NULL OR (length(remote_before_object_id)=40 AND remote_before_object_id NOT GLOB '*[^0-9a-f]*')),
+  remote_after_object_id TEXT CHECK (remote_after_object_id IS NULL OR (length(remote_after_object_id)=40 AND remote_after_object_id NOT GLOB '*[^0-9a-f]*')),
+  local_state TEXT NOT NULL CHECK (local_state IN ('unchanged','fast_forwarded','already_at_source','foreign','unknown')),
+  remote_state TEXT NOT NULL CHECK (remote_state IN ('not_requested','absent','unchanged','pushed','already_at_source','rejected','foreign','unknown')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('succeeded','refused','ambiguous')),
+  code TEXT NOT NULL CHECK (code IN ('inspected_unchanged','inspected_local_applied','inspected_pushed','inspected_foreign','inspected_ambiguous','applied','already_applied','apply_refused','apply_ambiguous','pushed','already_pushed','push_rejected','push_ambiguous')),
+  evidence_reference TEXT NOT NULL CHECK (length(evidence_reference) BETWEEN 1 AND 128),
+  observed_at TEXT NOT NULL CHECK (length(observed_at) > 0),
+  UNIQUE(reservation_id,observation_number),
+  FOREIGN KEY (reservation_id) REFERENCES integration_reservations(reservation_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (intent_id) REFERENCES integration_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE integration_verified_receipts (
+  verified_receipt_id TEXT PRIMARY KEY NOT NULL CHECK (length(verified_receipt_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL UNIQUE CHECK (length(intent_id) BETWEEN 1 AND 128),
+  observation_id TEXT NOT NULL UNIQUE CHECK (length(observation_id) BETWEEN 1 AND 128),
+  observation_number INTEGER NOT NULL CHECK (observation_number > 0),
+  adapter_receipt_id TEXT NOT NULL UNIQUE CHECK (length(adapter_receipt_id) BETWEEN 1 AND 128),
+  receipt_sha256 TEXT NOT NULL CHECK (length(receipt_sha256)=64 AND receipt_sha256 NOT GLOB '*[^0-9A-F]*'),
+  outcome TEXT NOT NULL CHECK (outcome IN ('succeeded','refused')),
+  code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
+  verified_at TEXT NOT NULL CHECK (length(verified_at) > 0),
+  FOREIGN KEY (intent_id) REFERENCES integration_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (observation_id) REFERENCES integration_observations(observation_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE integration_finalizations (
+  finalization_id TEXT PRIMARY KEY NOT NULL CHECK (length(finalization_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL UNIQUE CHECK (length(intent_id) BETWEEN 1 AND 128),
+  verified_receipt_id TEXT UNIQUE,
+  authorization_decision_id TEXT NOT NULL CHECK (length(authorization_decision_id) BETWEEN 1 AND 128),
+  outcome TEXT NOT NULL CHECK (outcome IN ('succeeded','refused','ambiguous','failed')),
+  code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
+  recovery_result TEXT CHECK (recovery_result IS NULL OR recovery_result IN ('recovered_no_effect','recovered_local_applied','recovered_pushed','recovered_inconsistent')),
+  finalized_at TEXT NOT NULL CHECK (length(finalized_at) > 0),
+  CHECK ((outcome IN ('succeeded','refused') AND verified_receipt_id IS NOT NULL) OR (outcome IN ('ambiguous','failed') AND verified_receipt_id IS NULL)),
+  FOREIGN KEY (intent_id) REFERENCES integration_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (verified_receipt_id) REFERENCES integration_verified_receipts(verified_receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE integration_events (
+  event_id TEXT PRIMARY KEY NOT NULL CHECK (length(event_id) BETWEEN 1 AND 128),
+  reservation_id TEXT NOT NULL CHECK (length(reservation_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 128),
+  intent_id TEXT,
+  event_kind TEXT NOT NULL CHECK (event_kind IN ('integration.reserved','integration.renewed','integration.taken_over','integration.released','integration.expired','integration.ambiguous','integration.operation.prepared','integration.operation.denied','integration.operation.executing','integration.operation.observed','integration.operation.verified','integration.operation.finalized','integration.operation.reconciled')),
+  outcome TEXT NOT NULL CHECK (outcome IN ('accepted','denied','refused','ambiguous','failed')),
+  reason_code TEXT NOT NULL CHECK (length(reason_code) BETWEEN 1 AND 64),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  correlation_id TEXT NOT NULL CHECK (length(correlation_id) BETWEEN 1 AND 128),
+  observation_number INTEGER CHECK (observation_number IS NULL OR observation_number > 0),
+  evidence_reference TEXT CHECK (evidence_reference IS NULL OR length(evidence_reference) BETWEEN 1 AND 128),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  FOREIGN KEY (reservation_id) REFERENCES integration_reservations(reservation_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (intent_id) REFERENCES integration_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE workspace_cleanup_attestations (
+  attestation_id TEXT PRIMARY KEY NOT NULL CHECK (length(attestation_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL UNIQUE CHECK (length(operation_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL UNIQUE CHECK (length(intent_id) BETWEEN 1 AND 128),
+  project_id TEXT NOT NULL CHECK (length(project_id) > 0),
+  task_id TEXT NOT NULL CHECK (length(task_id) > 0),
+  execution_id TEXT NOT NULL CHECK (length(execution_id) BETWEEN 1 AND 128),
+  workspace_id TEXT NOT NULL CHECK (length(workspace_id) BETWEEN 1 AND 128),
+  generation INTEGER NOT NULL CHECK (generation > 0),
+  attestation_json TEXT NOT NULL CHECK (length(attestation_json) BETWEEN 2 AND 16384),
+  attestation_sha256 TEXT NOT NULL UNIQUE CHECK (length(attestation_sha256)=64 AND attestation_sha256 NOT GLOB '*[^0-9A-F]*'),
+  quiescence_sha256 TEXT NOT NULL CHECK (length(quiescence_sha256)=64 AND quiescence_sha256 NOT GLOB '*[^0-9A-F]*'),
+  issued_at TEXT NOT NULL CHECK (length(issued_at) > 0),
+  valid_until TEXT NOT NULL CHECK (length(valid_until) > 0 AND valid_until>issued_at),
+  FOREIGN KEY (intent_id) REFERENCES workspace_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id,generation) REFERENCES workspace_generations(workspace_id,generation) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
 CREATE TABLE workspace_generations (
   workspace_id TEXT NOT NULL CHECK (length(workspace_id) BETWEEN 1 AND 128),
   generation INTEGER NOT NULL CHECK (generation > 0),
@@ -1607,7 +2117,7 @@ CREATE TABLE workspace_generations (
   predecessor_generation INTEGER,
   predecessor_revision INTEGER,
   base_reference TEXT NOT NULL CHECK (length(base_reference) BETWEEN 1 AND 256),
-  contract_id TEXT NOT NULL CHECK (contract_id = 'ato.workspace/v1'),
+  contract_id TEXT NOT NULL CHECK (contract_id = 'ato.workspace/v2'),
   adapter_id TEXT NOT NULL CHECK (length(adapter_id) BETWEEN 1 AND 128),
   adapter_version TEXT NOT NULL CHECK (length(adapter_version) BETWEEN 1 AND 128),
   created_at TEXT NOT NULL CHECK (length(created_at) > 0),
@@ -1697,7 +2207,7 @@ CREATE TABLE workspace_operation_intents (
   last_failure_code TEXT CHECK (last_failure_code IS NULL OR length(last_failure_code) BETWEEN 1 AND 64),
   last_failure_retryable INTEGER CHECK (last_failure_retryable IS NULL OR last_failure_retryable IN (0, 1)),
   last_failure_ambiguous INTEGER CHECK (last_failure_ambiguous IS NULL OR last_failure_ambiguous IN (0, 1)),
-  contract_id TEXT NOT NULL CHECK (contract_id = 'ato.workspace/v1'),
+  contract_id TEXT NOT NULL CHECK (contract_id = 'ato.workspace/v2'),
   adapter_id TEXT NOT NULL CHECK (length(adapter_id) BETWEEN 1 AND 128),
   adapter_version TEXT NOT NULL CHECK (length(adapter_version) BETWEEN 1 AND 128),
   created_at TEXT NOT NULL CHECK (length(created_at) > 0),
@@ -1727,6 +2237,10 @@ CREATE TABLE workspace_observations (
   modified_count INTEGER NOT NULL CHECK (modified_count BETWEEN 0 AND tracked_count),
   untracked_count INTEGER NOT NULL CHECK (untracked_count BETWEEN 0 AND 1000000),
   ignored_count INTEGER NOT NULL CHECK (ignored_count BETWEEN 0 AND 1000000),
+  repository_identity TEXT CHECK (repository_identity IS NULL OR length(repository_identity) BETWEEN 1 AND 128),
+  branch_reference TEXT CHECK (branch_reference IS NULL OR length(branch_reference) BETWEEN 1 AND 255),
+  head_object_id TEXT CHECK (head_object_id IS NULL OR (length(head_object_id)=40 AND head_object_id NOT GLOB '*[^0-9a-f]*')),
+  ownership_binding_sha256 TEXT NOT NULL CHECK (length(ownership_binding_sha256)=64 AND ownership_binding_sha256 NOT GLOB '*[^0-9A-F]*'),
   evidence_reference TEXT CHECK (
     evidence_reference IS NULL OR (
       length(evidence_reference) BETWEEN 1 AND 128
@@ -1734,6 +2248,9 @@ CREATE TABLE workspace_observations (
       AND evidence_reference NOT GLOB '*[^A-Za-z0-9._:-]*'
     )
   ),
+  cleanup_attestation_sha256 TEXT CHECK (cleanup_attestation_sha256 IS NULL OR (
+    length(cleanup_attestation_sha256)=64 AND cleanup_attestation_sha256 NOT GLOB '*[^0-9A-F]*'
+  )),
   observed_at TEXT NOT NULL CHECK (length(observed_at) > 0),
   UNIQUE(intent_id, observation_number),
   FOREIGN KEY (intent_id) REFERENCES workspace_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
@@ -1753,6 +2270,13 @@ CREATE TABLE workspace_verified_receipts (
   external_state TEXT NOT NULL CHECK (external_state IN ('absent', 'reserved', 'complete', 'removed', 'refused')),
   outcome TEXT NOT NULL CHECK (outcome IN ('succeeded', 'refused')),
   code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
+  repository_identity TEXT CHECK (repository_identity IS NULL OR length(repository_identity) BETWEEN 1 AND 128),
+  branch_reference TEXT CHECK (branch_reference IS NULL OR length(branch_reference) BETWEEN 1 AND 255),
+  head_object_id TEXT CHECK (head_object_id IS NULL OR (length(head_object_id)=40 AND head_object_id NOT GLOB '*[^0-9a-f]*')),
+  ownership_binding_sha256 TEXT NOT NULL CHECK (length(ownership_binding_sha256)=64 AND ownership_binding_sha256 NOT GLOB '*[^0-9A-F]*'),
+  cleanup_attestation_sha256 TEXT CHECK (cleanup_attestation_sha256 IS NULL OR (
+    length(cleanup_attestation_sha256)=64 AND cleanup_attestation_sha256 NOT GLOB '*[^0-9A-F]*'
+  )),
   verified_at TEXT NOT NULL CHECK (length(verified_at) > 0),
   FOREIGN KEY (intent_id) REFERENCES workspace_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (observation_id) REFERENCES workspace_observations(observation_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
@@ -1905,4 +2429,193 @@ END;
 
 CREATE TRIGGER workspace_events_no_delete BEFORE DELETE ON workspace_events BEGIN
   SELECT RAISE(ABORT, 'workspace events are immutable');
+END;
+
+CREATE TRIGGER project_policy_receipts_no_update BEFORE UPDATE ON project_policy_receipts BEGIN
+  SELECT RAISE(ABORT, 'project policy receipts are immutable');
+END;
+CREATE TRIGGER project_policy_receipts_no_delete BEFORE DELETE ON project_policy_receipts BEGIN
+  SELECT RAISE(ABORT, 'project policy receipts are immutable');
+END;
+
+CREATE TRIGGER completion_gate_requests_no_update BEFORE UPDATE ON completion_gate_requests BEGIN
+  SELECT RAISE(ABORT, 'completion gate requests are immutable');
+END;
+CREATE TRIGGER completion_gate_requests_no_delete BEFORE DELETE ON completion_gate_requests BEGIN
+  SELECT RAISE(ABORT, 'completion gate requests are immutable');
+END;
+CREATE TRIGGER completion_gate_authorization_decisions_no_update BEFORE UPDATE ON completion_gate_authorization_decisions BEGIN
+  SELECT RAISE(ABORT, 'completion gate authorization decisions are immutable');
+END;
+CREATE TRIGGER completion_gate_authorization_decisions_no_delete BEFORE DELETE ON completion_gate_authorization_decisions BEGIN
+  SELECT RAISE(ABORT, 'completion gate authorization decisions are immutable');
+END;
+CREATE TRIGGER completion_gate_intents_update_guard
+BEFORE UPDATE ON completion_gate_intents
+WHEN NEW.intent_id<>OLD.intent_id OR NEW.operation_id<>OLD.operation_id OR NEW.idempotency_key<>OLD.idempotency_key
+  OR NEW.request_id<>OLD.request_id OR NEW.operation_kind<>OLD.operation_kind OR NEW.gate_operation_id<>OLD.gate_operation_id
+  OR NEW.created_at<>OLD.created_at OR NEW.updated_at<=OLD.updated_at OR NEW.revision<>OLD.revision+1
+  OR NEW.authorization_binding_revision<OLD.authorization_binding_revision OR NEW.last_observation_number<OLD.last_observation_number
+  OR NOT ((OLD.state='pending' AND NEW.state IN ('executing','failed'))
+    OR (OLD.state='executing' AND NEW.state IN ('observed','ambiguous','failed'))
+    OR (OLD.state='observed' AND NEW.state IN ('verified','ambiguous','failed'))
+    OR (OLD.state='verified' AND NEW.state IN ('finalized','ambiguous')))
+BEGIN
+  SELECT RAISE(ABORT, 'completion gate intent update violates identity, revision or lifecycle');
+END;
+CREATE TRIGGER completion_gate_intents_no_delete BEFORE DELETE ON completion_gate_intents BEGIN
+  SELECT RAISE(ABORT, 'completion gate intents cannot be deleted');
+END;
+CREATE TRIGGER completion_gate_observations_no_update BEFORE UPDATE ON completion_gate_observations BEGIN
+  SELECT RAISE(ABORT, 'completion gate observations are immutable');
+END;
+CREATE TRIGGER completion_gate_observations_no_delete BEFORE DELETE ON completion_gate_observations BEGIN
+  SELECT RAISE(ABORT, 'completion gate observations are immutable');
+END;
+CREATE TRIGGER completion_gate_verified_receipts_no_update BEFORE UPDATE ON completion_gate_verified_receipts BEGIN
+  SELECT RAISE(ABORT, 'completion gate verified receipts are immutable');
+END;
+CREATE TRIGGER completion_gate_verified_receipts_no_delete BEFORE DELETE ON completion_gate_verified_receipts BEGIN
+  SELECT RAISE(ABORT, 'completion gate verified receipts are immutable');
+END;
+CREATE TRIGGER completion_gate_finalizations_no_update BEFORE UPDATE ON completion_gate_finalizations BEGIN
+  SELECT RAISE(ABORT, 'completion gate finalizations are immutable');
+END;
+CREATE TRIGGER completion_gate_finalizations_no_delete BEFORE DELETE ON completion_gate_finalizations BEGIN
+  SELECT RAISE(ABORT, 'completion gate finalizations are immutable');
+END;
+CREATE TRIGGER completion_gate_events_no_update BEFORE UPDATE ON completion_gate_events BEGIN
+  SELECT RAISE(ABORT, 'completion gate events are immutable');
+END;
+CREATE TRIGGER completion_gate_events_no_delete BEFORE DELETE ON completion_gate_events BEGIN
+  SELECT RAISE(ABORT, 'completion gate events are immutable');
+END;
+CREATE TRIGGER policy_gated_completion_decisions_no_update BEFORE UPDATE ON policy_gated_completion_decisions BEGIN
+  SELECT RAISE(ABORT, 'policy gated completion decisions are immutable');
+END;
+CREATE TRIGGER policy_gated_completion_decisions_no_delete BEFORE DELETE ON policy_gated_completion_decisions BEGIN
+  SELECT RAISE(ABORT, 'policy gated completion decisions are immutable');
+END;
+CREATE TRIGGER policy_gated_completion_decisions_insert_guard
+BEFORE INSERT ON policy_gated_completion_decisions
+WHEN NOT EXISTS (SELECT 1 FROM completion_decisions AS parent
+  WHERE parent.completion_decision_id=NEW.completion_decision_id AND parent.kind='policy_gated')
+BEGIN
+  SELECT RAISE(ABORT, 'policy gated completion parent is absent or inconsistent');
+END;
+
+CREATE TRIGGER integration_target_sequences_increment_only
+BEFORE UPDATE ON integration_target_sequences
+WHEN NEW.project_id<>OLD.project_id OR NEW.repository_identity<>OLD.repository_identity
+  OR NEW.target_reference<>OLD.target_reference OR NEW.last_fencing_token<>OLD.last_fencing_token+1
+BEGIN
+  SELECT RAISE(ABORT, 'integration target sequence must advance exactly once');
+END;
+CREATE TRIGGER integration_target_sequences_no_delete BEFORE DELETE ON integration_target_sequences BEGIN
+  SELECT RAISE(ABORT, 'integration target sequences cannot be deleted');
+END;
+CREATE TRIGGER integration_reservations_update_guard
+BEFORE UPDATE ON integration_reservations
+WHEN NEW.reservation_id<>OLD.reservation_id OR NEW.project_id<>OLD.project_id
+  OR NEW.project_resource_revision<>OLD.project_resource_revision OR NEW.project_config_revision<>OLD.project_config_revision
+  OR NEW.project_root_key<>OLD.project_root_key OR NEW.repository_identity<>OLD.repository_identity
+  OR NEW.object_format<>OLD.object_format OR NEW.target_reference<>OLD.target_reference
+  OR NEW.expected_target_object_id<>OLD.expected_target_object_id OR NEW.source_workspace_id<>OLD.source_workspace_id
+  OR NEW.source_generation<>OLD.source_generation OR NEW.source_workspace_revision<>OLD.source_workspace_revision
+  OR NEW.source_workspace_root_key<>OLD.source_workspace_root_key
+  OR NEW.source_ownership_binding_sha256<>OLD.source_ownership_binding_sha256
+  OR NEW.source_head_object_id<>OLD.source_head_object_id OR NEW.owner_execution_id<>OLD.owner_execution_id
+  OR NEW.owner_operation_id<>OLD.owner_operation_id OR NEW.fencing_token<>OLD.fencing_token
+  OR NEW.policy_receipt_id<>OLD.policy_receipt_id OR NEW.policy_config_revision<>OLD.policy_config_revision
+  OR NEW.destination_identity<>OLD.destination_identity OR NEW.destination_reference<>OLD.destination_reference
+  OR NEW.expected_remote_head IS NOT OLD.expected_remote_head OR NEW.created_at<>OLD.created_at
+  OR NEW.updated_at<=OLD.updated_at OR NEW.revision<>OLD.revision+1 OR NEW.lease_revision<OLD.lease_revision
+  OR NOT ((OLD.status='active' AND NEW.status IN ('active','ambiguous','released','expired'))
+    OR (OLD.status='ambiguous' AND NEW.status IN ('ambiguous','released','expired')))
+BEGIN
+  SELECT RAISE(ABORT, 'integration reservation update violates identity, revision or lifecycle');
+END;
+CREATE TRIGGER integration_reservations_terminal_intent_guard
+BEFORE UPDATE ON integration_reservations
+WHEN NEW.status IN ('released','expired') AND OLD.status='ambiguous'
+  AND EXISTS (SELECT 1 FROM integration_intents AS intent
+    WHERE intent.reservation_id=OLD.reservation_id AND intent.state NOT IN ('finalized','failed'))
+BEGIN
+  SELECT RAISE(ABORT, 'integration reservation cannot terminalize before every intent');
+END;
+CREATE TRIGGER integration_reservations_no_delete BEFORE DELETE ON integration_reservations BEGIN
+  SELECT RAISE(ABORT, 'integration reservations cannot be deleted');
+END;
+CREATE TRIGGER integration_operation_requests_no_update BEFORE UPDATE ON integration_operation_requests BEGIN
+  SELECT RAISE(ABORT, 'integration operation requests are immutable');
+END;
+CREATE TRIGGER integration_operation_requests_no_delete BEFORE DELETE ON integration_operation_requests BEGIN
+  SELECT RAISE(ABORT, 'integration operation requests are immutable');
+END;
+CREATE TRIGGER integration_authorization_decisions_no_update BEFORE UPDATE ON integration_authorization_decisions BEGIN
+  SELECT RAISE(ABORT, 'integration authorization decisions are immutable');
+END;
+CREATE TRIGGER integration_authorization_decisions_no_delete BEFORE DELETE ON integration_authorization_decisions BEGIN
+  SELECT RAISE(ABORT, 'integration authorization decisions are immutable');
+END;
+CREATE TRIGGER integration_intents_update_guard
+BEFORE UPDATE ON integration_intents
+WHEN NEW.intent_id<>OLD.intent_id OR NEW.operation_id<>OLD.operation_id OR NEW.idempotency_key<>OLD.idempotency_key
+  OR NEW.request_id<>OLD.request_id OR NEW.reservation_id<>OLD.reservation_id
+  OR NEW.reservation_fencing_token<>OLD.reservation_fencing_token OR NEW.operation_kind<>OLD.operation_kind
+  OR NEW.created_at<>OLD.created_at OR NEW.updated_at<=OLD.updated_at OR NEW.revision<>OLD.revision+1
+  OR NEW.authorization_binding_revision<OLD.authorization_binding_revision OR NEW.last_observation_number<OLD.last_observation_number
+  OR NOT ((OLD.state='pending' AND NEW.state IN ('executing','failed'))
+    OR (OLD.state='executing' AND NEW.state IN ('observed','ambiguous','failed'))
+    OR (OLD.state='observed' AND NEW.state IN ('verified','ambiguous','failed'))
+    OR (OLD.state='verified' AND NEW.state IN ('finalized','ambiguous'))
+    OR (OLD.state='ambiguous' AND NEW.state IN ('ambiguous','observed')))
+BEGIN
+  SELECT RAISE(ABORT, 'integration intent update violates identity, revision or lifecycle');
+END;
+CREATE TRIGGER integration_intents_no_delete BEFORE DELETE ON integration_intents BEGIN
+  SELECT RAISE(ABORT, 'integration intents cannot be deleted');
+END;
+CREATE TRIGGER integration_observations_no_update BEFORE UPDATE ON integration_observations BEGIN
+  SELECT RAISE(ABORT, 'integration observations are immutable');
+END;
+CREATE TRIGGER integration_observations_no_delete BEFORE DELETE ON integration_observations BEGIN
+  SELECT RAISE(ABORT, 'integration observations are immutable');
+END;
+CREATE TRIGGER integration_verified_receipts_no_update BEFORE UPDATE ON integration_verified_receipts BEGIN
+  SELECT RAISE(ABORT, 'integration verified receipts are immutable');
+END;
+CREATE TRIGGER integration_verified_receipts_no_delete BEFORE DELETE ON integration_verified_receipts BEGIN
+  SELECT RAISE(ABORT, 'integration verified receipts are immutable');
+END;
+CREATE TRIGGER integration_finalizations_no_update BEFORE UPDATE ON integration_finalizations BEGIN
+  SELECT RAISE(ABORT, 'integration finalizations are immutable');
+END;
+CREATE TRIGGER integration_finalizations_no_delete BEFORE DELETE ON integration_finalizations BEGIN
+  SELECT RAISE(ABORT, 'integration finalizations are immutable');
+END;
+CREATE TRIGGER integration_events_no_update BEFORE UPDATE ON integration_events BEGIN
+  SELECT RAISE(ABORT, 'integration events are immutable');
+END;
+CREATE TRIGGER integration_events_no_delete BEFORE DELETE ON integration_events BEGIN
+  SELECT RAISE(ABORT, 'integration events are immutable');
+END;
+CREATE TRIGGER workspace_cleanup_attestations_no_update BEFORE UPDATE ON workspace_cleanup_attestations BEGIN
+  SELECT RAISE(ABORT, 'workspace cleanup attestations are immutable');
+END;
+CREATE TRIGGER workspace_cleanup_attestations_no_delete BEFORE DELETE ON workspace_cleanup_attestations BEGIN
+  SELECT RAISE(ABORT, 'workspace cleanup attestations are immutable');
+END;
+CREATE TRIGGER workspace_cleanup_attestations_insert_guard
+BEFORE INSERT ON workspace_cleanup_attestations
+WHEN NOT EXISTS (
+  SELECT 1 FROM workspace_operation_intents AS intent
+  JOIN workspace_generations AS generation ON generation.workspace_id=intent.workspace_id AND generation.generation=intent.generation
+  WHERE intent.intent_id=NEW.intent_id AND intent.operation_id=NEW.operation_id AND intent.operation_kind='cleanup'
+    AND intent.state IN ('pending','executing') AND generation.project_id=NEW.project_id
+    AND generation.task_id=NEW.task_id AND generation.execution_id=NEW.execution_id
+    AND generation.workspace_id=NEW.workspace_id AND generation.generation=NEW.generation
+)
+BEGIN
+  SELECT RAISE(ABORT, 'workspace cleanup attestation has no exact cleanup intent');
 END;

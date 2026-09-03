@@ -24,6 +24,7 @@ import type {
   ExecutionTerminalStateRecord,
   ManualBackendTurnRecord,
   ManualBackendOperationRecord,
+  CompletionDecisionRecord,
   ManualCompletionDecisionRecord,
   DispatcherTriggerRequestRecord,
   DispatcherAuthorizationDecisionRecord,
@@ -39,6 +40,28 @@ import type {
   DispatcherMemberDenialDecisionRecord,
   DispatcherMemberDenialAuditRecord,
   DispatcherRunSummaryRecord,
+  ProjectPolicyReceiptRecord,
+  CompletionGateRequestRecord,
+  CompletionGateAuthorizationDecisionRecord,
+  CompletionGateIntentRecord,
+  CompletionGateIntentState,
+  CompletionGateObservationRecord,
+  CompletionGateVerifiedReceiptRecord,
+  CompletionGateFinalizationRecord,
+  CompletionGateEventRecord,
+  PolicyGatedCompletionDecisionRecord,
+  IntegrationTargetSequenceRecord,
+  IntegrationReservationRecord,
+  IntegrationReservationStatus,
+  IntegrationOperationRequestRecord,
+  IntegrationAuthorizationDecisionRecord,
+  IntegrationIntentRecord,
+  IntegrationIntentState,
+  IntegrationObservationRecord,
+  IntegrationVerifiedReceiptRecord,
+  IntegrationFinalizationRecord,
+  IntegrationEventRecord,
+  WorkspaceCleanupAttestationRecord,
   WorkspaceGenerationRecord,
   WorkspaceGenerationStatus,
   WorkspaceAuthorizationDecisionRecord,
@@ -565,6 +588,19 @@ export class ApplicationTransaction {
     );
   }
 
+  insertCompletionDecision(record: CompletionDecisionRecord): void {
+    this.#database.prepare(
+      `INSERT INTO completion_decisions(
+        completion_decision_id, kind, task_id, execution_id, attempt_number, fencing_token,
+        pre_task_revision, post_task_revision, execution_revision, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.completionDecisionId, record.kind, record.taskId, record.executionId,
+      record.attemptNumber, record.fencingToken, record.preTaskRevision, record.postTaskRevision,
+      record.executionRevision, record.createdAt,
+    );
+  }
+
   insertManualCompletionDecision(record: ManualCompletionDecisionRecord): void {
     this.#database.prepare(
       `INSERT INTO manual_completion_decisions(
@@ -579,6 +615,385 @@ export class ApplicationTransaction {
       record.verifiedReceiptId, record.finalizationId, record.preTaskRevision,
       record.postTaskRevision, record.requestId, record.decisionId, record.auditId,
       record.confirmationId, record.createdAt,
+    );
+  }
+
+  insertProjectPolicyReceipt(record: ProjectPolicyReceiptRecord): void {
+    this.#database.prepare(
+      `INSERT INTO project_policy_receipts(
+        receipt_id, policy_query_id, operation, preliminary_authorization_decision_id, requested_action,
+        actor_id, project_id, project_resource_revision, project_config_revision, project_root_key,
+        repository_identity, subject_sha256, policy_id, policy_key, policy_config_revision, adapter_id,
+        adapter_version, decision, reason_code, facts_json, facts_sha256, receipt_sha256, valid_until,
+        evidence_reference, observed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.receiptId, record.policyQueryId, record.operation, record.preliminaryAuthorizationDecisionId,
+      record.requestedAction, record.actorId, record.projectId, record.projectResourceRevision,
+      record.projectConfigRevision, record.projectRootKey, record.repositoryIdentity, record.subjectSha256,
+      record.policyId, record.policyKey, record.policyConfigRevision, record.adapterId, record.adapterVersion,
+      record.decision, record.reasonCode, record.factsJson, record.factsSha256, record.receiptSha256, record.validUntil,
+      record.evidenceReference, record.observedAt,
+    );
+  }
+
+  insertCompletionGateRequest(record: CompletionGateRequestRecord): void {
+    this.#database.prepare(
+      `INSERT INTO completion_gate_requests(
+        request_id, operation_id, idempotency_key, operation_kind, actor_id, correlation_id, causation_id,
+        project_id, project_resource_revision, project_config_revision, project_root_key, repository_identity,
+        task_id, task_revision, execution_id, execution_revision, attempt_number, fencing_token, workspace_id,
+        generation, workspace_revision, workspace_root_key, ownership_binding_sha256, head_object_id,
+        policy_receipt_id, policy_id, policy_config_revision, gate_id, gate_version, command_key, command_identity_sha256,
+        completion_evidence_root_key, tool_environment_sha256, contract_id, adapter_id, adapter_version, timeout_ms, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.requestId, record.operationId, record.idempotencyKey, record.operationKind, record.actorId,
+      record.correlationId, record.causationId, record.projectId, record.projectResourceRevision,
+      record.projectConfigRevision, record.projectRootKey, record.repositoryIdentity, record.taskId,
+      record.taskRevision, record.executionId, record.executionRevision, record.attemptNumber, record.fencingToken,
+      record.workspaceId, record.generation, record.workspaceRevision, record.workspaceRootKey,
+      record.ownershipBindingSha256, record.headObjectId, record.policyReceiptId, record.policyId, record.policyConfigRevision,
+      record.gateId, record.gateVersion, record.commandKey, record.commandIdentitySha256,
+      record.completionEvidenceRootKey, record.toolEnvironmentSha256, record.contractId, record.adapterId,
+      record.adapterVersion, record.timeoutMs, record.createdAt,
+    );
+  }
+
+  insertCompletionGateAuthorizationDecision(record: CompletionGateAuthorizationDecisionRecord): void {
+    this.#database.prepare(
+      `INSERT INTO completion_gate_authorization_decisions(
+        decision_id, request_id, operation_id, binding_revision, phase, actor_id, action, result,
+        reason, policy_result, grant_id, grant_revision, confirmation_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.decisionId, record.requestId, record.operationId, record.bindingRevision, record.phase,
+      record.actorId, record.action, record.result, record.reason, record.policy, record.grantId,
+      record.grantRevision, record.confirmationId, record.createdAt,
+    );
+  }
+
+  insertCompletionGateIntent(record: CompletionGateIntentRecord): void {
+    this.#database.prepare(
+      `INSERT INTO completion_gate_intents(
+        intent_id, operation_id, idempotency_key, request_id, operation_kind, state, revision,
+        current_authorization_decision_id, authorization_binding_revision, gate_operation_id,
+        last_observation_number, last_failure_category, last_failure_code, last_failure_retryable,
+        last_failure_ambiguous, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.intentId, record.operationId, record.idempotencyKey, record.requestId, record.operationKind,
+      record.state, record.revision, record.currentAuthorizationDecisionId, record.authorizationBindingRevision,
+      record.gateOperationId, record.lastObservationNumber, record.lastFailureCategory, record.lastFailureCode,
+      record.lastFailureRetryable === null ? null : record.lastFailureRetryable ? 1 : 0,
+      record.lastFailureAmbiguous === null ? null : record.lastFailureAmbiguous ? 1 : 0,
+      record.createdAt, record.updatedAt,
+    );
+  }
+
+  transitionCompletionGateIntent(
+    intentId: string,
+    expectedRevision: number,
+    expectedState: CompletionGateIntentState,
+    nextState: CompletionGateIntentState,
+    nextAuthorizationDecisionId: string,
+    nextAuthorizationBindingRevision: number,
+    lastObservationNumber: number,
+    failure: Readonly<{ category: string; code: string; retryable: boolean; ambiguous: boolean }> | null,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE completion_gate_intents SET state=?, revision=revision+1,
+        current_authorization_decision_id=?, authorization_binding_revision=?, last_observation_number=?,
+        last_failure_category=?, last_failure_code=?, last_failure_retryable=?, last_failure_ambiguous=?, updated_at=?
+      WHERE intent_id=? AND revision=? AND state=?`,
+    ).run(
+      nextState, nextAuthorizationDecisionId, nextAuthorizationBindingRevision, lastObservationNumber,
+      failure?.category ?? null, failure?.code ?? null, failure === null ? null : failure.retryable ? 1 : 0,
+      failure === null ? null : failure.ambiguous ? 1 : 0, updatedAt, intentId, expectedRevision, expectedState,
+    );
+    if (changes(result.changes) !== 1) throw persistenceFailure("REVISION_CONFLICT", "Completion gate intent CAS failed", { intentId });
+  }
+
+  insertCompletionGateObservation(record: CompletionGateObservationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO completion_gate_observations(
+        observation_id, intent_id, observation_number, adapter_receipt_id, receipt_sha256,
+        authorization_decision_id, gate_operation_id, lifecycle, verdict, code, started_at,
+        ended_at, valid_until, evidence_reference, observed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.observationId, record.intentId, record.observationNumber, record.adapterReceiptId,
+      record.receiptSha256, record.authorizationDecisionId, record.gateOperationId, record.lifecycle,
+      record.verdict, record.code, record.startedAt, record.endedAt, record.validUntil,
+      record.evidenceReference, record.observedAt,
+    );
+  }
+
+  insertCompletionGateReceipt(record: CompletionGateVerifiedReceiptRecord): void {
+    this.#database.prepare(
+      `INSERT INTO completion_gate_verified_receipts(
+        verified_receipt_id, intent_id, observation_id, observation_number, adapter_receipt_id,
+        receipt_sha256, gate_operation_id, verdict, valid_until, verified_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.verifiedReceiptId, record.intentId, record.observationId, record.observationNumber,
+      record.adapterReceiptId, record.receiptSha256, record.gateOperationId, record.verdict,
+      record.validUntil, record.verifiedAt,
+    );
+  }
+
+  insertCompletionGateFinalization(record: CompletionGateFinalizationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO completion_gate_finalizations(
+        finalization_id, intent_id, verified_receipt_id, authorization_decision_id, outcome, code, finalized_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.finalizationId, record.intentId, record.verifiedReceiptId, record.authorizationDecisionId,
+      record.outcome, record.code, record.finalizedAt,
+    );
+  }
+
+  insertCompletionGateEvent(record: CompletionGateEventRecord): void {
+    this.#database.prepare(
+      `INSERT INTO completion_gate_events(
+        event_id, operation_id, intent_id, event_kind, outcome, reason_code, actor_id,
+        correlation_id, observation_number, evidence_reference, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.eventId, record.operationId, record.intentId, record.eventKind, record.outcome,
+      record.reasonCode, record.actorId, record.correlationId, record.observationNumber,
+      record.evidenceReference, record.createdAt,
+    );
+  }
+
+  insertPolicyGatedCompletionDecision(record: PolicyGatedCompletionDecisionRecord): void {
+    this.#database.prepare(
+      `INSERT INTO policy_gated_completion_decisions(
+        completion_decision_id, operation_id, idempotency_key, execution_success_verified_receipt_id,
+        execution_success_finalization_id, policy_receipt_id, gate_set_sha256, workspace_evidence_sha256,
+        head_object_id, integration_evidence_sha256, preservation_state_sha256, request_id,
+        authorization_decision_id, audit_id, confirmation_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.completionDecisionId, record.operationId, record.idempotencyKey,
+      record.executionSuccessVerifiedReceiptId, record.executionSuccessFinalizationId, record.policyReceiptId,
+      record.gateSetSha256, record.workspaceEvidenceSha256, record.headObjectId,
+      record.integrationEvidenceSha256, record.preservationStateSha256, record.requestId,
+      record.authorizationDecisionId, record.auditId, record.confirmationId, record.createdAt,
+    );
+  }
+
+  insertIntegrationTargetSequence(record: IntegrationTargetSequenceRecord): void {
+    this.#database.prepare(
+      `INSERT INTO integration_target_sequences(
+        project_id, repository_identity, target_reference, last_fencing_token
+      ) VALUES (?, ?, ?, ?)`,
+    ).run(record.projectId, record.repositoryIdentity, record.targetReference, record.lastFencingToken);
+  }
+
+  advanceIntegrationTargetSequence(
+    projectId: string,
+    repositoryIdentity: string,
+    targetReference: string,
+    expectedFencingToken: number,
+  ): number {
+    const nextFencingToken = expectedFencingToken + 1;
+    const result = this.#database.prepare(
+      `UPDATE integration_target_sequences SET last_fencing_token=?
+      WHERE project_id=? AND repository_identity=? AND target_reference=? AND last_fencing_token=?`,
+    ).run(nextFencingToken, projectId, repositoryIdentity, targetReference, expectedFencingToken);
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Integration target fencing CAS failed", { projectId });
+    }
+    return nextFencingToken;
+  }
+
+  insertIntegrationReservation(record: IntegrationReservationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO integration_reservations(
+        reservation_id, revision, status, project_id, project_resource_revision, project_config_revision,
+        project_root_key, repository_identity, object_format, target_reference, expected_target_object_id,
+        source_workspace_id, source_generation, source_workspace_revision, source_workspace_root_key,
+        source_ownership_binding_sha256, source_head_object_id, owner_execution_id, owner_operation_id,
+        lease_owner_id, lease_revision, fencing_token, expires_at, policy_receipt_id, policy_config_revision,
+        destination_identity, destination_reference, expected_remote_head, current_evidence_sha256, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.reservationId, record.revision, record.status, record.projectId, record.projectResourceRevision,
+      record.projectConfigRevision, record.projectRootKey, record.repositoryIdentity, record.objectFormat,
+      record.targetReference, record.expectedTargetObjectId, record.sourceWorkspaceId, record.sourceGeneration,
+      record.sourceWorkspaceRevision, record.sourceWorkspaceRootKey, record.sourceOwnershipBindingSha256,
+      record.sourceHeadObjectId, record.ownerExecutionId, record.ownerOperationId, record.leaseOwnerId,
+      record.leaseRevision, record.fencingToken, record.expiresAt, record.policyReceiptId,
+      record.policyConfigRevision, record.destinationIdentity, record.destinationReference,
+      record.expectedRemoteHead, record.currentEvidenceSha256, record.createdAt, record.updatedAt,
+    );
+  }
+
+  transitionIntegrationReservation(
+    reservationId: string,
+    expectedRevision: number,
+    expectedStatus: IntegrationReservationStatus,
+    expectedLeaseRevision: number,
+    expectedFencingToken: number,
+    nextStatus: IntegrationReservationStatus,
+    nextLeaseOwnerId: string,
+    nextLeaseRevision: number,
+    nextExpiresAt: string,
+    currentEvidenceSha256: string | null,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE integration_reservations SET status=?, revision=revision+1, lease_owner_id=?,
+        lease_revision=?, expires_at=?, current_evidence_sha256=?, updated_at=?
+      WHERE reservation_id=? AND revision=? AND status=? AND lease_revision=? AND fencing_token=?`,
+    ).run(
+      nextStatus, nextLeaseOwnerId, nextLeaseRevision, nextExpiresAt, currentEvidenceSha256, updatedAt,
+      reservationId, expectedRevision, expectedStatus, expectedLeaseRevision, expectedFencingToken,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Integration reservation revision/fence CAS failed", { reservationId });
+    }
+  }
+
+  insertIntegrationOperationRequest(record: IntegrationOperationRequestRecord): void {
+    this.#database.prepare(
+      `INSERT INTO integration_operation_requests(
+        request_id, operation_id, idempotency_key, operation_kind, actor_id, correlation_id,
+        causation_id, reservation_id, expected_reservation_revision, expected_lease_revision,
+        expected_fencing_token, contract_id, adapter_id, adapter_version, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.requestId, record.operationId, record.idempotencyKey, record.operationKind,
+      record.actorId, record.correlationId, record.causationId, record.reservationId,
+      record.expectedReservationRevision, record.expectedLeaseRevision, record.expectedFencingToken,
+      record.contractId, record.adapterId, record.adapterVersion, record.createdAt,
+    );
+  }
+
+  insertIntegrationAuthorizationDecision(record: IntegrationAuthorizationDecisionRecord): void {
+    this.#database.prepare(
+      `INSERT INTO integration_authorization_decisions(
+        decision_id, request_id, operation_id, binding_revision, phase, actor_id, action, result,
+        reason, policy_result, grant_id, grant_revision, confirmation_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.decisionId, record.requestId, record.operationId, record.bindingRevision, record.phase,
+      record.actorId, record.action, record.result, record.reason, record.policy, record.grantId,
+      record.grantRevision, record.confirmationId, record.createdAt,
+    );
+  }
+
+  insertIntegrationIntent(record: IntegrationIntentRecord): void {
+    this.#database.prepare(
+      `INSERT INTO integration_intents(
+        intent_id, operation_id, idempotency_key, request_id, reservation_id, reservation_fencing_token,
+        operation_kind, state, revision, current_authorization_decision_id, authorization_binding_revision,
+        last_observation_number, recovery_result, last_failure_category, last_failure_code,
+        last_failure_retryable, last_failure_ambiguous, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.intentId, record.operationId, record.idempotencyKey, record.requestId, record.reservationId,
+      record.reservationFencingToken, record.operationKind, record.state, record.revision,
+      record.currentAuthorizationDecisionId, record.authorizationBindingRevision, record.lastObservationNumber,
+      record.recoveryResult, record.lastFailureCategory, record.lastFailureCode,
+      record.lastFailureRetryable === null ? null : record.lastFailureRetryable ? 1 : 0,
+      record.lastFailureAmbiguous === null ? null : record.lastFailureAmbiguous ? 1 : 0,
+      record.createdAt, record.updatedAt,
+    );
+  }
+
+  transitionIntegrationIntent(
+    intentId: string,
+    expectedRevision: number,
+    expectedState: IntegrationIntentState,
+    nextState: IntegrationIntentState,
+    nextAuthorizationDecisionId: string,
+    nextAuthorizationBindingRevision: number,
+    lastObservationNumber: number,
+    recoveryResult: IntegrationIntentRecord["recoveryResult"],
+    failure: Readonly<{ category: string; code: string; retryable: boolean; ambiguous: boolean }> | null,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE integration_intents SET state=?, revision=revision+1,
+        current_authorization_decision_id=?, authorization_binding_revision=?, last_observation_number=?,
+        recovery_result=?, last_failure_category=?, last_failure_code=?, last_failure_retryable=?,
+        last_failure_ambiguous=?, updated_at=? WHERE intent_id=? AND revision=? AND state=?`,
+    ).run(
+      nextState, nextAuthorizationDecisionId, nextAuthorizationBindingRevision, lastObservationNumber,
+      recoveryResult, failure?.category ?? null, failure?.code ?? null,
+      failure === null ? null : failure.retryable ? 1 : 0,
+      failure === null ? null : failure.ambiguous ? 1 : 0, updatedAt, intentId, expectedRevision, expectedState,
+    );
+    if (changes(result.changes) !== 1) throw persistenceFailure("REVISION_CONFLICT", "Integration intent CAS failed", { intentId });
+  }
+
+  insertIntegrationObservation(record: IntegrationObservationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO integration_observations(
+        observation_id, reservation_id, intent_id, observation_number, operation, adapter_receipt_id,
+        receipt_sha256, authorization_decision_id, local_before_object_id, local_after_object_id,
+        remote_before_object_id, remote_after_object_id, local_state, remote_state, outcome,
+        code, evidence_reference, observed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.observationId, record.reservationId, record.intentId, record.observationNumber,
+      record.operation, record.adapterReceiptId, record.receiptSha256, record.authorizationDecisionId,
+      record.localBeforeObjectId, record.localAfterObjectId, record.remoteBeforeObjectId,
+      record.remoteAfterObjectId, record.localState, record.remoteState, record.outcome,
+      record.code, record.evidenceReference, record.observedAt,
+    );
+  }
+
+  insertIntegrationReceipt(record: IntegrationVerifiedReceiptRecord): void {
+    this.#database.prepare(
+      `INSERT INTO integration_verified_receipts(
+        verified_receipt_id, intent_id, observation_id, observation_number, adapter_receipt_id,
+        receipt_sha256, outcome, code, verified_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.verifiedReceiptId, record.intentId, record.observationId, record.observationNumber,
+      record.adapterReceiptId, record.receiptSha256, record.outcome, record.code, record.verifiedAt,
+    );
+  }
+
+  insertIntegrationFinalization(record: IntegrationFinalizationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO integration_finalizations(
+        finalization_id, intent_id, verified_receipt_id, authorization_decision_id,
+        outcome, code, recovery_result, finalized_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.finalizationId, record.intentId, record.verifiedReceiptId, record.authorizationDecisionId,
+      record.outcome, record.code, record.recoveryResult, record.finalizedAt,
+    );
+  }
+
+  insertIntegrationEvent(record: IntegrationEventRecord): void {
+    this.#database.prepare(
+      `INSERT INTO integration_events(
+        event_id, reservation_id, operation_id, intent_id, event_kind, outcome, reason_code,
+        actor_id, correlation_id, observation_number, evidence_reference, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.eventId, record.reservationId, record.operationId, record.intentId, record.eventKind,
+      record.outcome, record.reasonCode, record.actorId, record.correlationId,
+      record.observationNumber, record.evidenceReference, record.createdAt,
+    );
+  }
+
+  insertWorkspaceCleanupAttestation(record: WorkspaceCleanupAttestationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO workspace_cleanup_attestations(
+        attestation_id, operation_id, intent_id, project_id, task_id, execution_id, workspace_id,
+        generation, attestation_json, attestation_sha256, quiescence_sha256, issued_at, valid_until
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.attestationId, record.operationId, record.intentId, record.projectId, record.taskId,
+      record.executionId, record.workspaceId, record.generation, record.attestationJson,
+      record.attestationSha256, record.quiescenceSha256, record.issuedAt, record.validUntil,
     );
   }
 
@@ -789,14 +1204,17 @@ export class ApplicationTransaction {
       `INSERT INTO workspace_observations(
         observation_id, intent_id, observation_number, adapter_receipt_id, receipt_sha256,
         authorization_decision_id, external_state, outcome, code, path_safety, ownership_match,
-        tracked_count, modified_count, untracked_count, ignored_count, evidence_reference, observed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+        tracked_count, modified_count, untracked_count, ignored_count,
+        repository_identity, branch_reference, head_object_id, ownership_binding_sha256, evidence_reference,
+        cleanup_attestation_sha256, observed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
     ).run(
       record.observationId, record.intentId, record.observationNumber, record.adapterReceiptId,
       record.receiptSha256, record.authorizationDecisionId, record.externalState, record.outcome,
       record.code, record.pathSafety, record.ownershipMatch === null ? null : record.ownershipMatch ? 1 : 0,
       record.trackedCount, record.modifiedCount, record.untrackedCount, record.ignoredCount,
-      record.evidenceReference, record.observedAt,
+      record.repositoryIdentity, record.branchReference, record.headObjectId, record.ownershipBindingSha256,
+      record.evidenceReference, record.cleanupAttestationSha256, record.observedAt,
     );
   }
 
@@ -804,12 +1222,16 @@ export class ApplicationTransaction {
     this.#database.prepare(
       `INSERT INTO workspace_verified_receipts(
         verified_receipt_id, intent_id, observation_id, observation_number, adapter_receipt_id,
-        receipt_sha256, workspace_id, generation, generation_revision, external_state, outcome, code, verified_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
+        receipt_sha256, workspace_id, generation, generation_revision, external_state, outcome, code,
+        repository_identity, branch_reference, head_object_id, ownership_binding_sha256,
+        cleanup_attestation_sha256, verified_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)` ,
     ).run(
       record.verifiedReceiptId, record.intentId, record.observationId, record.observationNumber,
       record.adapterReceiptId, record.receiptSha256, record.workspaceId, record.generation,
-      record.generationRevision, record.externalState, record.outcome, record.code, record.verifiedAt,
+      record.generationRevision, record.externalState, record.outcome, record.code,
+      record.repositoryIdentity, record.branchReference, record.headObjectId, record.ownershipBindingSha256,
+      record.cleanupAttestationSha256, record.verifiedAt,
     );
   }
 
@@ -1217,6 +1639,12 @@ export function initializeDomainForOwner(owner: object, snapshot: DomainSnapshot
   const binding = boundDatabases.get(owner);
   if (binding === undefined || !binding.database.isOpen) throw persistenceFailure("STORE_CLOSED", "Persistence store is unavailable");
   binding.assertOpen();
+  if (snapshot.tasks.some((task) => task.state === "completed")) {
+    throw persistenceFailure(
+      "INVALID_INPUT",
+      "Initial snapshot cannot synthesize required completion application lineage",
+    );
+  }
   return initializeDomainSnapshot(binding.database, snapshot);
 }
 

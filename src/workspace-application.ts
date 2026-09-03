@@ -273,6 +273,10 @@ interface WorkspaceReceiptEvidence {
   readonly pathSafety: WorkspaceBackendReceipt["pathSafety"];
   readonly ownershipMatch: WorkspaceBackendReceipt["ownershipMatch"];
   readonly inventory: WorkspaceBackendReceipt["inventory"];
+  readonly repositoryIdentity: string | null;
+  readonly branchReference: string | null;
+  readonly headObjectId: string | null;
+  readonly ownershipBindingSha256: string;
   readonly evidenceReference: string | null;
   readonly observedAt: string;
 }
@@ -1084,7 +1088,10 @@ function effectStatus(operation: WorkspaceOperation, current: WorkspaceGeneratio
   return current;
 }
 
-function subjectFor(generation: WorkspaceGenerationRecord): WorkspaceSubject {
+export function workspaceSubjectForGeneration(
+  generation: WorkspaceGenerationRecord,
+  taskRevision = generation.taskRevision,
+): WorkspaceSubject {
   const ownershipBindingSha256 = sha256(canonicalJson({
     adapterId: generation.adapterId,
     adapterVersion: generation.adapterVersion,
@@ -1116,7 +1123,7 @@ function subjectFor(generation: WorkspaceGenerationRecord): WorkspaceSubject {
     projectConfigRevision: generation.projectConfigRevision,
     projectRootKey: generation.projectRootKey,
     taskId: generation.taskId,
-    taskRevision: generation.taskRevision,
+    taskRevision,
     runId: generation.runId,
     runRevision: generation.runRevision,
     memberId: generation.memberId,
@@ -1146,7 +1153,8 @@ function requestFor(prepared: PreparedOperation, generation: WorkspaceGeneration
     causationId: prepared.intent.causationId,
     adapterId: prepared.intent.adapterId,
     adapterVersion: prepared.intent.adapterVersion,
-    subject: subjectFor(generation),
+    subject: workspaceSubjectForGeneration(generation),
+    cleanupAttestation: null,
   });
 }
 
@@ -1173,6 +1181,10 @@ function evidenceFromObservation(observation: WorkspaceObservationRecord): Works
       untrackedCount: observation.untrackedCount,
       ignoredCount: observation.ignoredCount,
     }),
+    repositoryIdentity: observation.repositoryIdentity,
+    branchReference: observation.branchReference,
+    headObjectId: observation.headObjectId,
+    ownershipBindingSha256: observation.ownershipBindingSha256,
     evidenceReference: observation.evidenceReference,
     observedAt: observation.observedAt,
   });
@@ -1440,6 +1452,11 @@ function completeObservedOperation(
           externalState: receipt.externalState,
           outcome: receipt.outcome === "refused" ? "refused" : "succeeded",
           code: receipt.code,
+          repositoryIdentity: receipt.repositoryIdentity,
+          branchReference: receipt.branchReference,
+          headObjectId: receipt.headObjectId,
+          ownershipBindingSha256: receipt.ownershipBindingSha256,
+          cleanupAttestationSha256: observation.cleanupAttestationSha256,
           verifiedAt: now,
         }));
         transaction.verifyWorkspaceIntent(intent.intentId, intent.revision, now);
@@ -1632,6 +1649,14 @@ function completeObservedOperation(
   }
 }
 
+function legacyCleanupDisabled(
+  operation: WorkspaceOperation,
+): WorkspaceApplicationResult<WorkspaceOperationView> | null {
+  return operation === "cleanup"
+    ? failed("INVALID_STATE", "Workspace cleanup is owned by the Phase 3 policy-gated application service")
+    : null;
+}
+
 function createWorkspaceApplicationServiceInternal(
   store: PersistenceStore,
   backend: WorkspaceBackend,
@@ -1646,6 +1671,8 @@ function createWorkspaceApplicationServiceInternal(
   const execute = (value: unknown, operation: WorkspaceOperation): WorkspaceApplicationResult<WorkspaceOperationView> => {
     const command = parseCommand(value, operation);
     if (command === null) return failed("INVALID_INPUT", "Workspace command input is invalid");
+    const cleanupDisabled = legacyCleanupDisabled(operation);
+    if (cleanupDisabled !== null) return cleanupDisabled;
     const context = trustedContext(ingress);
     if (context === null) return failed("INVALID_INPUT", "Trusted workspace ingress is invalid");
     let preflight: ApplicationState;
@@ -2081,7 +2108,12 @@ function createWorkspaceApplicationServiceInternal(
           modifiedCount: receipt.inventory.modifiedCount,
           untrackedCount: receipt.inventory.untrackedCount,
           ignoredCount: receipt.inventory.ignoredCount,
+          repositoryIdentity: receipt.repositoryIdentity,
+          branchReference: receipt.branchReference,
+          headObjectId: receipt.headObjectId,
+          ownershipBindingSha256: receipt.ownershipBindingSha256,
           evidenceReference: receipt.evidenceReference,
+          cleanupAttestationSha256: receipt.cleanupAttestationSha256,
           observedAt: receipt.observedAt,
         }));
         if (receipt.outcome === "ambiguous") {

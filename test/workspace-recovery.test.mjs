@@ -162,7 +162,7 @@ async function prepareOperation(context, operation, key) {
   }
   if (operation === "create") return existingCommand("create", readApplicationStateForOwner(context.store), key);
   if (operation === "reserve") return reserveCommand(readApplicationStateForOwner(context.store), key);
-  if (operation === "inspect" || operation === "cleanup") {
+  if (operation === "inspect") {
     const created = normal.create(existingCommand("create", readApplicationStateForOwner(context.store), `${key}-baseline-create`));
     assert.equal(created.ok, true, JSON.stringify(created));
     return existingCommand(operation, readApplicationStateForOwner(context.store), key);
@@ -182,8 +182,8 @@ async function closeContext(context) {
 }
 
 test("real SQLite reopen resumes every committed prepare/observation/verification/finalization boundary without a second backend call", async (suite) => {
-  const expectedStatus = { reserve: "reserved", create: "ready", inspect: "ready", recover: "ready", cleanup: "cleaned" };
-  for (const operation of ["reserve", "create", "inspect", "recover", "cleanup"]) {
+  const expectedStatus = { reserve: "reserved", create: "ready", inspect: "ready", recover: "ready" };
+  for (const operation of ["reserve", "create", "inspect", "recover"]) {
     for (const stage of ["prepared", "observed", "verified", "finalized"]) {
       await suite.test(`${operation}:${stage}`, async () => {
         const context = await runtime(`workspace-restart-${operation}-${stage}`);
@@ -212,7 +212,7 @@ test("real SQLite reopen resumes every committed prepare/observation/verificatio
 });
 
 test("effect-possible restart never blindly replays mutations and read-only restart resumes exactly once", async (suite) => {
-  for (const operation of ["reserve", "create", "cleanup", "inspect", "recover"]) {
+  for (const operation of ["reserve", "create", "inspect", "recover"]) {
     await suite.test(operation, async () => {
       const context = await runtime(`workspace-executing-${operation}`);
       try {
@@ -241,7 +241,7 @@ test("effect-possible restart never blindly replays mutations and read-only rest
         } else {
           const retried = service(context)[operation](existingCommand(operation, state, `${operation}-executing-retry`));
           assert.equal(retried.ok, true, JSON.stringify(retried));
-          assert.equal(retried.value.workspace.status, operation === "create" ? "ready" : "cleaned");
+          assert.equal(retried.value.workspace.status, "ready");
         }
         assert.equal(context.backend.calls().filter((call) => call.operation === operation).length, callsBefore + 1);
       } finally {
@@ -252,7 +252,7 @@ test("effect-possible restart never blindly replays mutations and read-only rest
 });
 
 test("lost responses reconcile known Fake state and preserve ambiguity without duplicate mutation", async (suite) => {
-  for (const operation of ["reserve", "create", "cleanup"]) {
+  for (const operation of ["reserve", "create"]) {
     await suite.test(operation, async () => {
       const context = await runtime(`workspace-response-loss-${operation}`);
       try {
@@ -267,13 +267,34 @@ test("lost responses reconcile known Fake state and preserve ambiguity without d
         const causal = state.workspaceIntents.find((intent) => intent.idempotencyKey === command.idempotencyKey);
         const recovered = service(context).recover(recoverCommand(state, causal.operationId, `${operation}-response-recover`));
         assert.equal(recovered.ok, true, JSON.stringify(recovered));
-        assert.equal(recovered.value.workspace.status, operation === "reserve" ? "reserved" : operation === "create" ? "ready" : "cleaned");
+        assert.equal(recovered.value.workspace.status, operation === "reserve" ? "reserved" : "ready");
         assert.equal(context.backend.calls().filter((call) => call.operation === operation).length, callsBefore + 1);
         assert.equal(context.backend.calls().filter((call) => call.operation === "recover").length, 1);
       } finally {
         await closeContext(context);
       }
     });
+  }
+});
+
+test("legacy workspace cleanup is refused before trusted ingress, persistence, or backend access", async () => {
+  const context = await runtime("workspace-legacy-cleanup-disabled");
+  try {
+    const normal = service(context);
+    assert.equal(normal.reserve(reserveCommand(readApplicationStateForOwner(context.store), "legacy-cleanup-reserve")).ok, true);
+    assert.equal(normal.create(existingCommand("create", readApplicationStateForOwner(context.store), "legacy-cleanup-create")).ok, true);
+    const state = readApplicationStateForOwner(context.store);
+    const before = structuredClone(state);
+    const callsBefore = context.backend.calls().length;
+    const refused = normal.cleanup(existingCommand("cleanup", state, "legacy-cleanup"));
+    assert.equal(refused.ok, false);
+    assert.equal(refused.error.code, "INVALID_STATE");
+    assert.equal(refused.requestId, null);
+    assert.equal(refused.correlationId, null);
+    assert.equal(context.backend.calls().length, callsBefore);
+    assert.deepEqual(readApplicationStateForOwner(context.store), before);
+  } finally {
+    await closeContext(context);
   }
 });
 

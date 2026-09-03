@@ -1,4 +1,7 @@
-export const WORKSPACE_CONTRACT_ID = "ato.workspace/v1" as const;
+import { createHash } from "node:crypto";
+
+export const WORKSPACE_CONTRACT_ID = "ato.workspace/v2" as const;
+export const WORKSPACE_CLEANUP_ATTESTATION_CONTRACT_ID = "ato.workspace-cleanup-attestation/v1" as const;
 
 export const WORKSPACE_OPERATIONS = Object.freeze([
   "reserve",
@@ -72,6 +75,7 @@ export type WorkspaceReceiptCode = (typeof WORKSPACE_RECEIPT_CODES)[number];
 export type WorkspaceFailureCategory = (typeof WORKSPACE_FAILURE_CATEGORIES)[number];
 export type WorkspaceReceiptOutcome = "succeeded" | "refused" | "ambiguous";
 export type WorkspacePathSafety = "safe" | "unsafe" | "unknown";
+export type WorkspaceCleanupIntegrationDisposition = "not_required" | "released" | "expired";
 
 const WORKSPACE_FAILURE_FLAGS: Readonly<Record<
   WorkspaceFailureCategory,
@@ -119,6 +123,67 @@ export interface WorkspaceSubject {
   readonly baseReference: string;
 }
 
+export interface WorkspaceCleanupQuiescence {
+  readonly activeExecutionOwnerCount: 0;
+  readonly currentIntegrationReservationCount: 0;
+  readonly executionId: string;
+  readonly executionTerminalCreatedAt: string;
+  readonly generation: number;
+  readonly observedAt: string;
+  readonly taskId: string;
+  readonly taskRevision: number;
+  readonly unfinishedCompletionGateIntentCount: 0;
+  readonly unfinishedIntegrationIntentCount: 0;
+  readonly unfinishedWorkspaceIntentCount: 0;
+  readonly workspaceId: string;
+  readonly workspaceRevision: number;
+}
+
+export interface WorkspaceCleanupAttestation {
+  readonly contractId: typeof WORKSPACE_CLEANUP_ATTESTATION_CONTRACT_ID;
+  readonly attestationId: string;
+  readonly operationId: string;
+  readonly intentId: string;
+  readonly projectId: string;
+  readonly projectResourceRevision: number;
+  readonly projectConfigRevision: number;
+  readonly projectRootKey: string;
+  readonly repositoryIdentity: string;
+  readonly taskId: string;
+  readonly taskCompletedRevision: number;
+  readonly completionDecisionId: string;
+  readonly executionId: string;
+  readonly executionRevision: number;
+  readonly attemptNumber: number;
+  readonly fencingToken: number;
+  readonly executionTerminalCreatedAt: string;
+  readonly workspaceId: string;
+  readonly generation: number;
+  readonly workspaceRevision: number;
+  readonly workspaceRootKey: string;
+  readonly ownershipBindingSha256: string;
+  readonly policyReceiptId: string;
+  readonly policyReceiptSha256: string;
+  readonly policyConfigRevision: number;
+  readonly cleanupAuthorizationDecisionId: string;
+  readonly cleanupAuthorizationBindingRevision: number;
+  readonly grantId: string;
+  readonly grantRevision: number;
+  readonly confirmationId: string;
+  readonly gateSetSha256: string;
+  readonly preservationStateSha256: string;
+  readonly integrationDisposition: WorkspaceCleanupIntegrationDisposition;
+  readonly integrationReservationId: string | null;
+  readonly integrationReservationRevision: number | null;
+  readonly integrationReservationFencingToken: number | null;
+  readonly expectedBranchReference: string;
+  readonly expectedHeadObjectId: string;
+  readonly quiescenceSha256: string;
+  readonly issuedAt: string;
+  readonly validUntil: string;
+  readonly attestationSha256: string;
+}
+
 export interface WorkspaceBackendRequest {
   readonly contractId: typeof WORKSPACE_CONTRACT_ID;
   readonly operation: WorkspaceOperation;
@@ -129,6 +194,7 @@ export interface WorkspaceBackendRequest {
   readonly adapterId: string;
   readonly adapterVersion: string;
   readonly subject: WorkspaceSubject;
+  readonly cleanupAttestation: WorkspaceCleanupAttestation | null;
 }
 
 export interface WorkspaceInventorySummary {
@@ -164,6 +230,7 @@ export interface WorkspaceBackendReceipt {
   readonly ownershipMatch: boolean | null;
   readonly inventory: WorkspaceInventorySummary;
   readonly evidenceReference: string | null;
+  readonly cleanupAttestationSha256: string | null;
   readonly observedAt: string;
 }
 
@@ -189,6 +256,71 @@ export interface WorkspaceBackend {
 }
 
 type UnknownRecord = Readonly<Record<string, unknown>>;
+
+const CLEANUP_QUIESCENCE_KEYS = Object.freeze([
+  "activeExecutionOwnerCount",
+  "currentIntegrationReservationCount",
+  "executionId",
+  "executionTerminalCreatedAt",
+  "generation",
+  "observedAt",
+  "taskId",
+  "taskRevision",
+  "unfinishedCompletionGateIntentCount",
+  "unfinishedIntegrationIntentCount",
+  "unfinishedWorkspaceIntentCount",
+  "workspaceId",
+  "workspaceRevision",
+] as const);
+
+const CLEANUP_ATTESTATION_UNSIGNED_KEYS = Object.freeze([
+  "contractId",
+  "attestationId",
+  "operationId",
+  "intentId",
+  "projectId",
+  "projectResourceRevision",
+  "projectConfigRevision",
+  "projectRootKey",
+  "repositoryIdentity",
+  "taskId",
+  "taskCompletedRevision",
+  "completionDecisionId",
+  "executionId",
+  "executionRevision",
+  "attemptNumber",
+  "fencingToken",
+  "executionTerminalCreatedAt",
+  "workspaceId",
+  "generation",
+  "workspaceRevision",
+  "workspaceRootKey",
+  "ownershipBindingSha256",
+  "policyReceiptId",
+  "policyReceiptSha256",
+  "policyConfigRevision",
+  "cleanupAuthorizationDecisionId",
+  "cleanupAuthorizationBindingRevision",
+  "grantId",
+  "grantRevision",
+  "confirmationId",
+  "gateSetSha256",
+  "preservationStateSha256",
+  "integrationDisposition",
+  "integrationReservationId",
+  "integrationReservationRevision",
+  "integrationReservationFencingToken",
+  "expectedBranchReference",
+  "expectedHeadObjectId",
+  "quiescenceSha256",
+  "issuedAt",
+  "validUntil",
+] as const);
+
+const CLEANUP_ATTESTATION_KEYS = Object.freeze([
+  ...CLEANUP_ATTESTATION_UNSIGNED_KEYS,
+  "attestationSha256",
+] as const);
 
 function exactRecord(value: unknown, keys: readonly string[]): UnknownRecord | null {
   try {
@@ -263,6 +395,81 @@ function isOperation(value: unknown): value is WorkspaceOperation {
 
 function ownershipBinding(value: unknown): value is string {
   return typeof value === "string" && /^[0-9A-F]{64}$/u.test(value);
+}
+
+function sha1(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{40}$/u.test(value);
+}
+
+function gitBranchReference(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0 || value.length > 255 || value !== value.normalize("NFC") ||
+      !value.startsWith("refs/heads/") || value.endsWith("/") || value.endsWith(".") ||
+      value.includes("..") || value.includes("@{") || /[\u0000-\u0020\u007f~^:?*[\\]/u.test(value)) return false;
+  return value.split("/").every((part) => part.length > 0 && part !== "." && part !== ".." && !part.endsWith(".lock"));
+}
+
+function canonicalFlatSha256(value: Readonly<Record<string, unknown>>, keys: readonly string[]): string {
+  const canonical: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const key of [...keys].sort()) canonical[key] = value[key];
+  return createHash("sha256").update(JSON.stringify(canonical), "utf8").digest("hex").toUpperCase();
+}
+
+export function workspaceCleanupQuiescenceSha256(value: WorkspaceCleanupQuiescence): string {
+  return canonicalFlatSha256(value as unknown as Readonly<Record<string, unknown>>, CLEANUP_QUIESCENCE_KEYS);
+}
+
+export function workspaceCleanupAttestationSha256(
+  value: Omit<WorkspaceCleanupAttestation, "attestationSha256">,
+): string {
+  return canonicalFlatSha256(value as unknown as Readonly<Record<string, unknown>>, CLEANUP_ATTESTATION_UNSIGNED_KEYS);
+}
+
+export function parseWorkspaceCleanupQuiescence(value: unknown): WorkspaceCleanupQuiescence | null {
+  const record = exactRecord(value, CLEANUP_QUIESCENCE_KEYS);
+  if (record === null || record.activeExecutionOwnerCount !== 0 || record.currentIntegrationReservationCount !== 0 ||
+      !identifier(record.executionId) || !timestamp(record.executionTerminalCreatedAt) || !revision(record.generation) ||
+      !timestamp(record.observedAt) || !identifier(record.taskId) || !revision(record.taskRevision) ||
+      record.unfinishedCompletionGateIntentCount !== 0 || record.unfinishedIntegrationIntentCount !== 0 ||
+      record.unfinishedWorkspaceIntentCount !== 0 || !identifier(record.workspaceId) || !revision(record.workspaceRevision)) return null;
+  return Object.freeze(record) as unknown as WorkspaceCleanupQuiescence;
+}
+
+export function parseWorkspaceCleanupAttestation(value: unknown): WorkspaceCleanupAttestation | null {
+  const record = exactRecord(value, CLEANUP_ATTESTATION_KEYS);
+  if (record === null || record.contractId !== WORKSPACE_CLEANUP_ATTESTATION_CONTRACT_ID) return null;
+  const identifiers = [
+    record.attestationId, record.operationId, record.intentId, record.projectId, record.projectRootKey,
+    record.repositoryIdentity, record.taskId, record.completionDecisionId, record.executionId, record.workspaceId,
+    record.workspaceRootKey, record.policyReceiptId, record.cleanupAuthorizationDecisionId, record.grantId,
+    record.confirmationId,
+  ];
+  const revisions = [
+    record.projectResourceRevision, record.projectConfigRevision, record.taskCompletedRevision, record.executionRevision,
+    record.attemptNumber, record.fencingToken, record.generation, record.workspaceRevision, record.policyConfigRevision,
+    record.cleanupAuthorizationBindingRevision, record.grantRevision,
+  ];
+  if (!identifiers.every(identifier) || !revisions.every(revision) || !timestamp(record.executionTerminalCreatedAt) ||
+      !ownershipBinding(record.ownershipBindingSha256) || !ownershipBinding(record.policyReceiptSha256) ||
+      !ownershipBinding(record.gateSetSha256) || !ownershipBinding(record.preservationStateSha256) ||
+      !ownershipBinding(record.quiescenceSha256) || !gitBranchReference(record.expectedBranchReference) ||
+      !sha1(record.expectedHeadObjectId) || !timestamp(record.issuedAt) || !timestamp(record.validUntil) ||
+      !ownershipBinding(record.attestationSha256) ||
+      (record.integrationDisposition !== "not_required" && record.integrationDisposition !== "released" &&
+        record.integrationDisposition !== "expired")) return null;
+  const issuedAt = record.issuedAt as string;
+  const validUntil = record.validUntil as string;
+  const validityMs = new Date(validUntil).valueOf() - new Date(issuedAt).valueOf();
+  if (validityMs <= 0 || validityMs > 300_000) return null;
+  const noIntegration = record.integrationDisposition === "not_required";
+  if (noIntegration
+    ? record.integrationReservationId !== null || record.integrationReservationRevision !== null ||
+      record.integrationReservationFencingToken !== null
+    : !identifier(record.integrationReservationId) || !revision(record.integrationReservationRevision) ||
+      !revision(record.integrationReservationFencingToken)) return null;
+  const unsigned: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+  for (const key of CLEANUP_ATTESTATION_UNSIGNED_KEYS) unsigned[key] = record[key];
+  if (canonicalFlatSha256(unsigned, CLEANUP_ATTESTATION_UNSIGNED_KEYS) !== record.attestationSha256) return null;
+  return Object.freeze(record) as unknown as WorkspaceCleanupAttestation;
 }
 
 function parseSubject(value: unknown): WorkspaceSubject | null {
@@ -362,12 +569,29 @@ export function parseWorkspaceBackendRequest(value: unknown): WorkspaceBackendRe
     "adapterId",
     "adapterVersion",
     "subject",
+    "cleanupAttestation",
   ]);
   if (record === null || record.contractId !== WORKSPACE_CONTRACT_ID || !isOperation(record.operation)) return null;
   const required = [record.operationId, record.idempotencyKey, record.correlationId, record.adapterId, record.adapterVersion];
   const causationId = boundedText(record.causationId, 128, true);
   const subject = parseSubject(record.subject);
-  if (!required.every(identifier) || causationId === undefined || subject === null) return null;
+  const cleanupAttestation = record.cleanupAttestation === null
+    ? null
+    : parseWorkspaceCleanupAttestation(record.cleanupAttestation);
+  if (!required.every(identifier) || causationId === undefined || subject === null ||
+      (record.operation === "cleanup" ? cleanupAttestation === null : cleanupAttestation !== null)) return null;
+  if (cleanupAttestation !== null && (
+    cleanupAttestation.operationId !== record.operationId || cleanupAttestation.projectId !== subject.projectId ||
+    cleanupAttestation.projectResourceRevision !== subject.projectResourceRevision ||
+    cleanupAttestation.projectConfigRevision !== subject.projectConfigRevision ||
+    cleanupAttestation.projectRootKey !== subject.projectRootKey || cleanupAttestation.taskId !== subject.taskId ||
+    cleanupAttestation.taskCompletedRevision !== subject.taskRevision || cleanupAttestation.executionId !== subject.executionId ||
+    cleanupAttestation.executionRevision !== subject.executionRevision || cleanupAttestation.attemptNumber !== subject.attemptNumber ||
+    cleanupAttestation.fencingToken !== subject.fencingToken || cleanupAttestation.workspaceId !== subject.workspaceId ||
+    cleanupAttestation.generation !== subject.generation || cleanupAttestation.workspaceRevision !== subject.workspaceRevision ||
+    cleanupAttestation.workspaceRootKey !== subject.workspaceRootKey ||
+    cleanupAttestation.ownershipBindingSha256 !== subject.ownershipBindingSha256
+  )) return null;
   return Object.freeze({
     contractId: WORKSPACE_CONTRACT_ID,
     operation: record.operation,
@@ -378,6 +602,7 @@ export function parseWorkspaceBackendRequest(value: unknown): WorkspaceBackendRe
     adapterId: record.adapterId as string,
     adapterVersion: record.adapterVersion as string,
     subject,
+    cleanupAttestation,
   });
 }
 
@@ -620,6 +845,7 @@ function parseReceipt(value: unknown): WorkspaceBackendReceipt | null {
     "ownershipMatch",
     "inventory",
     "evidenceReference",
+    "cleanupAttestationSha256",
     "observedAt",
   ]);
   if (record === null || record.contractId !== WORKSPACE_CONTRACT_ID || !isOperation(record.operation)) return null;
@@ -650,6 +876,9 @@ function parseReceipt(value: unknown): WorkspaceBackendReceipt | null {
   const baseObjectId = reference(record.baseObjectId, true);
   const headObjectId = reference(record.headObjectId, true);
   const evidenceReference = opaqueReference(record.evidenceReference);
+  const cleanupAttestationSha256 = record.cleanupAttestationSha256 === null
+    ? null
+    : ownershipBinding(record.cleanupAttestationSha256) ? record.cleanupAttestationSha256 : undefined;
   const inventory = parseInventory(record.inventory);
   if (
     !required.every(identifier) ||
@@ -668,6 +897,8 @@ function parseReceipt(value: unknown): WorkspaceBackendReceipt | null {
     !(record.ownershipMatch === null || typeof record.ownershipMatch === "boolean") ||
     inventory === null ||
     evidenceReference === undefined ||
+    cleanupAttestationSha256 === undefined ||
+    (record.operation === "cleanup" ? cleanupAttestationSha256 === null : cleanupAttestationSha256 !== null) ||
     !timestamp(record.observedAt) ||
     !receiptRelationshipIsValid(record)
   ) return null;
@@ -697,6 +928,7 @@ function parseReceipt(value: unknown): WorkspaceBackendReceipt | null {
     ownershipMatch: record.ownershipMatch,
     inventory,
     evidenceReference,
+    cleanupAttestationSha256,
     observedAt: record.observedAt,
   });
 }

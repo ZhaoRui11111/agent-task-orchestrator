@@ -2687,6 +2687,18 @@ function acceptCompletion(
         identity.correlationId, currentBound.execution, "execution.completion.accepted", true,
         "manual_completion_accepted", identity.now,
       ));
+      transaction.insertCompletionDecision(Object.freeze({
+        completionDecisionId,
+        kind: "manual" as const,
+        taskId: command.taskId,
+        executionId: command.executionId,
+        attemptNumber: command.expectedAttemptNumber,
+        fencingToken: command.expectedFencingToken,
+        preTaskRevision: currentBound.task.revision,
+        postTaskRevision,
+        executionRevision: currentBound.execution.revision,
+        createdAt: identity.now,
+      }));
       transaction.insertManualCompletionDecision(Object.freeze({
         completionDecisionId,
         operationId: identity.operationId,

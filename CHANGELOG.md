@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Added the fresh-only injected Phase 3 library closure without changing the
+  default 33-command/37-error `ato.api/v1` CLI or the three backup/restore JSON
+  formats. The package now exports exact `ato.project-policy/v1`,
+  `ato.completion/v1`, `ato.integration/v1`, and sole current
+  `ato.workspace/v2` contracts; configured local policy, bounded non-shell gate,
+  local Git fast-forward/local-file-push, and attestation-bound Windows
+  workspace adapters; and one typed Phase 3 application/product facade.
+  Authorization vocabulary version 6 adds exactly twelve completion and
+  integration actions, the schema-version-1 baseline stores the complete
+  policy/gate/completion/integration/cleanup lineage, and lifecycle state digest
+  version 2 covers that current state. Task completion and cleanup require
+  separate current policy, grants, confirmation, verified evidence, and final
+  CAS; foreign or unknown Git effects remain inspect-only ambiguity. All real
+  Phase 3 effects are limited to disposable local fixtures, with no scheduler,
+  MCP, Codex, external-network, release, deployment, or platform-support claim.
+
 - Added one exported, product-unwired Windows local Git `WorkspaceBackend`
   (`windows-git-local` `1.0.0`) for exact reserve/create/inspect/recover of an
   ownership-bound detached linked worktree in trusted disjoint roots. The
@@ -166,11 +182,9 @@ All notable changes to this project will be documented in this file.
   build/packed-install/restart/migration evidence. The local Manual backend
   records no-workspace lifecycle facts and still does not execute Task content.
 
-These entries do not announce a release or supported platform. The executable
-material is limited to the development package, feasibility harness, pure
-in-memory Domain Core, ProjectRegistry, runtime authorization, typed
-application services, local current schema-version-1 persistence, the versioned local product
-CLI and facade, reliable Manual execution loop, and explicit-Manual
-reconcile-first dispatcher. Scheduler/SchedulerBackend, MCP,
-Codex/Git/workspace adapters, ProjectPolicy, CompletionBackend/gates, external
-Task-content execution, release, and deployment remain unimplemented.
+These entries do not announce a release or supported platform. Current
+executable material is limited to the development package, feasibility harness,
+Domain/Application/Persistence owners, the local explicit-Manual product, and
+the separately injected Phase 3 policy/gate/local-Git/workspace library named
+above. Scheduler/SchedulerBackend, MCP, Codex, external Task-content execution,
+general network integration, release, and deployment remain unimplemented.

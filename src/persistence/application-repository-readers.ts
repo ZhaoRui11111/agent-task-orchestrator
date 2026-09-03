@@ -53,6 +53,7 @@ import type {
   ExecutionTerminalStateRecord,
   ManualBackendTurnRecord,
   ManualBackendOperationRecord,
+  CompletionDecisionRecord,
   ManualCompletionDecisionRecord,
   DispatcherTriggerRequestRecord,
   DispatcherAuthorizationDecisionRecord,
@@ -71,6 +72,25 @@ import type {
   DispatcherMemberDenialDecisionRecord,
   DispatcherMemberDenialAuditRecord,
   DispatcherRunSummaryRecord,
+  ProjectPolicyReceiptRecord,
+  CompletionGateRequestRecord,
+  CompletionGateAuthorizationDecisionRecord,
+  CompletionGateIntentRecord,
+  CompletionGateObservationRecord,
+  CompletionGateVerifiedReceiptRecord,
+  CompletionGateFinalizationRecord,
+  CompletionGateEventRecord,
+  PolicyGatedCompletionDecisionRecord,
+  IntegrationTargetSequenceRecord,
+  IntegrationReservationRecord,
+  IntegrationOperationRequestRecord,
+  IntegrationAuthorizationDecisionRecord,
+  IntegrationIntentRecord,
+  IntegrationObservationRecord,
+  IntegrationVerifiedReceiptRecord,
+  IntegrationFinalizationRecord,
+  IntegrationEventRecord,
+  WorkspaceCleanupAttestationRecord,
   WorkspaceGenerationRecord,
   WorkspaceGenerationStatus,
   WorkspaceAuthorizationDecisionRecord,
@@ -145,6 +165,18 @@ const AUDIT_KINDS: ReadonlySet<AuditKind> = new Set([
   "execution.claim.inspected",
   "execution.lease.renewed",
   "execution.lease.taken_over",
+  "completion.gate.ran",
+  "completion.gate.inspected",
+  "completion.gate.cancelled",
+  "completion.accepted",
+  "integration.reserved",
+  "integration.inspected",
+  "integration.lease.renewed",
+  "integration.lease.taken_over",
+  "integration.applied",
+  "integration.pushed",
+  "integration.recovered",
+  "integration.released",
   "grant.listed",
   "runtime.status.inspected",
   "backup.authorized",
@@ -782,6 +814,36 @@ export function readManualBackendOperations(database: SqliteDatabase): readonly 
   })));
 }
 
+function lowercaseSha1(value: unknown, label: string): string {
+  const result = sqliteText(value, label);
+  if (!/^[0-9a-f]{40}$/u.test(result)) throw persistenceFailure("CORRUPT_ROW", `${label} is not lowercase SHA-1`);
+  return result;
+}
+
+function nullableLowercaseSha1(value: unknown, label: string): string | null {
+  return value === null ? null : lowercaseSha1(value, label);
+}
+
+export function readCompletionDecisions(database: SqliteDatabase): readonly CompletionDecisionRecord[] {
+  const kinds = new Set<CompletionDecisionRecord["kind"]>(["manual", "policy_gated"]);
+  return Object.freeze(database.prepare(
+    `SELECT completion_decision_id, kind, task_id, execution_id, attempt_number, fencing_token,
+      pre_task_revision, post_task_revision, execution_revision, created_at
+    FROM completion_decisions ORDER BY completion_decision_id`,
+  ).all().map((row) => Object.freeze({
+    completionDecisionId: sqliteText(row.completion_decision_id, "completion_decisions.completion_decision_id"),
+    kind: enumText(row.kind, "completion_decisions.kind", kinds),
+    taskId: sqliteText(row.task_id, "completion_decisions.task_id"),
+    executionId: sqliteText(row.execution_id, "completion_decisions.execution_id"),
+    attemptNumber: positive(row.attempt_number, "completion_decisions.attempt_number"),
+    fencingToken: positive(row.fencing_token, "completion_decisions.fencing_token"),
+    preTaskRevision: positive(row.pre_task_revision, "completion_decisions.pre_task_revision"),
+    postTaskRevision: positive(row.post_task_revision, "completion_decisions.post_task_revision"),
+    executionRevision: positive(row.execution_revision, "completion_decisions.execution_revision"),
+    createdAt: timestamp(row.created_at, "completion_decisions.created_at"),
+  })));
+}
+
 export function readManualCompletionDecisions(database: SqliteDatabase): readonly ManualCompletionDecisionRecord[] {
   return Object.freeze(database.prepare(
     `SELECT completion_decision_id, operation_id, idempotency_key, task_id, execution_id,
@@ -1147,6 +1209,548 @@ function opaqueEvidenceReference(value: unknown, label: string): string | null {
   return result;
 }
 
+export function readProjectPolicyReceipts(database: SqliteDatabase): readonly ProjectPolicyReceiptRecord[] {
+  const operations = new Set<ProjectPolicyReceiptRecord["operation"]>([
+    "evaluate_mutation", "completion_requirements", "evaluate_integration", "evaluate_cleanup",
+  ]);
+  const decisions = new Set<ProjectPolicyReceiptRecord["decision"]>(["allow", "deny", "defer"]);
+  return Object.freeze(database.prepare(
+    `SELECT receipt_id, policy_query_id, operation, preliminary_authorization_decision_id, requested_action,
+      actor_id, project_id, project_resource_revision, project_config_revision, project_root_key,
+      repository_identity, subject_sha256, policy_id, policy_key, policy_config_revision, adapter_id,
+      adapter_version, decision, reason_code, facts_json, facts_sha256, receipt_sha256, valid_until,
+      evidence_reference, observed_at FROM project_policy_receipts ORDER BY receipt_id`,
+  ).all().map((row) => Object.freeze({
+    receiptId: sqliteText(row.receipt_id, "project_policy_receipts.receipt_id"),
+    policyQueryId: sqliteText(row.policy_query_id, "project_policy_receipts.policy_query_id"),
+    operation: enumText(row.operation, "project_policy_receipts.operation", operations),
+    preliminaryAuthorizationDecisionId: sqliteText(row.preliminary_authorization_decision_id, "project_policy_receipts.preliminary_authorization_decision_id"),
+    requestedAction: sqliteText(row.requested_action, "project_policy_receipts.requested_action"),
+    actorId: sqliteText(row.actor_id, "project_policy_receipts.actor_id"),
+    projectId: sqliteText(row.project_id, "project_policy_receipts.project_id"),
+    projectResourceRevision: positive(row.project_resource_revision, "project_policy_receipts.project_resource_revision"),
+    projectConfigRevision: positive(row.project_config_revision, "project_policy_receipts.project_config_revision"),
+    projectRootKey: sqliteText(row.project_root_key, "project_policy_receipts.project_root_key"),
+    repositoryIdentity: sqliteText(row.repository_identity, "project_policy_receipts.repository_identity"),
+    subjectSha256: uppercaseSha256(row.subject_sha256, "project_policy_receipts.subject_sha256"),
+    policyId: sqliteText(row.policy_id, "project_policy_receipts.policy_id"),
+    policyKey: sqliteText(row.policy_key, "project_policy_receipts.policy_key"),
+    policyConfigRevision: positive(row.policy_config_revision, "project_policy_receipts.policy_config_revision"),
+    adapterId: sqliteText(row.adapter_id, "project_policy_receipts.adapter_id"),
+    adapterVersion: sqliteText(row.adapter_version, "project_policy_receipts.adapter_version"),
+    decision: enumText(row.decision, "project_policy_receipts.decision", decisions),
+    reasonCode: sqliteText(row.reason_code, "project_policy_receipts.reason_code"),
+    factsJson: sqliteText(row.facts_json, "project_policy_receipts.facts_json"),
+    factsSha256: uppercaseSha256(row.facts_sha256, "project_policy_receipts.facts_sha256"),
+    receiptSha256: uppercaseSha256(row.receipt_sha256, "project_policy_receipts.receipt_sha256"),
+    validUntil: row.valid_until === null ? null : timestamp(row.valid_until, "project_policy_receipts.valid_until"),
+    evidenceReference: sqliteNullableText(row.evidence_reference, "project_policy_receipts.evidence_reference"),
+    observedAt: timestamp(row.observed_at, "project_policy_receipts.observed_at"),
+  })));
+}
+
+export function readCompletionGateRequests(database: SqliteDatabase): readonly CompletionGateRequestRecord[] {
+  const kinds = new Set<CompletionGateRequestRecord["operationKind"]>(["run_gate", "inspect_gate", "cancel_gate"]);
+  return Object.freeze(database.prepare(
+    `SELECT request_id, operation_id, idempotency_key, operation_kind, actor_id, correlation_id, causation_id,
+      project_id, project_resource_revision, project_config_revision, project_root_key, repository_identity,
+      task_id, task_revision, execution_id, execution_revision, attempt_number, fencing_token, workspace_id,
+      generation, workspace_revision, workspace_root_key, ownership_binding_sha256, head_object_id,
+      policy_receipt_id, policy_id, policy_config_revision, gate_id, gate_version, command_key, command_identity_sha256,
+      completion_evidence_root_key, tool_environment_sha256, contract_id, adapter_id, adapter_version, timeout_ms, created_at
+    FROM completion_gate_requests ORDER BY request_id`,
+  ).all().map((row) => {
+    const contractId = sqliteText(row.contract_id, "completion_gate_requests.contract_id");
+    if (contractId !== "ato.completion/v1") throw persistenceFailure("CORRUPT_ROW", "Completion gate contract is unsupported");
+    const headObjectId = sqliteText(row.head_object_id, "completion_gate_requests.head_object_id");
+    if (!/^[0-9a-f]{40}$/u.test(headObjectId)) throw persistenceFailure("CORRUPT_ROW", "Completion gate HEAD is invalid");
+    return Object.freeze({
+      requestId: sqliteText(row.request_id, "completion_gate_requests.request_id"),
+      operationId: sqliteText(row.operation_id, "completion_gate_requests.operation_id"),
+      idempotencyKey: sqliteText(row.idempotency_key, "completion_gate_requests.idempotency_key"),
+      operationKind: enumText(row.operation_kind, "completion_gate_requests.operation_kind", kinds),
+      actorId: sqliteText(row.actor_id, "completion_gate_requests.actor_id"),
+      correlationId: sqliteText(row.correlation_id, "completion_gate_requests.correlation_id"),
+      causationId: sqliteNullableText(row.causation_id, "completion_gate_requests.causation_id"),
+      projectId: sqliteText(row.project_id, "completion_gate_requests.project_id"),
+      projectResourceRevision: positive(row.project_resource_revision, "completion_gate_requests.project_resource_revision"),
+      projectConfigRevision: positive(row.project_config_revision, "completion_gate_requests.project_config_revision"),
+      projectRootKey: sqliteText(row.project_root_key, "completion_gate_requests.project_root_key"),
+      repositoryIdentity: sqliteText(row.repository_identity, "completion_gate_requests.repository_identity"),
+      taskId: sqliteText(row.task_id, "completion_gate_requests.task_id"),
+      taskRevision: positive(row.task_revision, "completion_gate_requests.task_revision"),
+      executionId: sqliteText(row.execution_id, "completion_gate_requests.execution_id"),
+      executionRevision: positive(row.execution_revision, "completion_gate_requests.execution_revision"),
+      attemptNumber: positive(row.attempt_number, "completion_gate_requests.attempt_number"),
+      fencingToken: positive(row.fencing_token, "completion_gate_requests.fencing_token"),
+      workspaceId: sqliteText(row.workspace_id, "completion_gate_requests.workspace_id"),
+      generation: positive(row.generation, "completion_gate_requests.generation"),
+      workspaceRevision: positive(row.workspace_revision, "completion_gate_requests.workspace_revision"),
+      workspaceRootKey: sqliteText(row.workspace_root_key, "completion_gate_requests.workspace_root_key"),
+      ownershipBindingSha256: uppercaseSha256(row.ownership_binding_sha256, "completion_gate_requests.ownership_binding_sha256"),
+      headObjectId,
+      policyReceiptId: sqliteText(row.policy_receipt_id, "completion_gate_requests.policy_receipt_id"),
+      policyId: sqliteText(row.policy_id, "completion_gate_requests.policy_id"),
+      policyConfigRevision: positive(row.policy_config_revision, "completion_gate_requests.policy_config_revision"),
+      gateId: sqliteText(row.gate_id, "completion_gate_requests.gate_id"),
+      gateVersion: sqliteText(row.gate_version, "completion_gate_requests.gate_version"),
+      commandKey: sqliteText(row.command_key, "completion_gate_requests.command_key"),
+      commandIdentitySha256: uppercaseSha256(row.command_identity_sha256, "completion_gate_requests.command_identity_sha256"),
+      completionEvidenceRootKey: sqliteText(row.completion_evidence_root_key, "completion_gate_requests.completion_evidence_root_key"),
+      toolEnvironmentSha256: uppercaseSha256(row.tool_environment_sha256, "completion_gate_requests.tool_environment_sha256"),
+      contractId, adapterId: sqliteText(row.adapter_id, "completion_gate_requests.adapter_id"),
+      adapterVersion: sqliteText(row.adapter_version, "completion_gate_requests.adapter_version"),
+      timeoutMs: row.timeout_ms === null ? null : positive(row.timeout_ms, "completion_gate_requests.timeout_ms"),
+      createdAt: timestamp(row.created_at, "completion_gate_requests.created_at"),
+    });
+  }));
+}
+
+export function readCompletionGateAuthorizationDecisions(database: SqliteDatabase): readonly CompletionGateAuthorizationDecisionRecord[] {
+  const phases = new Set<CompletionGateAuthorizationDecisionRecord["phase"]>(["prepare", "act", "finalize"]);
+  const actions = new Set<CompletionGateAuthorizationDecisionRecord["action"]>([
+    "completion.gate.run", "completion.gate.inspect", "completion.gate.cancel",
+  ]);
+  return Object.freeze(database.prepare(
+    `SELECT decision_id, request_id, operation_id, binding_revision, phase, actor_id, action, result,
+      reason, policy_result, grant_id, grant_revision, confirmation_id, created_at
+    FROM completion_gate_authorization_decisions ORDER BY decision_id`,
+  ).all().map((row) => Object.freeze({
+    decisionId: sqliteText(row.decision_id, "completion_gate_authorization_decisions.decision_id"),
+    requestId: sqliteText(row.request_id, "completion_gate_authorization_decisions.request_id"),
+    operationId: sqliteText(row.operation_id, "completion_gate_authorization_decisions.operation_id"),
+    bindingRevision: positive(row.binding_revision, "completion_gate_authorization_decisions.binding_revision"),
+    phase: enumText(row.phase, "completion_gate_authorization_decisions.phase", phases),
+    actorId: sqliteText(row.actor_id, "completion_gate_authorization_decisions.actor_id"),
+    action: enumText(row.action, "completion_gate_authorization_decisions.action", actions),
+    result: enumText(row.result, "completion_gate_authorization_decisions.result", DECISION_RESULTS),
+    reason: enumText(row.reason, "completion_gate_authorization_decisions.reason", AUTHORIZATION_REASONS),
+    policy: enumText(row.policy_result, "completion_gate_authorization_decisions.policy_result", POLICY_RESULTS),
+    grantId: sqliteNullableText(row.grant_id, "completion_gate_authorization_decisions.grant_id"),
+    grantRevision: nullablePositive(row.grant_revision, "completion_gate_authorization_decisions.grant_revision"),
+    confirmationId: sqliteNullableText(row.confirmation_id, "completion_gate_authorization_decisions.confirmation_id"),
+    createdAt: timestamp(row.created_at, "completion_gate_authorization_decisions.created_at"),
+  })));
+}
+
+export function readCompletionGateIntents(database: SqliteDatabase): readonly CompletionGateIntentRecord[] {
+  const kinds = new Set<CompletionGateIntentRecord["operationKind"]>(["run_gate", "inspect_gate", "cancel_gate"]);
+  const states = new Set<CompletionGateIntentRecord["state"]>(["pending", "executing", "observed", "verified", "finalized", "ambiguous", "failed"]);
+  return Object.freeze(database.prepare(
+    `SELECT intent_id, operation_id, idempotency_key, request_id, operation_kind, state, revision,
+      current_authorization_decision_id, authorization_binding_revision, gate_operation_id,
+      last_observation_number, last_failure_category, last_failure_code, last_failure_retryable,
+      last_failure_ambiguous, created_at, updated_at FROM completion_gate_intents ORDER BY intent_id`,
+  ).all().map((row) => Object.freeze({
+    intentId: sqliteText(row.intent_id, "completion_gate_intents.intent_id"),
+    operationId: sqliteText(row.operation_id, "completion_gate_intents.operation_id"),
+    idempotencyKey: sqliteText(row.idempotency_key, "completion_gate_intents.idempotency_key"),
+    requestId: sqliteText(row.request_id, "completion_gate_intents.request_id"),
+    operationKind: enumText(row.operation_kind, "completion_gate_intents.operation_kind", kinds),
+    state: enumText(row.state, "completion_gate_intents.state", states),
+    revision: positive(row.revision, "completion_gate_intents.revision"),
+    currentAuthorizationDecisionId: sqliteText(row.current_authorization_decision_id, "completion_gate_intents.current_authorization_decision_id"),
+    authorizationBindingRevision: positive(row.authorization_binding_revision, "completion_gate_intents.authorization_binding_revision"),
+    gateOperationId: sqliteText(row.gate_operation_id, "completion_gate_intents.gate_operation_id"),
+    lastObservationNumber: nonnegative(row.last_observation_number, "completion_gate_intents.last_observation_number"),
+    lastFailureCategory: sqliteNullableText(row.last_failure_category, "completion_gate_intents.last_failure_category"),
+    lastFailureCode: sqliteNullableText(row.last_failure_code, "completion_gate_intents.last_failure_code"),
+    lastFailureRetryable: sqliteNullableBoolean(row.last_failure_retryable, "completion_gate_intents.last_failure_retryable"),
+    lastFailureAmbiguous: sqliteNullableBoolean(row.last_failure_ambiguous, "completion_gate_intents.last_failure_ambiguous"),
+    createdAt: timestamp(row.created_at, "completion_gate_intents.created_at"),
+    updatedAt: timestamp(row.updated_at, "completion_gate_intents.updated_at"),
+  })));
+}
+
+export function readCompletionGateObservations(database: SqliteDatabase): readonly CompletionGateObservationRecord[] {
+  const lifecycles = new Set<CompletionGateObservationRecord["lifecycle"]>(["running", "completed", "cancel_requested", "cancelled", "unknown"]);
+  const verdicts = new Set<CompletionGateObservationRecord["verdict"]>(["pass", "fail", "indeterminate"]);
+  return Object.freeze(database.prepare(
+    `SELECT observation_id, intent_id, observation_number, adapter_receipt_id, receipt_sha256,
+      authorization_decision_id, gate_operation_id, lifecycle, verdict, code, started_at, ended_at,
+      valid_until, evidence_reference, observed_at FROM completion_gate_observations
+    ORDER BY intent_id, observation_number`,
+  ).all().map((row) => Object.freeze({
+    observationId: sqliteText(row.observation_id, "completion_gate_observations.observation_id"),
+    intentId: sqliteText(row.intent_id, "completion_gate_observations.intent_id"),
+    observationNumber: positive(row.observation_number, "completion_gate_observations.observation_number"),
+    adapterReceiptId: sqliteText(row.adapter_receipt_id, "completion_gate_observations.adapter_receipt_id"),
+    receiptSha256: uppercaseSha256(row.receipt_sha256, "completion_gate_observations.receipt_sha256"),
+    authorizationDecisionId: sqliteText(row.authorization_decision_id, "completion_gate_observations.authorization_decision_id"),
+    gateOperationId: sqliteText(row.gate_operation_id, "completion_gate_observations.gate_operation_id"),
+    lifecycle: enumText(row.lifecycle, "completion_gate_observations.lifecycle", lifecycles),
+    verdict: enumText(row.verdict, "completion_gate_observations.verdict", verdicts),
+    code: sqliteText(row.code, "completion_gate_observations.code"),
+    startedAt: row.started_at === null ? null : timestamp(row.started_at, "completion_gate_observations.started_at"),
+    endedAt: row.ended_at === null ? null : timestamp(row.ended_at, "completion_gate_observations.ended_at"),
+    validUntil: row.valid_until === null ? null : timestamp(row.valid_until, "completion_gate_observations.valid_until"),
+    evidenceReference: sqliteText(row.evidence_reference, "completion_gate_observations.evidence_reference"),
+    observedAt: timestamp(row.observed_at, "completion_gate_observations.observed_at"),
+  })));
+}
+
+export function readCompletionGateReceipts(database: SqliteDatabase): readonly CompletionGateVerifiedReceiptRecord[] {
+  const verdicts = new Set<CompletionGateVerifiedReceiptRecord["verdict"]>(["pass", "fail"]);
+  return Object.freeze(database.prepare(
+    `SELECT verified_receipt_id, intent_id, observation_id, observation_number, adapter_receipt_id,
+      receipt_sha256, gate_operation_id, verdict, valid_until, verified_at
+    FROM completion_gate_verified_receipts ORDER BY verified_receipt_id`,
+  ).all().map((row) => Object.freeze({
+    verifiedReceiptId: sqliteText(row.verified_receipt_id, "completion_gate_verified_receipts.verified_receipt_id"),
+    intentId: sqliteText(row.intent_id, "completion_gate_verified_receipts.intent_id"),
+    observationId: sqliteText(row.observation_id, "completion_gate_verified_receipts.observation_id"),
+    observationNumber: positive(row.observation_number, "completion_gate_verified_receipts.observation_number"),
+    adapterReceiptId: sqliteText(row.adapter_receipt_id, "completion_gate_verified_receipts.adapter_receipt_id"),
+    receiptSha256: uppercaseSha256(row.receipt_sha256, "completion_gate_verified_receipts.receipt_sha256"),
+    gateOperationId: sqliteText(row.gate_operation_id, "completion_gate_verified_receipts.gate_operation_id"),
+    verdict: enumText(row.verdict, "completion_gate_verified_receipts.verdict", verdicts),
+    validUntil: row.valid_until === null ? null : timestamp(row.valid_until, "completion_gate_verified_receipts.valid_until"),
+    verifiedAt: timestamp(row.verified_at, "completion_gate_verified_receipts.verified_at"),
+  })));
+}
+
+export function readCompletionGateFinalizations(database: SqliteDatabase): readonly CompletionGateFinalizationRecord[] {
+  const outcomes = new Set<CompletionGateFinalizationRecord["outcome"]>(["accepted", "refused", "ambiguous", "failed"]);
+  return Object.freeze(database.prepare(
+    `SELECT finalization_id, intent_id, verified_receipt_id, authorization_decision_id, outcome, code,
+      finalized_at FROM completion_gate_finalizations ORDER BY finalization_id`,
+  ).all().map((row) => Object.freeze({
+    finalizationId: sqliteText(row.finalization_id, "completion_gate_finalizations.finalization_id"),
+    intentId: sqliteText(row.intent_id, "completion_gate_finalizations.intent_id"),
+    verifiedReceiptId: sqliteNullableText(row.verified_receipt_id, "completion_gate_finalizations.verified_receipt_id"),
+    authorizationDecisionId: sqliteText(row.authorization_decision_id, "completion_gate_finalizations.authorization_decision_id"),
+    outcome: enumText(row.outcome, "completion_gate_finalizations.outcome", outcomes),
+    code: sqliteText(row.code, "completion_gate_finalizations.code"),
+    finalizedAt: timestamp(row.finalized_at, "completion_gate_finalizations.finalized_at"),
+  })));
+}
+
+export function readCompletionGateEvents(database: SqliteDatabase): readonly CompletionGateEventRecord[] {
+  const kinds = new Set<CompletionGateEventRecord["eventKind"]>([
+    "completion.gate.prepared", "completion.gate.denied", "completion.gate.executing", "completion.gate.observed",
+    "completion.gate.verified", "completion.gate.finalized", "completion.gate.reconciled",
+  ]);
+  const outcomes = new Set<CompletionGateEventRecord["outcome"]>(["accepted", "denied", "refused", "ambiguous", "failed"]);
+  return Object.freeze(database.prepare(
+    `SELECT event_id, operation_id, intent_id, event_kind, outcome, reason_code, actor_id,
+      correlation_id, observation_number, evidence_reference, created_at
+    FROM completion_gate_events ORDER BY event_id`,
+  ).all().map((row) => Object.freeze({
+    eventId: sqliteText(row.event_id, "completion_gate_events.event_id"),
+    operationId: sqliteText(row.operation_id, "completion_gate_events.operation_id"),
+    intentId: sqliteNullableText(row.intent_id, "completion_gate_events.intent_id"),
+    eventKind: enumText(row.event_kind, "completion_gate_events.event_kind", kinds),
+    outcome: enumText(row.outcome, "completion_gate_events.outcome", outcomes),
+    reasonCode: sqliteText(row.reason_code, "completion_gate_events.reason_code"),
+    actorId: sqliteText(row.actor_id, "completion_gate_events.actor_id"),
+    correlationId: sqliteText(row.correlation_id, "completion_gate_events.correlation_id"),
+    observationNumber: nullablePositive(row.observation_number, "completion_gate_events.observation_number"),
+    evidenceReference: sqliteNullableText(row.evidence_reference, "completion_gate_events.evidence_reference"),
+    createdAt: timestamp(row.created_at, "completion_gate_events.created_at"),
+  })));
+}
+
+export function readPolicyGatedCompletionDecisions(database: SqliteDatabase): readonly PolicyGatedCompletionDecisionRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT completion_decision_id, operation_id, idempotency_key, execution_success_verified_receipt_id,
+      execution_success_finalization_id, policy_receipt_id, gate_set_sha256, workspace_evidence_sha256,
+      head_object_id, integration_evidence_sha256, preservation_state_sha256, request_id,
+      authorization_decision_id, audit_id, confirmation_id, created_at
+    FROM policy_gated_completion_decisions ORDER BY completion_decision_id`,
+  ).all().map((row) => {
+    const headObjectId = sqliteText(row.head_object_id, "policy_gated_completion_decisions.head_object_id");
+    if (!/^[0-9a-f]{40}$/u.test(headObjectId)) throw persistenceFailure("CORRUPT_ROW", "Policy completion HEAD is invalid");
+    return Object.freeze({
+      completionDecisionId: sqliteText(row.completion_decision_id, "policy_gated_completion_decisions.completion_decision_id"),
+      operationId: sqliteText(row.operation_id, "policy_gated_completion_decisions.operation_id"),
+      idempotencyKey: sqliteText(row.idempotency_key, "policy_gated_completion_decisions.idempotency_key"),
+      executionSuccessVerifiedReceiptId: sqliteText(row.execution_success_verified_receipt_id, "policy_gated_completion_decisions.execution_success_verified_receipt_id"),
+      executionSuccessFinalizationId: sqliteText(row.execution_success_finalization_id, "policy_gated_completion_decisions.execution_success_finalization_id"),
+      policyReceiptId: sqliteText(row.policy_receipt_id, "policy_gated_completion_decisions.policy_receipt_id"),
+      gateSetSha256: uppercaseSha256(row.gate_set_sha256, "policy_gated_completion_decisions.gate_set_sha256"),
+      workspaceEvidenceSha256: uppercaseSha256(row.workspace_evidence_sha256, "policy_gated_completion_decisions.workspace_evidence_sha256"),
+      headObjectId,
+      integrationEvidenceSha256: uppercaseSha256(row.integration_evidence_sha256, "policy_gated_completion_decisions.integration_evidence_sha256"),
+      preservationStateSha256: uppercaseSha256(row.preservation_state_sha256, "policy_gated_completion_decisions.preservation_state_sha256"),
+      requestId: sqliteText(row.request_id, "policy_gated_completion_decisions.request_id"),
+      authorizationDecisionId: sqliteText(row.authorization_decision_id, "policy_gated_completion_decisions.authorization_decision_id"),
+      auditId: sqliteText(row.audit_id, "policy_gated_completion_decisions.audit_id"),
+      confirmationId: sqliteText(row.confirmation_id, "policy_gated_completion_decisions.confirmation_id"),
+      createdAt: timestamp(row.created_at, "policy_gated_completion_decisions.created_at"),
+    });
+  }));
+}
+
+export function readIntegrationTargetSequences(database: SqliteDatabase): readonly IntegrationTargetSequenceRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT project_id, repository_identity, target_reference, last_fencing_token
+    FROM integration_target_sequences ORDER BY project_id, repository_identity, target_reference`,
+  ).all().map((row) => Object.freeze({
+    projectId: sqliteText(row.project_id, "integration_target_sequences.project_id"),
+    repositoryIdentity: sqliteText(row.repository_identity, "integration_target_sequences.repository_identity"),
+    targetReference: sqliteText(row.target_reference, "integration_target_sequences.target_reference"),
+    lastFencingToken: positive(row.last_fencing_token, "integration_target_sequences.last_fencing_token"),
+  })));
+}
+
+export function readIntegrationReservations(database: SqliteDatabase): readonly IntegrationReservationRecord[] {
+  const statuses = new Set<IntegrationReservationRecord["status"]>(["active", "ambiguous", "released", "expired"]);
+  return Object.freeze(database.prepare(
+    `SELECT reservation_id, revision, status, project_id, project_resource_revision, project_config_revision,
+      project_root_key, repository_identity, object_format, target_reference, expected_target_object_id,
+      source_workspace_id, source_generation, source_workspace_revision, source_workspace_root_key,
+      source_ownership_binding_sha256, source_head_object_id, owner_execution_id, owner_operation_id,
+      lease_owner_id, lease_revision, fencing_token, expires_at, policy_receipt_id, policy_config_revision,
+      destination_identity, destination_reference, expected_remote_head, current_evidence_sha256, created_at, updated_at
+    FROM integration_reservations ORDER BY reservation_id`,
+  ).all().map((row) => {
+    const objectFormat = sqliteText(row.object_format, "integration_reservations.object_format");
+    if (objectFormat !== "sha1") throw persistenceFailure("CORRUPT_ROW", "Integration object format is unsupported");
+    return Object.freeze({
+      reservationId: sqliteText(row.reservation_id, "integration_reservations.reservation_id"),
+      revision: positive(row.revision, "integration_reservations.revision"),
+      status: enumText(row.status, "integration_reservations.status", statuses),
+      projectId: sqliteText(row.project_id, "integration_reservations.project_id"),
+      projectResourceRevision: positive(row.project_resource_revision, "integration_reservations.project_resource_revision"),
+      projectConfigRevision: positive(row.project_config_revision, "integration_reservations.project_config_revision"),
+      projectRootKey: sqliteText(row.project_root_key, "integration_reservations.project_root_key"),
+      repositoryIdentity: sqliteText(row.repository_identity, "integration_reservations.repository_identity"),
+      objectFormat,
+      targetReference: sqliteText(row.target_reference, "integration_reservations.target_reference"),
+      expectedTargetObjectId: lowercaseSha1(row.expected_target_object_id, "integration_reservations.expected_target_object_id"),
+      sourceWorkspaceId: sqliteText(row.source_workspace_id, "integration_reservations.source_workspace_id"),
+      sourceGeneration: positive(row.source_generation, "integration_reservations.source_generation"),
+      sourceWorkspaceRevision: positive(row.source_workspace_revision, "integration_reservations.source_workspace_revision"),
+      sourceWorkspaceRootKey: sqliteText(row.source_workspace_root_key, "integration_reservations.source_workspace_root_key"),
+      sourceOwnershipBindingSha256: uppercaseSha256(row.source_ownership_binding_sha256, "integration_reservations.source_ownership_binding_sha256"),
+      sourceHeadObjectId: lowercaseSha1(row.source_head_object_id, "integration_reservations.source_head_object_id"),
+      ownerExecutionId: sqliteText(row.owner_execution_id, "integration_reservations.owner_execution_id"),
+      ownerOperationId: sqliteText(row.owner_operation_id, "integration_reservations.owner_operation_id"),
+      leaseOwnerId: sqliteText(row.lease_owner_id, "integration_reservations.lease_owner_id"),
+      leaseRevision: positive(row.lease_revision, "integration_reservations.lease_revision"),
+      fencingToken: positive(row.fencing_token, "integration_reservations.fencing_token"),
+      expiresAt: timestamp(row.expires_at, "integration_reservations.expires_at"),
+      policyReceiptId: sqliteText(row.policy_receipt_id, "integration_reservations.policy_receipt_id"),
+      policyConfigRevision: positive(row.policy_config_revision, "integration_reservations.policy_config_revision"),
+      destinationIdentity: sqliteText(row.destination_identity, "integration_reservations.destination_identity"),
+      destinationReference: sqliteText(row.destination_reference, "integration_reservations.destination_reference"),
+      expectedRemoteHead: nullableLowercaseSha1(row.expected_remote_head, "integration_reservations.expected_remote_head"),
+      currentEvidenceSha256: row.current_evidence_sha256 === null ? null : uppercaseSha256(row.current_evidence_sha256, "integration_reservations.current_evidence_sha256"),
+      createdAt: timestamp(row.created_at, "integration_reservations.created_at"),
+      updatedAt: timestamp(row.updated_at, "integration_reservations.updated_at"),
+    });
+  }));
+}
+
+export function readIntegrationOperationRequests(database: SqliteDatabase): readonly IntegrationOperationRequestRecord[] {
+  const kinds = new Set<IntegrationOperationRequestRecord["operationKind"]>(["apply", "push"]);
+  return Object.freeze(database.prepare(
+    `SELECT request_id, operation_id, idempotency_key, operation_kind, actor_id, correlation_id,
+      causation_id, reservation_id, expected_reservation_revision, expected_lease_revision,
+      expected_fencing_token, contract_id, adapter_id, adapter_version, created_at
+    FROM integration_operation_requests ORDER BY request_id`,
+  ).all().map((row) => {
+    const contractId = sqliteText(row.contract_id, "integration_operation_requests.contract_id");
+    if (contractId !== "ato.integration/v1") throw persistenceFailure("CORRUPT_ROW", "Integration contract is unsupported");
+    return Object.freeze({
+      requestId: sqliteText(row.request_id, "integration_operation_requests.request_id"),
+      operationId: sqliteText(row.operation_id, "integration_operation_requests.operation_id"),
+      idempotencyKey: sqliteText(row.idempotency_key, "integration_operation_requests.idempotency_key"),
+      operationKind: enumText(row.operation_kind, "integration_operation_requests.operation_kind", kinds),
+      actorId: sqliteText(row.actor_id, "integration_operation_requests.actor_id"),
+      correlationId: sqliteText(row.correlation_id, "integration_operation_requests.correlation_id"),
+      causationId: sqliteNullableText(row.causation_id, "integration_operation_requests.causation_id"),
+      reservationId: sqliteText(row.reservation_id, "integration_operation_requests.reservation_id"),
+      expectedReservationRevision: positive(row.expected_reservation_revision, "integration_operation_requests.expected_reservation_revision"),
+      expectedLeaseRevision: positive(row.expected_lease_revision, "integration_operation_requests.expected_lease_revision"),
+      expectedFencingToken: positive(row.expected_fencing_token, "integration_operation_requests.expected_fencing_token"),
+      contractId,
+      adapterId: sqliteText(row.adapter_id, "integration_operation_requests.adapter_id"),
+      adapterVersion: sqliteText(row.adapter_version, "integration_operation_requests.adapter_version"),
+      createdAt: timestamp(row.created_at, "integration_operation_requests.created_at"),
+    });
+  }));
+}
+
+export function readIntegrationAuthorizationDecisions(database: SqliteDatabase): readonly IntegrationAuthorizationDecisionRecord[] {
+  const phases = new Set<IntegrationAuthorizationDecisionRecord["phase"]>(["prepare", "act", "finalize"]);
+  const actions = new Set<IntegrationAuthorizationDecisionRecord["action"]>(["integration.apply", "integration.push"]);
+  return Object.freeze(database.prepare(
+    `SELECT decision_id, request_id, operation_id, binding_revision, phase, actor_id, action,
+      result, reason, policy_result, grant_id, grant_revision, confirmation_id, created_at
+    FROM integration_authorization_decisions ORDER BY decision_id`,
+  ).all().map((row) => Object.freeze({
+    decisionId: sqliteText(row.decision_id, "integration_authorization_decisions.decision_id"),
+    requestId: sqliteText(row.request_id, "integration_authorization_decisions.request_id"),
+    operationId: sqliteText(row.operation_id, "integration_authorization_decisions.operation_id"),
+    bindingRevision: positive(row.binding_revision, "integration_authorization_decisions.binding_revision"),
+    phase: enumText(row.phase, "integration_authorization_decisions.phase", phases),
+    actorId: sqliteText(row.actor_id, "integration_authorization_decisions.actor_id"),
+    action: enumText(row.action, "integration_authorization_decisions.action", actions),
+    result: enumText(row.result, "integration_authorization_decisions.result", DECISION_RESULTS),
+    reason: enumText(row.reason, "integration_authorization_decisions.reason", AUTHORIZATION_REASONS),
+    policy: enumText(row.policy_result, "integration_authorization_decisions.policy_result", POLICY_RESULTS),
+    grantId: sqliteNullableText(row.grant_id, "integration_authorization_decisions.grant_id"),
+    grantRevision: nullablePositive(row.grant_revision, "integration_authorization_decisions.grant_revision"),
+    confirmationId: sqliteNullableText(row.confirmation_id, "integration_authorization_decisions.confirmation_id"),
+    createdAt: timestamp(row.created_at, "integration_authorization_decisions.created_at"),
+  })));
+}
+
+export function readIntegrationIntents(database: SqliteDatabase): readonly IntegrationIntentRecord[] {
+  const kinds = new Set<IntegrationIntentRecord["operationKind"]>(["apply", "push"]);
+  const states = new Set<IntegrationIntentRecord["state"]>(["pending", "executing", "observed", "verified", "finalized", "ambiguous", "failed"]);
+  const recoveries = new Set<Exclude<IntegrationIntentRecord["recoveryResult"], null>>([
+    "recovered_no_effect", "recovered_local_applied", "recovered_pushed", "recovered_inconsistent",
+  ]);
+  return Object.freeze(database.prepare(
+    `SELECT intent_id, operation_id, idempotency_key, request_id, reservation_id, reservation_fencing_token,
+      operation_kind, state, revision, current_authorization_decision_id, authorization_binding_revision,
+      last_observation_number, recovery_result, last_failure_category, last_failure_code,
+      last_failure_retryable, last_failure_ambiguous, created_at, updated_at
+    FROM integration_intents ORDER BY intent_id`,
+  ).all().map((row) => Object.freeze({
+    intentId: sqliteText(row.intent_id, "integration_intents.intent_id"),
+    operationId: sqliteText(row.operation_id, "integration_intents.operation_id"),
+    idempotencyKey: sqliteText(row.idempotency_key, "integration_intents.idempotency_key"),
+    requestId: sqliteText(row.request_id, "integration_intents.request_id"),
+    reservationId: sqliteText(row.reservation_id, "integration_intents.reservation_id"),
+    reservationFencingToken: positive(row.reservation_fencing_token, "integration_intents.reservation_fencing_token"),
+    operationKind: enumText(row.operation_kind, "integration_intents.operation_kind", kinds),
+    state: enumText(row.state, "integration_intents.state", states),
+    revision: positive(row.revision, "integration_intents.revision"),
+    currentAuthorizationDecisionId: sqliteText(row.current_authorization_decision_id, "integration_intents.current_authorization_decision_id"),
+    authorizationBindingRevision: positive(row.authorization_binding_revision, "integration_intents.authorization_binding_revision"),
+    lastObservationNumber: nonnegative(row.last_observation_number, "integration_intents.last_observation_number"),
+    recoveryResult: row.recovery_result === null ? null : enumText(row.recovery_result, "integration_intents.recovery_result", recoveries),
+    lastFailureCategory: sqliteNullableText(row.last_failure_category, "integration_intents.last_failure_category"),
+    lastFailureCode: sqliteNullableText(row.last_failure_code, "integration_intents.last_failure_code"),
+    lastFailureRetryable: sqliteNullableBoolean(row.last_failure_retryable, "integration_intents.last_failure_retryable"),
+    lastFailureAmbiguous: sqliteNullableBoolean(row.last_failure_ambiguous, "integration_intents.last_failure_ambiguous"),
+    createdAt: timestamp(row.created_at, "integration_intents.created_at"),
+    updatedAt: timestamp(row.updated_at, "integration_intents.updated_at"),
+  })));
+}
+
+export function readIntegrationObservations(database: SqliteDatabase): readonly IntegrationObservationRecord[] {
+  const operations = new Set<IntegrationObservationRecord["operation"]>(["inspect", "apply", "push"]);
+  const localStates = new Set<IntegrationObservationRecord["localState"]>(["unchanged", "fast_forwarded", "already_at_source", "foreign", "unknown"]);
+  const remoteStates = new Set<IntegrationObservationRecord["remoteState"]>(["not_requested", "absent", "unchanged", "pushed", "already_at_source", "rejected", "foreign", "unknown"]);
+  const outcomes = new Set<IntegrationObservationRecord["outcome"]>(["succeeded", "refused", "ambiguous"]);
+  return Object.freeze(database.prepare(
+    `SELECT observation_id, reservation_id, intent_id, observation_number, operation, adapter_receipt_id, receipt_sha256,
+      authorization_decision_id, local_before_object_id, local_after_object_id, remote_before_object_id,
+      remote_after_object_id, local_state, remote_state, outcome, code, evidence_reference, observed_at
+    FROM integration_observations ORDER BY intent_id, observation_number`,
+  ).all().map((row) => Object.freeze({
+    observationId: sqliteText(row.observation_id, "integration_observations.observation_id"),
+    reservationId: sqliteText(row.reservation_id, "integration_observations.reservation_id"),
+    intentId: sqliteNullableText(row.intent_id, "integration_observations.intent_id"),
+    observationNumber: positive(row.observation_number, "integration_observations.observation_number"),
+    operation: enumText(row.operation, "integration_observations.operation", operations),
+    adapterReceiptId: sqliteText(row.adapter_receipt_id, "integration_observations.adapter_receipt_id"),
+    receiptSha256: uppercaseSha256(row.receipt_sha256, "integration_observations.receipt_sha256"),
+    authorizationDecisionId: sqliteText(row.authorization_decision_id, "integration_observations.authorization_decision_id"),
+    localBeforeObjectId: nullableLowercaseSha1(row.local_before_object_id, "integration_observations.local_before_object_id"),
+    localAfterObjectId: nullableLowercaseSha1(row.local_after_object_id, "integration_observations.local_after_object_id"),
+    remoteBeforeObjectId: nullableLowercaseSha1(row.remote_before_object_id, "integration_observations.remote_before_object_id"),
+    remoteAfterObjectId: nullableLowercaseSha1(row.remote_after_object_id, "integration_observations.remote_after_object_id"),
+    localState: enumText(row.local_state, "integration_observations.local_state", localStates),
+    remoteState: enumText(row.remote_state, "integration_observations.remote_state", remoteStates),
+    outcome: enumText(row.outcome, "integration_observations.outcome", outcomes),
+    code: sqliteText(row.code, "integration_observations.code"),
+    evidenceReference: sqliteText(row.evidence_reference, "integration_observations.evidence_reference"),
+    observedAt: timestamp(row.observed_at, "integration_observations.observed_at"),
+  })));
+}
+
+export function readIntegrationReceipts(database: SqliteDatabase): readonly IntegrationVerifiedReceiptRecord[] {
+  const outcomes = new Set<IntegrationVerifiedReceiptRecord["outcome"]>(["succeeded", "refused"]);
+  return Object.freeze(database.prepare(
+    `SELECT verified_receipt_id, intent_id, observation_id, observation_number, adapter_receipt_id,
+      receipt_sha256, outcome, code, verified_at FROM integration_verified_receipts ORDER BY verified_receipt_id`,
+  ).all().map((row) => Object.freeze({
+    verifiedReceiptId: sqliteText(row.verified_receipt_id, "integration_verified_receipts.verified_receipt_id"),
+    intentId: sqliteText(row.intent_id, "integration_verified_receipts.intent_id"),
+    observationId: sqliteText(row.observation_id, "integration_verified_receipts.observation_id"),
+    observationNumber: positive(row.observation_number, "integration_verified_receipts.observation_number"),
+    adapterReceiptId: sqliteText(row.adapter_receipt_id, "integration_verified_receipts.adapter_receipt_id"),
+    receiptSha256: uppercaseSha256(row.receipt_sha256, "integration_verified_receipts.receipt_sha256"),
+    outcome: enumText(row.outcome, "integration_verified_receipts.outcome", outcomes),
+    code: sqliteText(row.code, "integration_verified_receipts.code"),
+    verifiedAt: timestamp(row.verified_at, "integration_verified_receipts.verified_at"),
+  })));
+}
+
+export function readIntegrationFinalizations(database: SqliteDatabase): readonly IntegrationFinalizationRecord[] {
+  const outcomes = new Set<IntegrationFinalizationRecord["outcome"]>(["succeeded", "refused", "ambiguous", "failed"]);
+  const recoveries = new Set<Exclude<IntegrationFinalizationRecord["recoveryResult"], null>>([
+    "recovered_no_effect", "recovered_local_applied", "recovered_pushed", "recovered_inconsistent",
+  ]);
+  return Object.freeze(database.prepare(
+    `SELECT finalization_id, intent_id, verified_receipt_id, authorization_decision_id, outcome,
+      code, recovery_result, finalized_at FROM integration_finalizations ORDER BY finalization_id`,
+  ).all().map((row) => Object.freeze({
+    finalizationId: sqliteText(row.finalization_id, "integration_finalizations.finalization_id"),
+    intentId: sqliteText(row.intent_id, "integration_finalizations.intent_id"),
+    verifiedReceiptId: sqliteNullableText(row.verified_receipt_id, "integration_finalizations.verified_receipt_id"),
+    authorizationDecisionId: sqliteText(row.authorization_decision_id, "integration_finalizations.authorization_decision_id"),
+    outcome: enumText(row.outcome, "integration_finalizations.outcome", outcomes),
+    code: sqliteText(row.code, "integration_finalizations.code"),
+    recoveryResult: row.recovery_result === null ? null : enumText(row.recovery_result, "integration_finalizations.recovery_result", recoveries),
+    finalizedAt: timestamp(row.finalized_at, "integration_finalizations.finalized_at"),
+  })));
+}
+
+export function readIntegrationEvents(database: SqliteDatabase): readonly IntegrationEventRecord[] {
+  const kinds = new Set<IntegrationEventRecord["eventKind"]>([
+    "integration.reserved", "integration.renewed", "integration.taken_over", "integration.released", "integration.expired",
+    "integration.ambiguous", "integration.operation.prepared", "integration.operation.denied", "integration.operation.executing",
+    "integration.operation.observed", "integration.operation.verified", "integration.operation.finalized", "integration.operation.reconciled",
+  ]);
+  const outcomes = new Set<IntegrationEventRecord["outcome"]>(["accepted", "denied", "refused", "ambiguous", "failed"]);
+  return Object.freeze(database.prepare(
+    `SELECT event_id, reservation_id, operation_id, intent_id, event_kind, outcome, reason_code,
+      actor_id, correlation_id, observation_number, evidence_reference, created_at
+    FROM integration_events ORDER BY event_id`,
+  ).all().map((row) => Object.freeze({
+    eventId: sqliteText(row.event_id, "integration_events.event_id"),
+    reservationId: sqliteText(row.reservation_id, "integration_events.reservation_id"),
+    operationId: sqliteText(row.operation_id, "integration_events.operation_id"),
+    intentId: sqliteNullableText(row.intent_id, "integration_events.intent_id"),
+    eventKind: enumText(row.event_kind, "integration_events.event_kind", kinds),
+    outcome: enumText(row.outcome, "integration_events.outcome", outcomes),
+    reasonCode: sqliteText(row.reason_code, "integration_events.reason_code"),
+    actorId: sqliteText(row.actor_id, "integration_events.actor_id"),
+    correlationId: sqliteText(row.correlation_id, "integration_events.correlation_id"),
+    observationNumber: nullablePositive(row.observation_number, "integration_events.observation_number"),
+    evidenceReference: sqliteNullableText(row.evidence_reference, "integration_events.evidence_reference"),
+    createdAt: timestamp(row.created_at, "integration_events.created_at"),
+  })));
+}
+
+export function readWorkspaceCleanupAttestations(database: SqliteDatabase): readonly WorkspaceCleanupAttestationRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT attestation_id, operation_id, intent_id, project_id, task_id, execution_id, workspace_id,
+      generation, attestation_json, attestation_sha256, quiescence_sha256, issued_at, valid_until
+    FROM workspace_cleanup_attestations ORDER BY attestation_id`,
+  ).all().map((row) => Object.freeze({
+    attestationId: sqliteText(row.attestation_id, "workspace_cleanup_attestations.attestation_id"),
+    operationId: sqliteText(row.operation_id, "workspace_cleanup_attestations.operation_id"),
+    intentId: sqliteText(row.intent_id, "workspace_cleanup_attestations.intent_id"),
+    projectId: sqliteText(row.project_id, "workspace_cleanup_attestations.project_id"),
+    taskId: sqliteText(row.task_id, "workspace_cleanup_attestations.task_id"),
+    executionId: sqliteText(row.execution_id, "workspace_cleanup_attestations.execution_id"),
+    workspaceId: sqliteText(row.workspace_id, "workspace_cleanup_attestations.workspace_id"),
+    generation: positive(row.generation, "workspace_cleanup_attestations.generation"),
+    attestationJson: sqliteText(row.attestation_json, "workspace_cleanup_attestations.attestation_json"),
+    attestationSha256: uppercaseSha256(row.attestation_sha256, "workspace_cleanup_attestations.attestation_sha256"),
+    quiescenceSha256: uppercaseSha256(row.quiescence_sha256, "workspace_cleanup_attestations.quiescence_sha256"),
+    issuedAt: timestamp(row.issued_at, "workspace_cleanup_attestations.issued_at"),
+    validUntil: timestamp(row.valid_until, "workspace_cleanup_attestations.valid_until"),
+  })));
+}
+
 export function readWorkspaceGenerations(database: SqliteDatabase): readonly WorkspaceGenerationRecord[] {
   return Object.freeze(database.prepare(
     `SELECT workspace_id, generation, revision, status, project_id, project_resource_revision,
@@ -1181,7 +1785,7 @@ export function readWorkspaceGenerations(database: SqliteDatabase): readonly Wor
     predecessorGeneration: nullablePositive(row.predecessor_generation, "workspace_generations.predecessor_generation"),
     predecessorRevision: nullablePositive(row.predecessor_revision, "workspace_generations.predecessor_revision"),
     baseReference: sqliteText(row.base_reference, "workspace_generations.base_reference"),
-    contractId: enumText(row.contract_id, "workspace_generations.contract_id", new Set(["ato.workspace/v1"] as const)),
+    contractId: enumText(row.contract_id, "workspace_generations.contract_id", new Set(["ato.workspace/v2"] as const)),
     adapterId: sqliteText(row.adapter_id, "workspace_generations.adapter_id"),
     adapterVersion: sqliteText(row.adapter_version, "workspace_generations.adapter_version"),
     createdAt: timestamp(row.created_at, "workspace_generations.created_at"),
@@ -1261,7 +1865,7 @@ export function readWorkspaceIntents(database: SqliteDatabase): readonly Workspa
     lastFailureCode: sqliteNullableText(row.last_failure_code, "workspace_operation_intents.last_failure_code"),
     lastFailureRetryable: sqliteNullableBoolean(row.last_failure_retryable, "workspace_operation_intents.last_failure_retryable"),
     lastFailureAmbiguous: sqliteNullableBoolean(row.last_failure_ambiguous, "workspace_operation_intents.last_failure_ambiguous"),
-    contractId: enumText(row.contract_id, "workspace_operation_intents.contract_id", new Set(["ato.workspace/v1"] as const)),
+    contractId: enumText(row.contract_id, "workspace_operation_intents.contract_id", new Set(["ato.workspace/v2"] as const)),
     adapterId: sqliteText(row.adapter_id, "workspace_operation_intents.adapter_id"),
     adapterVersion: sqliteText(row.adapter_version, "workspace_operation_intents.adapter_version"),
     createdAt: timestamp(row.created_at, "workspace_operation_intents.created_at"),
@@ -1273,7 +1877,9 @@ export function readWorkspaceObservations(database: SqliteDatabase): readonly Wo
   return Object.freeze(database.prepare(
     `SELECT observation_id, intent_id, observation_number, adapter_receipt_id, receipt_sha256,
       authorization_decision_id, external_state, outcome, code, path_safety, ownership_match,
-      tracked_count, modified_count, untracked_count, ignored_count, evidence_reference, observed_at
+      tracked_count, modified_count, untracked_count, ignored_count,
+      repository_identity, branch_reference, head_object_id, ownership_binding_sha256, evidence_reference,
+      cleanup_attestation_sha256, observed_at
     FROM workspace_observations ORDER BY intent_id, observation_number`,
   ).all().map((row) => Object.freeze({
     observationId: sqliteText(row.observation_id, "workspace_observations.observation_id"),
@@ -1291,7 +1897,14 @@ export function readWorkspaceObservations(database: SqliteDatabase): readonly Wo
     modifiedCount: nonnegative(row.modified_count, "workspace_observations.modified_count"),
     untrackedCount: nonnegative(row.untracked_count, "workspace_observations.untracked_count"),
     ignoredCount: nonnegative(row.ignored_count, "workspace_observations.ignored_count"),
+    repositoryIdentity: sqliteNullableText(row.repository_identity, "workspace_observations.repository_identity"),
+    branchReference: sqliteNullableText(row.branch_reference, "workspace_observations.branch_reference"),
+    headObjectId: row.head_object_id === null ? null : lowercaseSha1(row.head_object_id, "workspace_observations.head_object_id"),
+    ownershipBindingSha256: uppercaseSha256(row.ownership_binding_sha256, "workspace_observations.ownership_binding_sha256"),
     evidenceReference: opaqueEvidenceReference(row.evidence_reference, "workspace_observations.evidence_reference"),
+    cleanupAttestationSha256: row.cleanup_attestation_sha256 === null
+      ? null
+      : uppercaseSha256(row.cleanup_attestation_sha256, "workspace_observations.cleanup_attestation_sha256"),
     observedAt: timestamp(row.observed_at, "workspace_observations.observed_at"),
   })));
 }
@@ -1299,7 +1912,9 @@ export function readWorkspaceObservations(database: SqliteDatabase): readonly Wo
 export function readWorkspaceReceipts(database: SqliteDatabase): readonly WorkspaceVerifiedReceiptRecord[] {
   return Object.freeze(database.prepare(
     `SELECT verified_receipt_id, intent_id, observation_id, observation_number, adapter_receipt_id,
-      receipt_sha256, workspace_id, generation, generation_revision, external_state, outcome, code, verified_at
+      receipt_sha256, workspace_id, generation, generation_revision, external_state, outcome, code,
+      repository_identity, branch_reference, head_object_id, ownership_binding_sha256,
+      cleanup_attestation_sha256, verified_at
     FROM workspace_verified_receipts ORDER BY verified_receipt_id`,
   ).all().map((row) => Object.freeze({
     verifiedReceiptId: sqliteText(row.verified_receipt_id, "workspace_verified_receipts.verified_receipt_id"),
@@ -1314,6 +1929,13 @@ export function readWorkspaceReceipts(database: SqliteDatabase): readonly Worksp
     externalState: enumText(row.external_state, "workspace_verified_receipts.external_state", WORKSPACE_EXTERNAL_STATE_SET),
     outcome: enumText(row.outcome, "workspace_verified_receipts.outcome", new Set(["succeeded", "refused"] as const)),
     code: enumText(row.code, "workspace_verified_receipts.code", WORKSPACE_RECEIPT_CODE_SET),
+    repositoryIdentity: sqliteNullableText(row.repository_identity, "workspace_verified_receipts.repository_identity"),
+    branchReference: sqliteNullableText(row.branch_reference, "workspace_verified_receipts.branch_reference"),
+    headObjectId: row.head_object_id === null ? null : lowercaseSha1(row.head_object_id, "workspace_verified_receipts.head_object_id"),
+    ownershipBindingSha256: uppercaseSha256(row.ownership_binding_sha256, "workspace_verified_receipts.ownership_binding_sha256"),
+    cleanupAttestationSha256: row.cleanup_attestation_sha256 === null
+      ? null
+      : uppercaseSha256(row.cleanup_attestation_sha256, "workspace_verified_receipts.cleanup_attestation_sha256"),
     verifiedAt: timestamp(row.verified_at, "workspace_verified_receipts.verified_at"),
   })));
 }

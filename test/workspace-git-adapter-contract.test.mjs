@@ -8,6 +8,7 @@ import {
 import {
   cleanupWorkspaceGitFixture,
   createWorkspaceGitFixture,
+  workspaceCleanupRequest,
   workspaceRequest,
 } from "./fixtures/workspace-git-fixture.mjs";
 
@@ -19,7 +20,7 @@ test("Windows Git adapter exposes only its frozen narrow description", windowsOn
     assert.deepEqual(fixture.adapter.description, {
       adapterId: WINDOWS_GIT_WORKSPACE_ADAPTER_ID,
       adapterVersion: WINDOWS_GIT_WORKSPACE_ADAPTER_VERSION,
-      contractId: "ato.workspace/v1",
+      contractId: "ato.workspace/v2",
       projectRootCount: 1,
       workspaceRootCount: 1,
     });
@@ -42,19 +43,14 @@ test("every direct operation returns the exact shared result grammar", windowsOn
 
     const inspect = fixture.adapter.inspect(workspaceRequest(fixture, "inspect"));
     const recover = fixture.adapter.recover(workspaceRequest(fixture, "recover"));
-    const cleanup = fixture.adapter.cleanup(workspaceRequest(fixture, "cleanup"));
+    const cleanupRequest = workspaceCleanupRequest(fixture, create.receipt);
+    const cleanup = fixture.adapter.cleanup(cleanupRequest);
     for (const result of [inspect, recover, cleanup]) {
       assert.deepEqual(parseWorkspaceBackendResult(result), result);
     }
-    assert.equal(cleanup.ok, false);
-    assert.deepEqual(cleanup.error, {
-      category: "policy_denied",
-      code: "cleanup_policy_unavailable",
-      retryable: false,
-      ambiguous: false,
-      retryAfter: null,
-      evidenceReference: cleanup.error.evidenceReference,
-    });
+    assert.equal(cleanup.ok, true, cleanup.ok ? undefined : cleanup.error.code);
+    assert.equal(cleanup.receipt.code, "removed");
+    assert.equal(cleanup.receipt.cleanupAttestationSha256, cleanupRequest.cleanupAttestation.attestationSha256);
   } finally {
     cleanupWorkspaceGitFixture(fixture);
   }

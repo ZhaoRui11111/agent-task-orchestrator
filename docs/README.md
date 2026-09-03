@@ -60,9 +60,10 @@ gate.
 Plans describe proposed, active, or completed development work. They do not become current product capability without matching implementation, tests, and current documentation.
 
 Current references distinguish the implemented sole-`ato.api/v1` explicit
-local-Manual product subset, durable workspace foundation, and exported but
-product-unwired Windows Git workspace backend from the still-planned
-SchedulerBackend, scheduled delivery, MCP, Codex/product workspace wiring,
-cleanup/integration, and policy/gated completion.
+local-Manual product from the separately injected Phase 3 library. The latter
+contains ProjectPolicy, completion gates, integration reservation/local Git
+effects, and attestation-bound workspace cleanup but has no default product or
+CLI wiring. SchedulerBackend, scheduled delivery, MCP, Codex, daemon/service,
+release, deployment, and any supported-platform claim remain unimplemented.
 
 All links in authoritative documentation must be repository-relative and resolve to committed files.

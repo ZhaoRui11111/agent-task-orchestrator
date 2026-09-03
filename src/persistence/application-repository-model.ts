@@ -132,6 +132,18 @@ export interface ApplicationAuditRecord {
     | "execution.claim.inspected"
     | "execution.lease.renewed"
     | "execution.lease.taken_over"
+    | "completion.gate.ran"
+    | "completion.gate.inspected"
+    | "completion.gate.cancelled"
+    | "completion.accepted"
+    | "integration.reserved"
+    | "integration.inspected"
+    | "integration.lease.renewed"
+    | "integration.lease.taken_over"
+    | "integration.applied"
+    | "integration.pushed"
+    | "integration.recovered"
+    | "integration.released"
     | "grant.listed"
     | "runtime.status.inspected"
     | "backup.authorized"
@@ -413,6 +425,19 @@ export interface ManualBackendOperationRecord {
   readonly createdAt: string;
 }
 
+export interface CompletionDecisionRecord {
+  readonly completionDecisionId: string;
+  readonly kind: "manual" | "policy_gated";
+  readonly taskId: string;
+  readonly executionId: string;
+  readonly attemptNumber: number;
+  readonly fencingToken: number;
+  readonly preTaskRevision: number;
+  readonly postTaskRevision: number;
+  readonly executionRevision: number;
+  readonly createdAt: string;
+}
+
 export interface ManualCompletionDecisionRecord {
   readonly completionDecisionId: string;
   readonly operationId: string;
@@ -634,6 +659,370 @@ export interface DispatcherRunSummaryRecord {
   readonly createdAt: string;
 }
 
+export interface ProjectPolicyReceiptRecord {
+  readonly receiptId: string;
+  readonly policyQueryId: string;
+  readonly operation: "evaluate_mutation" | "completion_requirements" | "evaluate_integration" | "evaluate_cleanup";
+  readonly preliminaryAuthorizationDecisionId: string;
+  readonly requestedAction: string;
+  readonly actorId: string;
+  readonly projectId: string;
+  readonly projectResourceRevision: number;
+  readonly projectConfigRevision: number;
+  readonly projectRootKey: string;
+  readonly repositoryIdentity: string;
+  readonly subjectSha256: string;
+  readonly policyId: string;
+  readonly policyKey: string;
+  readonly policyConfigRevision: number;
+  readonly adapterId: string;
+  readonly adapterVersion: string;
+  readonly decision: "allow" | "deny" | "defer";
+  readonly reasonCode: string;
+  readonly factsJson: string;
+  readonly factsSha256: string;
+  readonly receiptSha256: string;
+  readonly validUntil: string | null;
+  readonly evidenceReference: string | null;
+  readonly observedAt: string;
+}
+
+export type CompletionGateOperationKind = "run_gate" | "inspect_gate" | "cancel_gate";
+export type CompletionGateIntentState = "pending" | "executing" | "observed" | "verified" | "finalized" | "ambiguous" | "failed";
+
+export interface CompletionGateRequestRecord {
+  readonly requestId: string;
+  readonly operationId: string;
+  readonly idempotencyKey: string;
+  readonly operationKind: CompletionGateOperationKind;
+  readonly actorId: string;
+  readonly correlationId: string;
+  readonly causationId: string | null;
+  readonly projectId: string;
+  readonly projectResourceRevision: number;
+  readonly projectConfigRevision: number;
+  readonly projectRootKey: string;
+  readonly repositoryIdentity: string;
+  readonly taskId: string;
+  readonly taskRevision: number;
+  readonly executionId: string;
+  readonly executionRevision: number;
+  readonly attemptNumber: number;
+  readonly fencingToken: number;
+  readonly workspaceId: string;
+  readonly generation: number;
+  readonly workspaceRevision: number;
+  readonly workspaceRootKey: string;
+  readonly ownershipBindingSha256: string;
+  readonly headObjectId: string;
+  readonly policyReceiptId: string;
+  readonly policyId: string;
+  readonly policyConfigRevision: number;
+  readonly gateId: string;
+  readonly gateVersion: string;
+  readonly commandKey: string;
+  readonly commandIdentitySha256: string;
+  readonly completionEvidenceRootKey: string;
+  readonly toolEnvironmentSha256: string;
+  readonly contractId: "ato.completion/v1";
+  readonly adapterId: string;
+  readonly adapterVersion: string;
+  readonly timeoutMs: number | null;
+  readonly createdAt: string;
+}
+
+export interface CompletionGateAuthorizationDecisionRecord {
+  readonly decisionId: string;
+  readonly requestId: string;
+  readonly operationId: string;
+  readonly bindingRevision: number;
+  readonly phase: "prepare" | "act" | "finalize";
+  readonly actorId: string;
+  readonly action: Extract<AuthorizationAction, "completion.gate.run" | "completion.gate.inspect" | "completion.gate.cancel">;
+  readonly result: "allow" | "deny";
+  readonly reason: AuthorizationReason;
+  readonly policy: AuthorizationPolicyResult;
+  readonly grantId: string | null;
+  readonly grantRevision: number | null;
+  readonly confirmationId: string | null;
+  readonly createdAt: string;
+}
+
+export interface CompletionGateIntentRecord {
+  readonly intentId: string;
+  readonly operationId: string;
+  readonly idempotencyKey: string;
+  readonly requestId: string;
+  readonly operationKind: CompletionGateOperationKind;
+  readonly state: CompletionGateIntentState;
+  readonly revision: number;
+  readonly currentAuthorizationDecisionId: string;
+  readonly authorizationBindingRevision: number;
+  readonly gateOperationId: string;
+  readonly lastObservationNumber: number;
+  readonly lastFailureCategory: string | null;
+  readonly lastFailureCode: string | null;
+  readonly lastFailureRetryable: boolean | null;
+  readonly lastFailureAmbiguous: boolean | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CompletionGateObservationRecord {
+  readonly observationId: string;
+  readonly intentId: string;
+  readonly observationNumber: number;
+  readonly adapterReceiptId: string;
+  readonly receiptSha256: string;
+  readonly authorizationDecisionId: string;
+  readonly gateOperationId: string;
+  readonly lifecycle: "running" | "completed" | "cancel_requested" | "cancelled" | "unknown";
+  readonly verdict: "pass" | "fail" | "indeterminate";
+  readonly code: string;
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
+  readonly validUntil: string | null;
+  readonly evidenceReference: string;
+  readonly observedAt: string;
+}
+
+export interface CompletionGateVerifiedReceiptRecord {
+  readonly verifiedReceiptId: string;
+  readonly intentId: string;
+  readonly observationId: string;
+  readonly observationNumber: number;
+  readonly adapterReceiptId: string;
+  readonly receiptSha256: string;
+  readonly gateOperationId: string;
+  readonly verdict: "pass" | "fail";
+  readonly validUntil: string | null;
+  readonly verifiedAt: string;
+}
+
+export interface CompletionGateFinalizationRecord {
+  readonly finalizationId: string;
+  readonly intentId: string;
+  readonly verifiedReceiptId: string | null;
+  readonly authorizationDecisionId: string;
+  readonly outcome: "accepted" | "refused" | "ambiguous" | "failed";
+  readonly code: string;
+  readonly finalizedAt: string;
+}
+
+export interface CompletionGateEventRecord {
+  readonly eventId: string;
+  readonly operationId: string;
+  readonly intentId: string | null;
+  readonly eventKind: "completion.gate.prepared" | "completion.gate.denied" | "completion.gate.executing" |
+    "completion.gate.observed" | "completion.gate.verified" | "completion.gate.finalized" | "completion.gate.reconciled";
+  readonly outcome: "accepted" | "denied" | "refused" | "ambiguous" | "failed";
+  readonly reasonCode: string;
+  readonly actorId: string;
+  readonly correlationId: string;
+  readonly observationNumber: number | null;
+  readonly evidenceReference: string | null;
+  readonly createdAt: string;
+}
+
+export interface PolicyGatedCompletionDecisionRecord {
+  readonly completionDecisionId: string;
+  readonly operationId: string;
+  readonly idempotencyKey: string;
+  readonly executionSuccessVerifiedReceiptId: string;
+  readonly executionSuccessFinalizationId: string;
+  readonly policyReceiptId: string;
+  readonly gateSetSha256: string;
+  readonly workspaceEvidenceSha256: string;
+  readonly headObjectId: string;
+  readonly integrationEvidenceSha256: string;
+  readonly preservationStateSha256: string;
+  readonly requestId: string;
+  readonly authorizationDecisionId: string;
+  readonly auditId: string;
+  readonly confirmationId: string;
+  readonly createdAt: string;
+}
+
+export type IntegrationReservationStatus = "active" | "ambiguous" | "released" | "expired";
+export type IntegrationIntentState = "pending" | "executing" | "observed" | "verified" | "finalized" | "ambiguous" | "failed";
+export type IntegrationOperationKind = "apply" | "push";
+
+export interface IntegrationTargetSequenceRecord {
+  readonly projectId: string;
+  readonly repositoryIdentity: string;
+  readonly targetReference: string;
+  readonly lastFencingToken: number;
+}
+
+export interface IntegrationReservationRecord {
+  readonly reservationId: string;
+  readonly revision: number;
+  readonly status: IntegrationReservationStatus;
+  readonly projectId: string;
+  readonly projectResourceRevision: number;
+  readonly projectConfigRevision: number;
+  readonly projectRootKey: string;
+  readonly repositoryIdentity: string;
+  readonly objectFormat: "sha1";
+  readonly targetReference: string;
+  readonly expectedTargetObjectId: string;
+  readonly sourceWorkspaceId: string;
+  readonly sourceGeneration: number;
+  readonly sourceWorkspaceRevision: number;
+  readonly sourceWorkspaceRootKey: string;
+  readonly sourceOwnershipBindingSha256: string;
+  readonly sourceHeadObjectId: string;
+  readonly ownerExecutionId: string;
+  readonly ownerOperationId: string;
+  readonly leaseOwnerId: string;
+  readonly leaseRevision: number;
+  readonly fencingToken: number;
+  readonly expiresAt: string;
+  readonly policyReceiptId: string;
+  readonly policyConfigRevision: number;
+  readonly destinationIdentity: string;
+  readonly destinationReference: string;
+  readonly expectedRemoteHead: string | null;
+  readonly currentEvidenceSha256: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface IntegrationOperationRequestRecord {
+  readonly requestId: string;
+  readonly operationId: string;
+  readonly idempotencyKey: string;
+  readonly operationKind: IntegrationOperationKind;
+  readonly actorId: string;
+  readonly correlationId: string;
+  readonly causationId: string | null;
+  readonly reservationId: string;
+  readonly expectedReservationRevision: number;
+  readonly expectedLeaseRevision: number;
+  readonly expectedFencingToken: number;
+  readonly contractId: "ato.integration/v1";
+  readonly adapterId: string;
+  readonly adapterVersion: string;
+  readonly createdAt: string;
+}
+
+export interface IntegrationAuthorizationDecisionRecord {
+  readonly decisionId: string;
+  readonly requestId: string;
+  readonly operationId: string;
+  readonly bindingRevision: number;
+  readonly phase: "prepare" | "act" | "finalize";
+  readonly actorId: string;
+  readonly action: Extract<AuthorizationAction, "integration.apply" | "integration.push">;
+  readonly result: "allow" | "deny";
+  readonly reason: AuthorizationReason;
+  readonly policy: AuthorizationPolicyResult;
+  readonly grantId: string | null;
+  readonly grantRevision: number | null;
+  readonly confirmationId: string | null;
+  readonly createdAt: string;
+}
+
+export interface IntegrationIntentRecord {
+  readonly intentId: string;
+  readonly operationId: string;
+  readonly idempotencyKey: string;
+  readonly requestId: string;
+  readonly reservationId: string;
+  readonly reservationFencingToken: number;
+  readonly operationKind: IntegrationOperationKind;
+  readonly state: IntegrationIntentState;
+  readonly revision: number;
+  readonly currentAuthorizationDecisionId: string;
+  readonly authorizationBindingRevision: number;
+  readonly lastObservationNumber: number;
+  readonly recoveryResult: "recovered_no_effect" | "recovered_local_applied" | "recovered_pushed" | "recovered_inconsistent" | null;
+  readonly lastFailureCategory: string | null;
+  readonly lastFailureCode: string | null;
+  readonly lastFailureRetryable: boolean | null;
+  readonly lastFailureAmbiguous: boolean | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface IntegrationObservationRecord {
+  readonly observationId: string;
+  readonly reservationId: string;
+  readonly intentId: string | null;
+  readonly observationNumber: number;
+  readonly operation: "inspect" | "apply" | "push";
+  readonly adapterReceiptId: string;
+  readonly receiptSha256: string;
+  readonly authorizationDecisionId: string;
+  readonly localBeforeObjectId: string | null;
+  readonly localAfterObjectId: string | null;
+  readonly remoteBeforeObjectId: string | null;
+  readonly remoteAfterObjectId: string | null;
+  readonly localState: "unchanged" | "fast_forwarded" | "already_at_source" | "foreign" | "unknown";
+  readonly remoteState: "not_requested" | "absent" | "unchanged" | "pushed" | "already_at_source" | "rejected" | "foreign" | "unknown";
+  readonly outcome: "succeeded" | "refused" | "ambiguous";
+  readonly code: string;
+  readonly evidenceReference: string;
+  readonly observedAt: string;
+}
+
+export interface IntegrationVerifiedReceiptRecord {
+  readonly verifiedReceiptId: string;
+  readonly intentId: string;
+  readonly observationId: string;
+  readonly observationNumber: number;
+  readonly adapterReceiptId: string;
+  readonly receiptSha256: string;
+  readonly outcome: "succeeded" | "refused";
+  readonly code: string;
+  readonly verifiedAt: string;
+}
+
+export interface IntegrationFinalizationRecord {
+  readonly finalizationId: string;
+  readonly intentId: string;
+  readonly verifiedReceiptId: string | null;
+  readonly authorizationDecisionId: string;
+  readonly outcome: "succeeded" | "refused" | "ambiguous" | "failed";
+  readonly code: string;
+  readonly recoveryResult: IntegrationIntentRecord["recoveryResult"];
+  readonly finalizedAt: string;
+}
+
+export interface IntegrationEventRecord {
+  readonly eventId: string;
+  readonly reservationId: string;
+  readonly operationId: string;
+  readonly intentId: string | null;
+  readonly eventKind: "integration.reserved" | "integration.renewed" | "integration.taken_over" |
+    "integration.released" | "integration.expired" | "integration.ambiguous" | "integration.operation.prepared" |
+    "integration.operation.denied" | "integration.operation.executing" | "integration.operation.observed" |
+    "integration.operation.verified" | "integration.operation.finalized" | "integration.operation.reconciled";
+  readonly outcome: "accepted" | "denied" | "refused" | "ambiguous" | "failed";
+  readonly reasonCode: string;
+  readonly actorId: string;
+  readonly correlationId: string;
+  readonly observationNumber: number | null;
+  readonly evidenceReference: string | null;
+  readonly createdAt: string;
+}
+
+export interface WorkspaceCleanupAttestationRecord {
+  readonly attestationId: string;
+  readonly operationId: string;
+  readonly intentId: string;
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly executionId: string;
+  readonly workspaceId: string;
+  readonly generation: number;
+  readonly attestationJson: string;
+  readonly attestationSha256: string;
+  readonly quiescenceSha256: string;
+  readonly issuedAt: string;
+  readonly validUntil: string;
+}
+
 export type WorkspaceGenerationStatus =
   | "allocated"
   | "reserved"
@@ -673,7 +1062,7 @@ export interface WorkspaceGenerationRecord {
   readonly predecessorGeneration: number | null;
   readonly predecessorRevision: number | null;
   readonly baseReference: string;
-  readonly contractId: "ato.workspace/v1";
+  readonly contractId: "ato.workspace/v2";
   readonly adapterId: string;
   readonly adapterVersion: string;
   readonly createdAt: string;
@@ -730,7 +1119,7 @@ export interface WorkspaceOperationIntentRecord {
   readonly lastFailureCode: string | null;
   readonly lastFailureRetryable: boolean | null;
   readonly lastFailureAmbiguous: boolean | null;
-  readonly contractId: "ato.workspace/v1";
+  readonly contractId: "ato.workspace/v2";
   readonly adapterId: string;
   readonly adapterVersion: string;
   readonly createdAt: string;
@@ -753,7 +1142,12 @@ export interface WorkspaceObservationRecord {
   readonly modifiedCount: number;
   readonly untrackedCount: number;
   readonly ignoredCount: number;
+  readonly repositoryIdentity: string | null;
+  readonly branchReference: string | null;
+  readonly headObjectId: string | null;
+  readonly ownershipBindingSha256: string;
   readonly evidenceReference: string | null;
+  readonly cleanupAttestationSha256: string | null;
   readonly observedAt: string;
 }
 
@@ -770,6 +1164,11 @@ export interface WorkspaceVerifiedReceiptRecord {
   readonly externalState: WorkspaceExternalState;
   readonly outcome: "succeeded" | "refused";
   readonly code: WorkspacePortReceiptCode;
+  readonly repositoryIdentity: string | null;
+  readonly branchReference: string | null;
+  readonly headObjectId: string | null;
+  readonly ownershipBindingSha256: string;
+  readonly cleanupAttestationSha256: string | null;
   readonly verifiedAt: string;
 }
 
@@ -838,6 +1237,7 @@ export interface ApplicationState {
   readonly executionTerminalStates: readonly ExecutionTerminalStateRecord[];
   readonly manualTurns: readonly ManualBackendTurnRecord[];
   readonly manualBackendOperations: readonly ManualBackendOperationRecord[];
+  readonly completionDecisions: readonly CompletionDecisionRecord[];
   readonly manualCompletionDecisions: readonly ManualCompletionDecisionRecord[];
   readonly dispatcherTriggerRequests: readonly DispatcherTriggerRequestRecord[];
   readonly dispatcherAuthorizationDecisions: readonly DispatcherAuthorizationDecisionRecord[];
@@ -851,6 +1251,24 @@ export interface ApplicationState {
   readonly dispatcherMemberDenialDecisions: readonly DispatcherMemberDenialDecisionRecord[];
   readonly dispatcherMemberDenialAudit: readonly DispatcherMemberDenialAuditRecord[];
   readonly dispatcherRunSummaries: readonly DispatcherRunSummaryRecord[];
+  readonly projectPolicyReceipts: readonly ProjectPolicyReceiptRecord[];
+  readonly completionGateRequests: readonly CompletionGateRequestRecord[];
+  readonly completionGateAuthorizationDecisions: readonly CompletionGateAuthorizationDecisionRecord[];
+  readonly completionGateIntents: readonly CompletionGateIntentRecord[];
+  readonly completionGateObservations: readonly CompletionGateObservationRecord[];
+  readonly completionGateReceipts: readonly CompletionGateVerifiedReceiptRecord[];
+  readonly completionGateFinalizations: readonly CompletionGateFinalizationRecord[];
+  readonly completionGateEvents: readonly CompletionGateEventRecord[];
+  readonly policyGatedCompletionDecisions: readonly PolicyGatedCompletionDecisionRecord[];
+  readonly integrationTargetSequences: readonly IntegrationTargetSequenceRecord[];
+  readonly integrationReservations: readonly IntegrationReservationRecord[];
+  readonly integrationOperationRequests: readonly IntegrationOperationRequestRecord[];
+  readonly integrationAuthorizationDecisions: readonly IntegrationAuthorizationDecisionRecord[];
+  readonly integrationIntents: readonly IntegrationIntentRecord[];
+  readonly integrationObservations: readonly IntegrationObservationRecord[];
+  readonly integrationReceipts: readonly IntegrationVerifiedReceiptRecord[];
+  readonly integrationFinalizations: readonly IntegrationFinalizationRecord[];
+  readonly integrationEvents: readonly IntegrationEventRecord[];
   readonly workspaceGenerations: readonly WorkspaceGenerationRecord[];
   readonly workspaceAuthorizationDecisions: readonly WorkspaceAuthorizationDecisionRecord[];
   readonly workspaceIntents: readonly WorkspaceOperationIntentRecord[];
@@ -858,6 +1276,7 @@ export interface ApplicationState {
   readonly workspaceReceipts: readonly WorkspaceVerifiedReceiptRecord[];
   readonly workspaceFinalizations: readonly WorkspaceFinalizationRecord[];
   readonly workspaceEvents: readonly WorkspaceEventRecord[];
+  readonly workspaceCleanupAttestations: readonly WorkspaceCleanupAttestationRecord[];
   readonly lifecycle: readonly ApplicationLifecycleAuthorization[];
 }
 
@@ -896,6 +1315,18 @@ export function applicationAuditKind(value: AuthorizationAction): ApplicationAud
     case "execution.claim.inspect": return "execution.claim.inspected";
     case "execution.lease.renew": return "execution.lease.renewed";
     case "execution.lease.takeover": return "execution.lease.taken_over";
-    default: throw new TypeError("Manual execution actions use the execution-operation audit owner");
+    case "completion.gate.run": return "completion.gate.ran";
+    case "completion.gate.inspect": return "completion.gate.inspected";
+    case "completion.gate.cancel": return "completion.gate.cancelled";
+    case "completion.accept": return "completion.accepted";
+    case "integration.reserve": return "integration.reserved";
+    case "integration.inspect": return "integration.inspected";
+    case "integration.lease.renew": return "integration.lease.renewed";
+    case "integration.lease.takeover": return "integration.lease.taken_over";
+    case "integration.apply": return "integration.applied";
+    case "integration.push": return "integration.pushed";
+    case "integration.recover": return "integration.recovered";
+    case "integration.release": return "integration.released";
+    default: throw new TypeError("Manual execution and workspace actions use their dedicated audit owners");
   }
 }

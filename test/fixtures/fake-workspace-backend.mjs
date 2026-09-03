@@ -8,7 +8,7 @@ function receipt(request, sequence, externalState, outcome, code) {
   const present = externalState === "reserved" || externalState === "partial" || externalState === "complete" || externalState === "ambiguous";
   const complete = externalState === "complete";
   return Object.freeze({
-    contractId: "ato.workspace/v1",
+    contractId: "ato.workspace/v2",
     receiptId: `fake-receipt-${sequence}`,
     operation: request.operation,
     operationId: request.operationId,
@@ -26,13 +26,16 @@ function receipt(request, sequence, externalState, outcome, code) {
     canonicalPath: present ? `fake-private-path-${request.subject.workspaceId}` : null,
     repositoryIdentity: complete ? `fake-repository-${request.subject.projectId}` : null,
     registrationIdentity: complete ? `fake-registration-${request.subject.workspaceId}` : null,
-    branchReference: complete ? `fake-branch-${request.subject.workspaceId}` : null,
-    baseObjectId: complete ? "A".repeat(40) : null,
-    headObjectId: complete ? "B".repeat(40) : null,
+    branchReference: null,
+    baseObjectId: complete ? "a".repeat(40) : null,
+    headObjectId: complete ? "b".repeat(40) : null,
     pathSafety: complete ? "safe" : present ? "unknown" : "safe",
     ownershipMatch: complete ? true : present ? null : false,
     inventory: ZERO_INVENTORY,
     evidenceReference: `fake-evidence-${sequence}`,
+    cleanupAttestationSha256: request.operation === "cleanup"
+      ? request.cleanupAttestation?.attestationSha256 ?? null
+      : null,
     observedAt: new Date(Date.parse("2026-08-30T12:00:20.000Z") + sequence).toISOString(),
   });
 }

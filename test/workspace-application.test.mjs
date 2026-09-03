@@ -117,7 +117,7 @@ function ownerCommand(state, idempotencyKey) {
   };
 }
 
-test("workspace reserve/create/inspect/cleanup use durable exact bindings and terminal replay", async () => {
+test("workspace reserve/create/inspect use durable exact bindings and direct cleanup stays closed", async () => {
   const testRuntime = await runtime("workspace-happy");
   try {
     const backend = createFakeWorkspaceBackend();
@@ -189,14 +189,16 @@ test("workspace reserve/create/inspect/cleanup use durable exact bindings and te
 
     state = readApplicationStateForOwner(testRuntime.store);
     const beforeCleanup = state.workspaceGenerations[0];
-    const cleaned = service.cleanup({
+    const refusedCleanup = service.cleanup({
       kind: "workspace.cleanup", ...ownerCommand(state, "cleanup-idempotency"),
       workspaceId: beforeCleanup.workspaceId, expectedGeneration: beforeCleanup.generation,
       expectedGenerationRevision: beforeCleanup.revision,
     });
-    assert.equal(cleaned.ok, true, JSON.stringify(cleaned));
-    assert.equal(cleaned.value.workspace.status, "cleaned");
+    assert.equal(refusedCleanup.ok, false);
+    assert.equal(refusedCleanup.error.code, "INVALID_STATE");
+    assert.equal(backend.calls().filter((call) => call.operation === "cleanup").length, 0);
     const finalState = readApplicationStateForOwner(testRuntime.store);
+    assert.equal(finalState.workspaceGenerations[0].status, "ready");
     const serialized = JSON.stringify({
       generations: finalState.workspaceGenerations,
       decisions: finalState.workspaceAuthorizationDecisions,
@@ -390,7 +392,7 @@ test("verified reserve refusal permits an exact same-generation retry while part
   }
 });
 
-test("a cleaned predecessor allocates exactly generation plus one with immutable predecessor binding", async () => {
+test("an uncleaned predecessor cannot allocate another generation through the legacy service", async () => {
   const testRuntime = await runtime("workspace-replacement");
   try {
     const backend = createFakeWorkspaceBackend();
@@ -410,10 +412,12 @@ test("a cleaned predecessor allocates exactly generation plus one with immutable
     }).ok, true);
     state = readApplicationStateForOwner(testRuntime.store);
     current = state.workspaceGenerations[0];
-    assert.equal(workspace.cleanup({
+    const cleanup = workspace.cleanup({
       kind: "workspace.cleanup", ...ownerCommand(state, "replacement-cleanup-one"),
       workspaceId: current.workspaceId, expectedGeneration: current.generation, expectedGenerationRevision: current.revision,
-    }).ok, true);
+    });
+    assert.equal(cleanup.ok, false);
+    assert.equal(cleanup.error.code, "INVALID_STATE");
     state = readApplicationStateForOwner(testRuntime.store);
     const predecessor = state.workspaceGenerations[0];
     const second = workspace.reserve({
@@ -422,13 +426,10 @@ test("a cleaned predecessor allocates exactly generation plus one with immutable
       predecessorGeneration: predecessor.generation,
       predecessorRevision: predecessor.revision,
     });
-    assert.equal(second.ok, true, JSON.stringify(second));
-    assert.equal(second.value.workspace.workspaceId, first.value.workspace.workspaceId);
-    assert.equal(second.value.workspace.generation, predecessor.generation + 1);
-    assert.equal(second.value.workspace.predecessorGeneration, predecessor.generation);
-    assert.equal(second.value.workspace.predecessorRevision, predecessor.revision);
+    assert.equal(second.ok, false);
+    assert.equal(second.error.code, "INVALID_STATE");
     const finalState = readApplicationStateForOwner(testRuntime.store);
-    assert.deepEqual(finalState.workspaceGenerations.map(({ generation, status }) => [generation, status]), [[1, "cleaned"], [2, "reserved"]]);
+    assert.deepEqual(finalState.workspaceGenerations.map(({ generation, status }) => [generation, status]), [[1, "ready"]]);
   } finally {
     await testRuntime.store.close();
     cleanupPersistenceFixture(testRuntime.fixture);
@@ -472,7 +473,7 @@ test("competing exact replay produces one generation, intent, and backend effect
   }
 });
 
-test("cleanup confirmation and fresh act/finalize fence checks prevent unauthorized effects", async () => {
+test("legacy cleanup stays closed and fresh Act/finalize fence checks prevent unauthorized effects", async () => {
   const deniedRuntime = await runtime("workspace-cleanup-confirmation");
   try {
     const backend = createFakeWorkspaceBackend();
@@ -507,7 +508,7 @@ test("cleanup confirmation and fresh act/finalize fence checks prevent unauthori
       expectedGenerationRevision: generation.revision,
     });
     assert.equal(denied.ok, false);
-    assert.equal(denied.error.code, "AUTHORIZATION_DENIED");
+    assert.equal(denied.error.code, "INVALID_STATE");
     assert.equal(backend.calls().filter((call) => call.operation === "cleanup").length, 0);
     assert.equal(readApplicationStateForOwner(deniedRuntime.store).workspaceGenerations[0].status, "ready");
   } finally {
@@ -899,31 +900,12 @@ test("combined decoder requires an exact same-generation durable ambiguous acycl
     });
     assert.equal(recovered.ok, true, JSON.stringify(recovered));
     assert.equal(recovered.value.workspace.status, "ready");
-    state = readApplicationStateForOwner(testRuntime.store);
-    generation = state.workspaceGenerations[0];
-    const cleaned = workspace.cleanup({
-      kind: "workspace.cleanup", ...ownerCommand(state, "causation-cleanup"),
-      workspaceId: generation.workspaceId, expectedGeneration: generation.generation,
-      expectedGenerationRevision: generation.revision,
-    });
-    assert.equal(cleaned.ok, true, JSON.stringify(cleaned));
-    state = readApplicationStateForOwner(testRuntime.store);
-    const predecessor = state.workspaceGenerations[0];
-    const replacement = workspace.reserve({
-      kind: "workspace.reserve", ...ownerCommand(state, "causation-reserve-2"), baseReference: "refs/heads/main",
-      predecessorWorkspaceId: predecessor.workspaceId,
-      predecessorGeneration: predecessor.generation,
-      predecessorRevision: predecessor.revision,
-    });
-    assert.equal(replacement.ok, true, JSON.stringify(replacement));
-    assert.equal(replacement.value.workspace.generation, 2);
     await testRuntime.store.close();
     storeOpen = false;
 
     const corruptions = [
       { name: "missing-recover-causation", target: null },
       { name: "nonambiguous-recover-causation", target: "causation-reserve-1" },
-      { name: "cross-generation-recover-causation", target: "causation-reserve-2" },
       { name: "inspect-root-recover-causation", target: "causation-inspect" },
       { name: "cyclic-recover-causation", target: "causation-recover" },
     ];
@@ -969,7 +951,7 @@ test("combined decoder requires an exact same-generation durable ambiguous acycl
   }
 });
 
-test("recover rejects ambiguous inspect roots and retains original create and cleanup projection", async () => {
+test("recover rejects ambiguous inspect roots and retains the original create projection", async () => {
   const testRuntime = await runtime("workspace-recover-effect-root");
   try {
     const backend = createFakeWorkspaceBackend();
@@ -1040,54 +1022,6 @@ test("recover rejects ambiguous inspect roots and retains original create and cl
     });
     assert.equal(recreated.ok, true, JSON.stringify(recreated));
     assert.equal(recreated.value.workspace.status, "ready");
-
-    state = readApplicationStateForOwner(testRuntime.store);
-    generation = state.workspaceGenerations[0];
-    backend.failNext("response_loss");
-    const ambiguousCleanup = workspace.cleanup({
-      kind: "workspace.cleanup", ...ownerCommand(state, "effect-root-cleanup"),
-      workspaceId: generation.workspaceId, expectedGeneration: generation.generation,
-      expectedGenerationRevision: generation.revision,
-    });
-    assert.equal(ambiguousCleanup.ok, true, JSON.stringify(ambiguousCleanup));
-    assert.equal(ambiguousCleanup.value.outcome, "ambiguous");
-    state = readApplicationStateForOwner(testRuntime.store);
-    generation = state.workspaceGenerations[0];
-    const cleanupRoot = state.workspaceIntents.find((intent) => intent.idempotencyKey === "effect-root-cleanup");
-    assert.ok(cleanupRoot);
-    backend.failNext("response_loss");
-    const cleanupInspect = workspace.inspect({
-      kind: "workspace.inspect", ...ownerCommand(state, "effect-root-cleanup-inspect"),
-      workspaceId: generation.workspaceId, expectedGeneration: generation.generation,
-      expectedGenerationRevision: generation.revision,
-    });
-    assert.equal(cleanupInspect.ok, true, JSON.stringify(cleanupInspect));
-    assert.equal(cleanupInspect.value.outcome, "ambiguous");
-    state = readApplicationStateForOwner(testRuntime.store);
-    generation = state.workspaceGenerations[0];
-    const cleanupInspectRoot = state.workspaceIntents.find(
-      (intent) => intent.idempotencyKey === "effect-root-cleanup-inspect",
-    );
-    assert.ok(cleanupInspectRoot);
-    const recoverCallsBeforeCleanup = backend.calls().filter((call) => call.operation === "recover").length;
-    const rejectedCleanupInspect = workspace.recover({
-      kind: "workspace.recover", ...ownerCommand(state, "effect-root-cleanup-inspect-recover"),
-      workspaceId: generation.workspaceId, expectedGeneration: generation.generation,
-      expectedGenerationRevision: generation.revision, causationId: cleanupInspectRoot.operationId,
-    });
-    assert.equal(rejectedCleanupInspect.ok, false);
-    assert.equal(rejectedCleanupInspect.error.code, "RECONCILIATION_REQUIRED");
-    assert.equal(backend.calls().filter((call) => call.operation === "recover").length, recoverCallsBeforeCleanup);
-
-    state = readApplicationStateForOwner(testRuntime.store);
-    generation = state.workspaceGenerations[0];
-    const recoveredCleanup = workspace.recover({
-      kind: "workspace.recover", ...ownerCommand(state, "effect-root-cleanup-recover"),
-      workspaceId: generation.workspaceId, expectedGeneration: generation.generation,
-      expectedGenerationRevision: generation.revision, causationId: cleanupRoot.operationId,
-    });
-    assert.equal(recoveredCleanup.ok, true, JSON.stringify(recoveredCleanup));
-    assert.equal(recoveredCleanup.value.workspace.status, "cleaned");
   } finally {
     await testRuntime.store.close();
     cleanupPersistenceFixture(testRuntime.fixture);
@@ -1125,27 +1059,20 @@ test("recover causation is bound to the current unresolved generation revision",
 
     state = readApplicationStateForOwner(testRuntime.store);
     generation = state.workspaceGenerations[0];
-    assert.equal(workspace.create({
+    backend.failNext("response_loss");
+    const ambiguousCreate = workspace.create({
       kind: "workspace.create", ...ownerCommand(state, "current-root-create"),
       workspaceId: generation.workspaceId, expectedGeneration: generation.generation,
       expectedGenerationRevision: generation.revision,
-    }).ok, true);
-    state = readApplicationStateForOwner(testRuntime.store);
-    generation = state.workspaceGenerations[0];
-    backend.failNext("response_loss");
-    const ambiguousCleanup = workspace.cleanup({
-      kind: "workspace.cleanup", ...ownerCommand(state, "current-root-cleanup"),
-      workspaceId: generation.workspaceId, expectedGeneration: generation.generation,
-      expectedGenerationRevision: generation.revision,
     });
-    assert.equal(ambiguousCleanup.ok, true, JSON.stringify(ambiguousCleanup));
-    assert.equal(ambiguousCleanup.value.outcome, "ambiguous");
+    assert.equal(ambiguousCreate.ok, true, JSON.stringify(ambiguousCreate));
+    assert.equal(ambiguousCreate.value.outcome, "ambiguous");
     state = readApplicationStateForOwner(testRuntime.store);
     generation = state.workspaceGenerations[0];
-    const currentCleanupRoot = state.workspaceIntents.find(
-      (intent) => intent.idempotencyKey === "current-root-cleanup",
+    const currentCreateRoot = state.workspaceIntents.find(
+      (intent) => intent.idempotencyKey === "current-root-create",
     );
-    assert.ok(currentCleanupRoot);
+    assert.ok(currentCreateRoot);
     const stateBeforeRejectedOldRoot = state;
     const recoverCallsBeforeRejectedOldRoot = backend.calls().filter((call) => call.operation === "recover").length;
     const rejectedOldRoot = workspace.recover({
@@ -1163,23 +1090,13 @@ test("recover causation is bound to the current unresolved generation revision",
 
     state = readApplicationStateForOwner(testRuntime.store);
     generation = state.workspaceGenerations[0];
-    const recoveredCleanup = workspace.recover({
-      kind: "workspace.recover", ...ownerCommand(state, "current-root-cleanup-recover"),
+    const recoveredCreate = workspace.recover({
+      kind: "workspace.recover", ...ownerCommand(state, "current-root-create-recover"),
       workspaceId: generation.workspaceId, expectedGeneration: generation.generation,
-      expectedGenerationRevision: generation.revision, causationId: currentCleanupRoot.operationId,
+      expectedGenerationRevision: generation.revision, causationId: currentCreateRoot.operationId,
     });
-    assert.equal(recoveredCleanup.ok, true, JSON.stringify(recoveredCleanup));
-    assert.equal(recoveredCleanup.value.workspace.status, "cleaned");
-    state = readApplicationStateForOwner(testRuntime.store);
-    const predecessor = state.workspaceGenerations[0];
-    const replacement = workspace.reserve({
-      kind: "workspace.reserve", ...ownerCommand(state, "current-root-replacement"), baseReference: "refs/heads/next",
-      predecessorWorkspaceId: predecessor.workspaceId,
-      predecessorGeneration: predecessor.generation,
-      predecessorRevision: predecessor.revision,
-    });
-    assert.equal(replacement.ok, true, JSON.stringify(replacement));
-    assert.equal(replacement.value.workspace.generation, predecessor.generation + 1);
+    assert.equal(recoveredCreate.ok, true, JSON.stringify(recoveredCreate));
+    assert.equal(recoveredCreate.value.workspace.status, "ready");
   } finally {
     await testRuntime.store.close();
     cleanupPersistenceFixture(testRuntime.fixture);

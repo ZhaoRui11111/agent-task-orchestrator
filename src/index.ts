@@ -46,12 +46,17 @@ export * from "./dispatcher-application.ts";
 export * from "./dispatcher.ts";
 export {
   WORKSPACE_CONTRACT_ID,
+  WORKSPACE_CLEANUP_ATTESTATION_CONTRACT_ID,
   WORKSPACE_OPERATIONS,
   WORKSPACE_EXTERNAL_STATES,
   WORKSPACE_RECEIPT_CODES,
   WORKSPACE_FAILURE_CATEGORIES,
   parseWorkspaceBackendRequest,
   parseWorkspaceBackendResult,
+  parseWorkspaceCleanupAttestation,
+  parseWorkspaceCleanupQuiescence,
+  workspaceCleanupAttestationSha256,
+  workspaceCleanupQuiescenceSha256,
   invokeWorkspaceBackend,
 } from "./workspace-port.ts";
 export type {
@@ -62,6 +67,9 @@ export type {
   WorkspaceReceiptOutcome,
   WorkspacePathSafety,
   WorkspaceSubject,
+  WorkspaceCleanupAttestation,
+  WorkspaceCleanupIntegrationDisposition,
+  WorkspaceCleanupQuiescence,
   WorkspaceBackendRequest,
   WorkspaceInventorySummary,
   WorkspaceBackendReceipt,
@@ -81,6 +89,13 @@ export type {
   WindowsGitWorkspaceRootBinding,
 } from "./workspace-git-adapter.ts";
 export * from "./workspace-application.ts";
+export * from "./project-policy-port.ts";
+export * from "./completion-port.ts";
+export * from "./integration-port.ts";
+export * from "./local-project-policy.ts";
+export * from "./local-completion-backend.ts";
+export * from "./local-git-integration-backend.ts";
+export * from "./completion-application.ts";
 export * from "./product-runtime.ts";
 export * from "./persistence/index.ts";
 export {

@@ -63,9 +63,33 @@ export const WORKSPACE_AUTHORIZATION_ACTIONS = Object.freeze([
   "workspace.cleanup",
 ] as const);
 
-export const AUTHORIZATION_ACTIONS = Object.freeze([
+export const COMPLETION_INTEGRATION_AUTHORIZATION_ACTIONS = Object.freeze([
+  "completion.gate.run",
+  "completion.gate.inspect",
+  "completion.gate.cancel",
+  "completion.accept",
+  "integration.reserve",
+  "integration.inspect",
+  "integration.lease.renew",
+  "integration.lease.takeover",
+  "integration.apply",
+  "integration.push",
+  "integration.recover",
+  "integration.release",
+] as const);
+
+export const WORKSPACE_STAGE_AUTHORIZATION_ACTIONS = Object.freeze([
   ...DISPATCHER_AUTHORIZATION_ACTIONS,
   ...WORKSPACE_AUTHORIZATION_ACTIONS,
+] as const);
+
+export const PHASE3_AUTHORIZATION_ACTIONS = Object.freeze([
+  ...WORKSPACE_STAGE_AUTHORIZATION_ACTIONS,
+  ...COMPLETION_INTEGRATION_AUTHORIZATION_ACTIONS,
+] as const);
+
+export const AUTHORIZATION_ACTIONS = Object.freeze([
+  ...PHASE3_AUTHORIZATION_ACTIONS,
 ] as const);
 
 export const HIGH_RISK_ACTIONS = Object.freeze([
@@ -76,14 +100,17 @@ export const HIGH_RISK_ACTIONS = Object.freeze([
   "project.disable",
   "runtime.restore",
   "execution.completion.accept",
+  "completion.accept",
+  "integration.apply",
+  "integration.push",
   "workspace.cleanup",
 ] as const);
 
 export type AuthorizationAction = (typeof AUTHORIZATION_ACTIONS)[number];
-export type AuthorizationVocabularyVersion = 1 | 2 | 3 | 4 | 5;
+export type AuthorizationVocabularyVersion = 1 | 2 | 3 | 4 | 5 | 6;
 
 export function isAuthorizationVocabularyVersion(value: unknown): value is AuthorizationVocabularyVersion {
-  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5;
+  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5 || value === 6;
 }
 
 export function actionsForVocabulary(version: AuthorizationVocabularyVersion): readonly AuthorizationAction[] {
@@ -95,7 +122,9 @@ export function actionsForVocabulary(version: AuthorizationVocabularyVersion): r
         ? MANUAL_AUTHORIZATION_ACTIONS
         : version === 4
           ? DISPATCHER_AUTHORIZATION_ACTIONS
-          : AUTHORIZATION_ACTIONS;
+          : version === 5
+            ? WORKSPACE_STAGE_AUTHORIZATION_ACTIONS
+            : AUTHORIZATION_ACTIONS;
 }
 export type AuthorizationPolicyResult = "allow" | "deny" | "read_not_applicable";
 export type AuthorizationReason =

@@ -2,27 +2,30 @@
 
 ## Status and authority
 
-This file is the sole normative owner of current durable workspace-generation
-topology, implemented local creation/inspection ownership, and planned
-completion-gate identity/freshness, physical worktree
-ownership receipts, integration reservation, Git partial-success observation,
-contained regular-path/no-follow/reparse checks, and cleanup eligibility. The
-pure `ato.workspace/v1` contract, typed application coordinator, durable
-generation/operation/evidence lifecycle, and an exported Windows local Git
-backend are implemented. The backend is not wired into the product runtime or
-CLI; its cleanup route always refuses. No gate runner, Git integration/ref/push
-operation, product cleanup effect, release, or platform-support claim exists
-today.
+This file is the sole normative owner of current completion-gate identity and
+freshness, durable workspace-generation topology, physical worktree ownership,
+integration reservation and partial-success recovery, contained regular-path/
+no-follow/reparse checks, cleanup eligibility, and cleanup attestation. The
+fresh-only Phase 3 library implements these rules through the exact
+`ato.completion/v1`, `ato.integration/v1`, and sole current `ato.workspace/v2`
+ports, typed application/persistence owners, configured local gate and local
+Git integration adapters, and the Windows local Git workspace backend.
 
-The implemented Phase 2B Manual completion decision is deliberately outside
-this planned gate owner. It consumes only a current verified local Manual
+All Phase 3 adapters require explicit trusted injection and are not wired into
+the default product runtime or CLI. The integration adapter permits only local
+expected-old fast-forward plus ordinary non-force push to a configured
+canonical local bare repository; cleanup consumes an application-issued
+attestation and refuses uncertain ownership. This is disposable local fixture
+evidence, not a release, general network route, or platform-support claim.
+
+The implemented Phase 2B Manual completion decision remains deliberately
+outside this gate owner. It consumes only a current verified local Manual
 `turn_succeeded` receipt plus distinct authorization and fresh confirmation; it
 does not evaluate ProjectPolicy, run or inspect a CompletionBackend gate, bind a
-workspace/HEAD, or make the planned gate/physical-workspace rules in this file
-current implementation.
+workspace/HEAD, or satisfy Phase 3 completion evidence.
 
-The presence of the planned physical sections in this product contract does not
-authorize this repository's development process to create a worktree. Adapter call shapes are
+The presence of these physical sections does not authorize this repository's
+development process to create a worktree. Adapter call shapes are
 owned by the [adapter contracts](adapter-contracts.md), durable external effects
 by the [reliability protocol](reliability-protocol.md), and permission by the
 [authorization contract](authorization-contract.md).
@@ -124,6 +127,16 @@ required in both request and receipt. The manifest binds that digest plus:
 - adapter/contract versions; and
 - target/admin identity hashes and registration identity.
 
+The immutable manifest remains bound to the creation base. A current clean,
+direct detached workspace `HEAD` may later advance only to a commit whose
+merge-base with that base is the base itself. Inspection parses that current
+commit's exact tree, revalidates the detached and locked worktree registration,
+and emits a new current durable receipt for that HEAD; a symbolic HEAD, unrelated
+commit, dirty tree, or unproved object refuses. The closed linked-admin inventory
+always contains its six ownership/control files and may additionally contain
+only Git's ordinary single-link bounded `COMMIT_EDITMSG` and `logs/HEAD` leaves
+created by such a commit. Cleanup inventories and reopens that exact current set.
+
 The durable database stores only the existing receipt digest and closed
 projection, not the raw manifest or path. The current request digest, reopened
 canonical manifest, and current Git/filesystem observations must all match. A
@@ -159,23 +172,46 @@ Any HEAD change, including a metadata-only commit, stales the receipt. Similar
 content, a descendant commit, a repeated command, or another workspace does not
 preserve freshness.
 
+The local gate backend retains evidence only in a separately configured root
+outside the Project/workspace Git inventory and cleanup scope. The exact
+operation leaf is creator-bound, canonical, no-follow, exclusive, and
+single-link. Its closed record includes hashes of the evidence-directory and
+result-file device/inode/mode identities. Restart inspection opens the result
+through a no-follow descriptor and checks descriptor/path/parent/root identities
+both before and after reading instead of trusting process memory or raw command
+output. Missing, partial, exact-byte-replaced, directory- or leaf-swapped,
+reparse, hardlinked, conflicting, or digest-mismatched evidence is
+`indeterminate`/unknown and can never become a fresh pass.
+
 Completion evaluation obtains the current required-gate set from ProjectPolicy,
-verifies every required receipt, obtains a current completion decision, and
-passes that evidence through authorization and finalization CAS. A backend turn
+verifies every required durable receipt, then invokes a separate `inspect_gate`
+for every member outside a writer transaction immediately before final
+authorization. It accepts only the exact newly finalized passing inspection
+intent set, rereads the complete Task/execution/workspace/HEAD/policy/integration
+tuple, and binds that set again inside the final completion CAS. A backend turn
 ending, local commit existing, gate command exiting, or some gates passing does
 not itself complete a Task.
 
+When policy says preservation is `not_required`, its durable digest is the
+canonical not-required disposition. Policy configuration may require
+preservation only when integration is also required; in that case the
+preservation digest is derived exactly from the independently verified terminal
+apply-and-push integration evidence digest. A caller-provided or merely
+well-formed digest is never preservation evidence. Completion and later cleanup
+recompute the same derivation from current durable records.
+
 ## Integration reservation
 
-This section remains planned; EP-03A allocates no integration-reservation row
-or Git mutation authority.
+The Phase 3 library implements this section. The default product runtime and CLI
+do not construct its application owner or backend.
 
 Execution workspaces may run concurrently. Mutation of one Project target ref
 is serialized by a durable integration reservation with:
 
 - reservation ID, Project ID, canonical repository identity, and exact target
   ref;
-- expected target object ID and proposed source workspace/HEAD identity;
+- distinct expected target object ID and proposed source workspace/HEAD
+  identity;
 - owner execution/operation, lease revision, fencing token, and expiry;
 - policy/config revision and authorization-decision reference; and
 - integration intent and current observation references.
@@ -196,52 +232,91 @@ cannot create a second current row.
 Renewal matches reservation ID, revision, owner, fence, target tuple, and
 expected target object ID. Passing expiry immediately removes mutation authority
 but does not silently make the row replaceable: reconciliation first observes
-unfinished Git/external effects, then CAS-transitions it to `expired` or
-`ambiguous`. A clean release likewise requires the current owner/fence and no
-unfinished integration intent. Only after a terminal row exists may takeover
-create a new reservation with a greater per-target fence.
+unfinished Git effects. Any old intent must become terminal before the
+reservation can become `released` or `expired`; an ambiguous observation leaves
+both rows ambiguous. A clean release likewise requires the current owner/fence,
+completed Task and terminal execution, and no unfinished integration intent.
+Only after both old intent and reservation are terminal may a later acquisition
+allocate a greater per-target fence.
 
 Acquisition, renewal, takeover, and stale-writer rejection use the generic
 lease/fencing mechanics, while this contract owns the status meanings and
 target-ref exclusivity. The durable schema, writer/reader closure, transaction,
 and unique-index rules are in the
 [persistence contract](persistence-contract.md#transaction-and-repository-boundary). The
-reservation authorizes no merge, push, release, deployment, or cleanup; each is
-a separate policy and authorization decision. Loss or expiry stops further Git
-mutation and routes observation/reconciliation.
+reservation authorizes no apply, push, completion, release, deployment, or
+cleanup; each is a separate policy and authorization decision. Loss or expiry
+stops further Git mutation and routes observation/reconciliation.
 
 ## Git partial-success protocol
 
-This section remains planned for integration/ref/remote operations. The current
-Windows adapter implements only local linked-worktree creation and read-only
-observation under the durable workspace protocol; it performs no integration
-or remote step.
+The Phase 3 library implements this protocol through `ato.integration/v1` and
+the configured `local-git-integration` adapter. Its push destination is a local
+bare repository beneath a trusted root, not a general remote endpoint. The
+workspace backend remains separately responsible for linked-worktree ownership.
 
-Every Git or remote step has its own persisted intent and observation. The
-system records actual state rather than pretending a multi-step sequence is
-atomic:
+Before inspection and each effect, the integration adapter reopens the exact
+Project/source/destination Git topology: `.git` control, Git/common/object and
+worktree directories, source ownership manifest, direct detached HEAD/lock,
+locked worktree registration, clean inventory, and bare destination identity.
+All namespaces must remain inside the trusted disposable root and the source
+must share the Project common/object identity. The same checks run again after
+the pre-effect interlock and before the expected-old ref update or ordinary
+push; a pointer swap, external metadata namespace, alternate object store,
+symbolic or changed source HEAD, or same-byte ownership-file replacement is a
+pre-effect refusal.
 
-| Observed state | Required handling |
-| --- | --- |
-| No local ref change and no remote change | A policy-authorized retry may use the same semantic operation. |
-| Local target ref advanced, remote not requested | Record the exact new local object ID; the next action requires its own authorization. |
-| Local target ref advanced, push rejected | Preserve the local success, record the remote rejection, and retry only an ordinary policy-permitted push after re-observation. |
-| Push response lost or timed out | Inspect the exact remote ref. Matching expected object is observed success; prior object permits bounded ordinary retry; any other/unknown object is ambiguous. |
-| Remote advanced, local finalization missing | Persist the remote observation and reconcile finalization without pushing again. |
-| Target ref changed by another actor | Stop on CAS conflict, preserve both observations, and obtain a new policy decision. |
+Every apply or push has its own persisted intent; every inspection appends a
+separately authorized read observation. Objects are lowercase 40-hex SHA-1,
+expected target and source are distinct, and every receipt has a non-null opaque
+evidence reference. Classification is source-first and exhaustive:
 
-Reset, force push, forced worktree removal, history rewriting, or deletion cannot
-be used to disguise partial success. Remote inspection itself may require
-network permission; without it, the state remains explicitly blocked or
-ambiguous.
+- Local inspection is `already_at_source` on a source match, otherwise
+  `unchanged` on an expected-target match, otherwise `foreign` for another
+  non-null object, otherwise `unknown`.
+- Destination inspection is `already_at_source` on a source match even when the
+  expected remote already equals source; otherwise authoritative null with null
+  expected remote is `absent`, a non-null expected-remote match is `unchanged`,
+  another non-null object is `foreign`, and an unproved value is `unknown`.
+- Inspect returns `inspected_ambiguous` when either state is unknown;
+  `inspected_unchanged` only for local unchanged plus remote absent/unchanged;
+  `inspected_local_applied` only for local source plus remote absent/unchanged;
+  `inspected_pushed` only when both are at source; every other fully
+  authoritative combination is `inspected_foreign`.
+- Apply returns `applied` for expected-target to source,
+  `already_applied` for source to source, the active-preserving
+  `apply_refused` only for expected-target unchanged, and `apply_ambiguous` for
+  an unknown post-state. Another authoritative object is foreign and makes the
+  reservation ambiguous even though the code is `apply_refused`.
+- Push requires local source before and after. It returns `already_pushed` when
+  remote is already source; `pushed` when a distinct nullable expected remote
+  becomes source; the active-preserving `push_rejected` only when authoritative
+  inspection proves the expected remote stayed unchanged or expected-null
+  stayed absent; and `push_ambiguous` for an unknown post-state. Another
+  authoritative remote object is foreign and makes the reservation ambiguous.
+
+Normal success finalizes the effect intent and retains the active reservation
+until separate completion/release. Only the named nonforeign no-effect
+`apply_refused` or `push_rejected` row fails that intent while preserving active
+status for a newly authorized operation. Every foreign or unknown effect row
+makes both intent and reservation ambiguous, prohibits new effects, and admits
+only `integration.recover` inspection. `inspected_ambiguous` retains both rows;
+authoritative `inspected_unchanged`, `inspected_local_applied`,
+`inspected_pushed`, or `inspected_foreign` atomically finalizes the old intent
+as `recovered_no_effect`, `recovered_local_applied`, `recovered_pushed`, or
+`recovered_inconsistent`, then releases the reservation when recovery precedes
+its stored expiry or expires it otherwise.
+
+Reset, force push, forced worktree removal, history rewriting, or deletion
+cannot disguise partial success. Any state the configured local inspection
+cannot prove remains ambiguous; it is never treated as retry authority.
 
 ## Contained-path and no-follow checks
 
-This section is implemented for create/inspect/recover by the Windows adapter
-and remains mandatory for any future cleanup implementation. The pure port and
-Fake themselves perform no filesystem mutation. Current host evidence is
-limited to the exact recorded development environment and is not a support
-claim.
+This section is implemented for create/inspect/recover/cleanup by the Windows
+adapter. The pure port and Fake themselves perform no filesystem mutation.
+Current host evidence is limited to the exact recorded development environment
+and is not a support claim.
 
 Before every filesystem mutation or cleanup, the workspace adapter MUST:
 
@@ -285,13 +360,57 @@ creation is a proved no-effect refusal.
 
 ## Cleanup refusal
 
-The current application layer requires an exact ready generation, current
-workspace grant, fresh cleanup confirmation, current owner/revisions/fence, and
-verified port receipt. The exported Windows adapter nevertheless returns the
-same non-retryable `policy_denied`/`cleanup_policy_unavailable` failure for
-every valid cleanup request before any root, worker, or Git access. The
-additional real worktree checks below remain mandatory before any cleanup
-effect can be implemented or claimed.
+The Phase 3 application owner prepares one unique cleanup intent before it can
+issue cleanup authority. A preliminary ProjectPolicy allow is necessary but
+insufficient. In one final-authorization transaction the owner revalidates the
+completed Task and terminal execution, fresh required gates, preservation
+evidence, released/expired-or-not-required integration disposition, exact ready
+workspace ownership, current grant and fresh confirmation, then inserts the
+`ato.workspace-cleanup-attestation/v1` record and advances that same intent from
+`pending` to `executing`. Pre-prepare issuance and a second competing intent are
+impossible.
+
+Immediately before backend access, the owner rereads trusted actor and lease
+identity, the exact referenced grant ID/revision/scope/config/expiry, the same
+unexpired cleanup-policy receipt and facts, the attested final authorization,
+Project identity, durable resources, attestation, and zero-owner quiescence.
+The policy subject remains bound to the preceding ready revision: the durable
+ready-to-cleaning transition records the already-authorized intent, while the
+cleaning revision is independently bound by that intent, the attestation, and
+the quiescence projection. Revocation, expiry, actor substitution,
+policy/configuration drift, or resource change refuses before the adapter sees
+the request.
+
+The attestation contains exactly these fields:
+
+`contractId`, `attestationId`, `operationId`, `intentId`, `projectId`,
+`projectResourceRevision`, `projectConfigRevision`, `projectRootKey`,
+`repositoryIdentity`, `taskId`, `taskCompletedRevision`,
+`completionDecisionId`, `executionId`, `executionRevision`, `attemptNumber`,
+`fencingToken`, `executionTerminalCreatedAt`, `workspaceId`, `generation`,
+`workspaceRevision`, `workspaceRootKey`, `ownershipBindingSha256`,
+`policyReceiptId`, `policyReceiptSha256`, `policyConfigRevision`,
+`cleanupAuthorizationDecisionId`, `cleanupAuthorizationBindingRevision`,
+`grantId`, `grantRevision`, `confirmationId`, `gateSetSha256`,
+`preservationStateSha256`, `integrationDisposition`,
+`integrationReservationId`, `integrationReservationRevision`,
+`integrationReservationFencingToken`, `expectedBranchReference`,
+`expectedHeadObjectId`, `quiescenceSha256`, `issuedAt`, `validUntil`, and
+`attestationSha256`.
+
+`integrationDisposition` is `not_required|released|expired`; its three
+reservation fields are all null only for `not_required` and all present
+otherwise. The exact quiescence projection has sorted keys
+`activeExecutionOwnerCount`, `currentIntegrationReservationCount`,
+`executionId`, `executionTerminalCreatedAt`, `generation`, `observedAt`,
+`taskId`, `taskRevision`, `unfinishedCompletionGateIntentCount`,
+`unfinishedIntegrationIntentCount`, `unfinishedWorkspaceIntentCount`,
+`workspaceId`, and `workspaceRevision`; every count is zero. It excludes exactly
+the attestation-bound cleanup intent, which must be the unique identity-matching
+row in `pending` during issuance or `executing` during point-of-use validation.
+Both digests are uppercase SHA-256 of sorted-key compact UTF-8 JSON;
+`attestationSha256` excludes only itself. Validity is positive and at most five
+minutes.
 
 Cleanup proceeds only when all of these are proven current:
 
@@ -299,15 +418,21 @@ Cleanup proceeds only when all of these are proven current:
 - exact workspace ownership receipt, creator/generation identity, and Git
   worktree registration match;
 - contained-path/no-follow checks pass at point of use;
-- no valid execution lease, integration reservation, unfinished intent, or gate
-  writer still owns the workspace;
+- no active execution owner, current integration reservation, unfinished gate
+  or integration intent, or workspace intent other than the one exact cleanup
+  intent still owns the workspace;
 - current branch/ref and HEAD match the expected terminal observation;
 - the inventory contains no modified tracked file and no untracked or ignored
   item outside an explicitly creator-owned disposable inventory; and
 - every policy-required integration/preservation condition has current evidence.
 
-Unknown, stale, dirty, untracked, ignored, reparse, unowned, multiply owned,
-partially published, or ambiguously integrated state refuses cleanup. The
-adapter may use Git's ordinary non-force worktree removal after the checks and
-then remove only empty creator-owned directories. Refusal is an observable safe
-terminal outcome; it is not an error to bypass with recursive or forced cleanup.
+Unknown, stale, dirty, untracked, ignored, reparse, hardlinked, unowned,
+multiply owned, partially published, or ambiguously integrated state refuses
+cleanup. The Windows adapter immediately reopens and validates the attestation,
+current branch/HEAD, ownership manifest, registration, inventory, and path
+identities. Success quarantines the exact target and administration leaves,
+revalidates every inventoried member, removes only that closed inventory, and
+echoes `attestationSha256`; it never follows an alias, force-removes, accepts a
+caller path, or touches the separately retained completion-gate evidence root.
+Post-effect uncertainty remains durable ambiguity. Refusal is observable and is
+not an error to bypass with recursive or forced cleanup.

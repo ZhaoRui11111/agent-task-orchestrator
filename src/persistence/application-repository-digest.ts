@@ -6,7 +6,7 @@ export function applicationStateSha256(state: ApplicationState): string {
   return sha256(canonicalJson(applicationStateProjection(state)));
 }
 
-export const APPLICATION_STATE_DIGEST_VERSION = 1 as const;
+export const APPLICATION_STATE_DIGEST_VERSION = 2 as const;
 
 export function applicationStateProjection(state: ApplicationState): Readonly<Record<string, unknown>> {
   return Object.freeze({
@@ -41,8 +41,27 @@ export function applicationStateProjection(state: ApplicationState): Readonly<Re
     grants: state.grants,
     identity: state.identity,
     manualBackendOperations: state.manualBackendOperations,
+    completionDecisions: state.completionDecisions,
     manualCompletionDecisions: state.manualCompletionDecisions,
     manualTurns: state.manualTurns,
+    projectPolicyReceipts: state.projectPolicyReceipts,
+    completionGateRequests: state.completionGateRequests,
+    completionGateAuthorizationDecisions: state.completionGateAuthorizationDecisions,
+    completionGateIntents: state.completionGateIntents,
+    completionGateObservations: state.completionGateObservations,
+    completionGateReceipts: state.completionGateReceipts,
+    completionGateFinalizations: state.completionGateFinalizations,
+    completionGateEvents: state.completionGateEvents,
+    policyGatedCompletionDecisions: state.policyGatedCompletionDecisions,
+    integrationTargetSequences: state.integrationTargetSequences,
+    integrationReservations: state.integrationReservations,
+    integrationOperationRequests: state.integrationOperationRequests,
+    integrationAuthorizationDecisions: state.integrationAuthorizationDecisions,
+    integrationIntents: state.integrationIntents,
+    integrationObservations: state.integrationObservations,
+    integrationReceipts: state.integrationReceipts,
+    integrationFinalizations: state.integrationFinalizations,
+    integrationEvents: state.integrationEvents,
     projects: state.projects,
     requests: state.requests,
     workspaceAuthorizationDecisions: state.workspaceAuthorizationDecisions,
@@ -52,6 +71,7 @@ export function applicationStateProjection(state: ApplicationState): Readonly<Re
     workspaceIntents: state.workspaceIntents,
     workspaceObservations: state.workspaceObservations,
     workspaceReceipts: state.workspaceReceipts,
+    workspaceCleanupAttestations: state.workspaceCleanupAttestations,
   });
 }
 

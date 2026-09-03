@@ -1,7 +1,7 @@
 {
   "name": "agent-task-orchestrator",
   "version": "0.0.0-development",
-  "description": "Local explicit-Manual Phase 2 task orchestration CLI and library",
+  "description": "Local explicit-Manual CLI with an injected Phase 3 orchestration library",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",

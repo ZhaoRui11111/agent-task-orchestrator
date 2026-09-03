@@ -26,6 +26,16 @@ import {
 } from "./execution-loop.ts";
 import type { ExecutionBackend, ManualOutcomeControl, ManualOutcomeOperation } from "./execution-port.ts";
 import {
+  createPhase3ApplicationService,
+  type Phase3ApplicationOptions,
+  type Phase3ApplicationService,
+  type Phase3Ingress,
+} from "./completion-application.ts";
+import type { CompletionBackend } from "./completion-port.ts";
+import type { IntegrationBackend } from "./integration-port.ts";
+import type { ProjectPolicy } from "./project-policy-port.ts";
+import type { WorkspaceBackend } from "./workspace-port.ts";
+import {
   readApplicationStateForOwner,
   type ApplicationState,
   type ExecutionAttempt,
@@ -37,6 +47,17 @@ import type { PersistenceStore } from "./persistence/store.ts";
 import type { Task, WaitingMetadata } from "./domain.ts";
 
 export type ProductRuntimeIngress = ApplicationIngress & ManualDispatcherIngress;
+
+export type Phase3ProductRuntimeIngress = Phase3Ingress;
+export type Phase3ProductRuntimeOptions = Phase3ApplicationOptions;
+export type Phase3ProductRuntime = Phase3ApplicationService;
+
+export interface Phase3ProductAdapters {
+  readonly projectPolicy: ProjectPolicy;
+  readonly completion: CompletionBackend;
+  readonly integration: IntegrationBackend;
+  readonly workspace: WorkspaceBackend;
+}
 
 export interface ProductApplicationError {
   readonly owner: "application";
@@ -464,6 +485,15 @@ function latestTurnReceipt(state: ApplicationState, turn: ManualBackendTurnRecor
     receipt.fencingToken === turn.fencingToken);
   if (matches.length === 0) return null;
   return [...matches].sort((left, right) => right.verifiedAt.localeCompare(left.verifiedAt))[0] ?? null;
+}
+
+export function createPhase3ProductRuntime(
+  store: PersistenceStore,
+  ingress: Phase3ProductRuntimeIngress,
+  adapters: Phase3ProductAdapters,
+  options: Phase3ProductRuntimeOptions,
+): Phase3ProductRuntime {
+  return createPhase3ApplicationService(store, adapters, ingress, options);
 }
 
 export function createProductRuntime(

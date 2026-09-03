@@ -20,9 +20,11 @@ import { readApplicationStateForOwner } from "../src/persistence/application-rep
 import {
   TEST_GIT_EXECUTABLE,
   cleanupWorkspaceGitFixture,
+  workspaceCleanupRequest,
   createWorkspaceGitFixture,
   fixtureDigest,
   freshWorkspaceGitAdapter,
+  git,
   workspaceCapabilityProbePaths,
   workspacePaths,
   workspaceRequest,
@@ -49,7 +51,7 @@ function independentOwnershipBinding(generation) {
     adapterVersion: generation.adapterVersion,
     attemptNumber: generation.attemptNumber,
     baseReference: generation.baseReference,
-    contractId: "ato.workspace/v1",
+    contractId: "ato.workspace/v2",
     creatorOperationId: generation.creatorOperationId,
     executionId: generation.executionId,
     executionRevisionFloor: generation.executionRevision,
@@ -240,7 +242,7 @@ test("recovery remains read-only after each representative control, manifest, co
         `${path.join(paths.targetDirectory, ".git").replaceAll("\\", "/")}\n`,
         { flag: "wx" },
       ),
-      () => writeFileSync(path.join(paths.adminDirectory, "locked"), "ato.workspace/v1 ownership\n", { flag: "wx" }),
+      () => writeFileSync(path.join(paths.adminDirectory, "locked"), "ato.workspace/v2 ownership\n", { flag: "wx" }),
       () => writeFileSync(
         path.join(paths.targetDirectory, ".git"),
         `gitdir: ${paths.adminDirectory.replaceAll("\\", "/")}\n`,
@@ -291,7 +293,7 @@ for (const corruption of ["head", "dirty-inventory", "unexpected-admin-child"]) 
   });
 }
 
-test("cleanup is a byte-stable policy refusal before root or Git access", windowsOnly, () => {
+test("cleanup without the exact attestation is rejected before root or Git access", windowsOnly, () => {
   const fixture = createWorkspaceGitFixture("workspace-git-recovery-cleanup-refusal");
   const originalProjectRoot = fixture.projectRoot;
   const hiddenProjectRoot = `${fixture.projectRoot}-temporarily-hidden`;
@@ -304,8 +306,8 @@ test("cleanup is a byte-stable policy refusal before root or Git access", window
     renameSync(hiddenProjectRoot, originalProjectRoot);
 
     assert.equal(refused.ok, false);
-    assert.equal(refused.error.category, "policy_denied");
-    assert.equal(refused.error.code, "cleanup_policy_unavailable");
+    assert.equal(refused.error.category, "invalid_request");
+    assert.equal(refused.error.code, "request_shape_invalid");
     assert.equal(refused.error.retryable, false);
     assert.equal(refused.error.ambiguous, false);
     assert.equal(fixtureDigest(fixture), before);
@@ -313,6 +315,26 @@ test("cleanup is a byte-stable policy refusal before root or Git access", window
     if (originalProjectRoot !== hiddenProjectRoot) {
       try { renameSync(hiddenProjectRoot, originalProjectRoot); } catch { /* already restored */ }
     }
+    cleanupWorkspaceGitFixture(fixture);
+  }
+});
+
+test("attested cleanup quarantines and removes only the exact owned generation", windowsOnly, () => {
+  const fixture = createWorkspaceGitFixture("workspace-git-attested-cleanup");
+  try {
+    const created = fixture.adapter.create(workspaceRequest(fixture, "create"));
+    assert.equal(created.ok, true, created.ok ? undefined : created.error.code);
+    const cleanupRequest = workspaceCleanupRequest(fixture, created.receipt);
+    const paths = workspacePaths(fixture, cleanupRequest);
+    const cleaned = fixture.adapter.cleanup(cleanupRequest);
+    assert.equal(cleaned.ok, true, cleaned.ok ? undefined : cleaned.error.code);
+    assert.equal(cleaned.receipt.code, "removed");
+    assert.equal(cleaned.receipt.externalState, "removed");
+    assert.equal(cleaned.receipt.cleanupAttestationSha256, cleanupRequest.cleanupAttestation.attestationSha256);
+    assert.equal(existsSync(paths.targetDirectory), false);
+    assert.equal(existsSync(paths.adminDirectory), false);
+    assert.equal(git(fixture, ["rev-parse", "refs/heads/main"]).trim(), fixture.baseObjectId);
+  } finally {
     cleanupWorkspaceGitFixture(fixture);
   }
 });
@@ -563,7 +585,7 @@ test("real SQLite recovery binds a lost create response to the physical manifest
     assert.equal(persistedWorkspaceEvidence.includes(fixture.projectRoot), false);
     assert.equal(persistedWorkspaceEvidence.includes(fixture.workspaceRoot), false);
     assert.equal(persistedWorkspaceEvidence.includes("APPLICATION_REAL_ADAPTER_PRIVATE_BODY"), false);
-    assert.equal(persistedWorkspaceEvidence.includes(expectedBinding), false);
+    assert.equal(persistedWorkspaceEvidence.includes(expectedBinding), true);
   } finally {
     if (runtime?.store !== undefined) await runtime.store.close();
     cleanupWorkspaceGitFixture(fixture);
