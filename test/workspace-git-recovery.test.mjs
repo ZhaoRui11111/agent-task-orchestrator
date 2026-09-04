@@ -496,7 +496,7 @@ test("post-mkdir identity loss preserves the effect and durably requires recover
 });
 
 test("real SQLite recovery binds a lost create response to the physical manifest without blind replay", windowsOnly, async () => {
-  const fixture = createWorkspaceGitFixture("workspace-git-application-recovery");
+  const fixture = createWorkspaceGitFixture("workspace-git-app-recovery");
   let runtime = null;
   try {
     runtime = await prepareApplicationRuntime(fixture, "real-adapter-recovery");

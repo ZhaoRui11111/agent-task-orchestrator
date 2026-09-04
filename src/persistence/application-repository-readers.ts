@@ -53,6 +53,10 @@ import type {
   ExecutionTerminalStateRecord,
   ManualBackendTurnRecord,
   ManualBackendOperationRecord,
+  CodexBackendTurnRecord,
+  CodexBackendOperationRecord,
+  CodexTurnLifecycle,
+  CodexTurnTerminalSignal,
   CompletionDecisionRecord,
   ManualCompletionDecisionRecord,
   DispatcherTriggerRequestRecord,
@@ -540,7 +544,9 @@ export function readExecutionIntents(database: SqliteDatabase): readonly Executi
       input_reference, execution_id, execution_revision, attempt_number, fencing_token,
       source_execution_id, source_execution_revision, source_attempt_number, source_fencing_token,
       source_observation_number,
-      contract_id, adapter_id, adapter_version, policy_binding_reference, workspace_mode,
+      contract_id, backend_kind, adapter_id, adapter_version, policy_binding_reference, workspace_mode,
+      workspace_contract_id, workspace_id, workspace_generation, workspace_revision,
+      workspace_root_key, ownership_binding_sha256, workspace_head_object_id,
       backend_execution_id, thread_id, previous_receipt_id, expected_journal_revision,
       requested_deadline, continuation_reference, required_action_receipt_id, expected_lifecycle,
       reason_code, report_id, report_operation, report_code, evidence_reference, last_observation_number,
@@ -549,8 +555,50 @@ export function readExecutionIntents(database: SqliteDatabase): readonly Executi
       created_at, updated_at FROM execution_operation_intents ORDER BY intent_id`,
   ).all().map((row) => {
     const contractId = sqliteText(row.contract_id, "execution_operation_intents.contract_id");
-    const workspaceMode = sqliteText(row.workspace_mode, "execution_operation_intents.workspace_mode");
-    if (contractId !== "ato.execution/v1" || workspaceMode !== "none") {
+    const backendKind = enumText(
+      row.backend_kind,
+      "execution_operation_intents.backend_kind",
+      new Set<ExecutionOperationIntent["backendKind"]>(["manual-local", "codex-sdk"]),
+    );
+    const workspaceMode = enumText(
+      row.workspace_mode,
+      "execution_operation_intents.workspace_mode",
+      new Set<ExecutionOperationIntent["workspaceMode"]>(["none", "owned"]),
+    );
+    const workspaceContractId = sqliteNullableText(
+      row.workspace_contract_id,
+      "execution_operation_intents.workspace_contract_id",
+    );
+    const workspaceId = sqliteNullableText(row.workspace_id, "execution_operation_intents.workspace_id");
+    const workspaceGeneration = nullablePositive(
+      row.workspace_generation,
+      "execution_operation_intents.workspace_generation",
+    );
+    const workspaceRevision = nullablePositive(
+      row.workspace_revision,
+      "execution_operation_intents.workspace_revision",
+    );
+    const workspaceRootKey = sqliteNullableText(
+      row.workspace_root_key,
+      "execution_operation_intents.workspace_root_key",
+    );
+    const ownershipBindingSha256 = row.ownership_binding_sha256 === null ? null : uppercaseSha256(
+      row.ownership_binding_sha256,
+      "execution_operation_intents.ownership_binding_sha256",
+    );
+    const workspaceHeadObjectId = nullableLowercaseSha1(
+      row.workspace_head_object_id,
+      "execution_operation_intents.workspace_head_object_id",
+    );
+    const manualWorkspace = backendKind === "manual-local" && workspaceMode === "none" &&
+      workspaceContractId === null && workspaceId === null && workspaceGeneration === null &&
+      workspaceRevision === null && workspaceRootKey === null && ownershipBindingSha256 === null &&
+      workspaceHeadObjectId === null;
+    const ownedWorkspace = backendKind === "codex-sdk" && workspaceMode === "owned" &&
+      workspaceContractId === "ato.workspace/v2" && workspaceId !== null && workspaceGeneration !== null &&
+      workspaceRevision !== null && workspaceRootKey !== null && ownershipBindingSha256 !== null &&
+      workspaceHeadObjectId !== null;
+    if (contractId !== "ato.execution/v2" || (!manualWorkspace && !ownedWorkspace)) {
       throw persistenceFailure("CORRUPT_ROW", "Execution intent contract/workspace identity is invalid");
     }
     return Object.freeze({
@@ -587,10 +635,17 @@ export function readExecutionIntents(database: SqliteDatabase): readonly Executi
       sourceFencingToken: nullablePositive(row.source_fencing_token, "execution_operation_intents.source_fencing_token"),
       sourceObservationNumber: row.source_observation_number === null
         ? null : nonnegative(row.source_observation_number, "execution_operation_intents.source_observation_number"),
-      contractId, adapterId: sqliteText(row.adapter_id, "execution_operation_intents.adapter_id"),
+      contractId, backendKind, adapterId: sqliteText(row.adapter_id, "execution_operation_intents.adapter_id"),
       adapterVersion: sqliteText(row.adapter_version, "execution_operation_intents.adapter_version"),
       policyBindingReference: sqliteText(row.policy_binding_reference, "execution_operation_intents.policy_binding_reference"),
       workspaceMode,
+      workspaceContractId: workspaceContractId as "ato.workspace/v2" | null,
+      workspaceId,
+      workspaceGeneration,
+      workspaceRevision,
+      workspaceRootKey,
+      ownershipBindingSha256,
+      workspaceHeadObjectId,
       backendExecutionId: sqliteNullableText(row.backend_execution_id, "execution_operation_intents.backend_execution_id"),
       threadId: sqliteNullableText(row.thread_id, "execution_operation_intents.thread_id"),
       previousReceiptId: sqliteNullableText(row.previous_receipt_id, "execution_operation_intents.previous_receipt_id"),
@@ -812,6 +867,131 @@ export function readManualBackendOperations(database: SqliteDatabase): readonly 
     receiptId: sqliteText(row.receipt_id, "manual_backend_operations.receipt_id"),
     createdAt: timestamp(row.created_at, "manual_backend_operations.created_at"),
   })));
+}
+
+export function readCodexTurns(database: SqliteDatabase): readonly CodexBackendTurnRecord[] {
+  const lifecycles = new Set<CodexTurnLifecycle>(["unknown", "active", "turn_succeeded", "failed"]);
+  const terminalSignals = new Set<CodexTurnTerminalSignal>(["turn.completed", "turn.failed"]);
+  return Object.freeze(database.prepare(
+    `SELECT backend_execution_id, thread_id, start_idempotency_key, origin_intent_id,
+      origin_operation_id, origin_authorization_decision_id, project_id,
+      project_resource_revision, project_config_revision, task_id, task_revision,
+      input_reference, execution_id, execution_revision, attempt_number, fencing_token,
+      predecessor_backend_execution_id, predecessor_thread_id, policy_binding_reference,
+      workspace_contract_id, workspace_id, workspace_generation, workspace_revision,
+      workspace_root_key, ownership_binding_sha256, workspace_head_object_id, lifecycle,
+      terminal_signal, cancellation_requested_at, code, evidence_reference, revision,
+      created_at, updated_at FROM codex_backend_turns ORDER BY backend_execution_id`,
+  ).all().map((row) => {
+    const inputReference = sqliteText(row.input_reference, "codex_backend_turns.input_reference");
+    const workspaceContractId = sqliteText(row.workspace_contract_id, "codex_backend_turns.workspace_contract_id");
+    const lifecycle = enumText(row.lifecycle, "codex_backend_turns.lifecycle", lifecycles);
+    const terminalSignal = row.terminal_signal === null ? null : enumText(
+      row.terminal_signal,
+      "codex_backend_turns.terminal_signal",
+      terminalSignals,
+    );
+    if (!/^task-sha256:[0-9a-f]{64}$/u.test(inputReference) || workspaceContractId !== "ato.workspace/v2" ||
+      (lifecycle === "turn_succeeded" ? terminalSignal !== "turn.completed" :
+        lifecycle === "failed" ? terminalSignal !== "turn.failed" : terminalSignal !== null)) {
+      throw persistenceFailure("CORRUPT_ROW", "Codex turn contract, input, or terminal identity is invalid");
+    }
+    return Object.freeze({
+      backendExecutionId: sqliteText(row.backend_execution_id, "codex_backend_turns.backend_execution_id"),
+      threadId: sqliteNullableText(row.thread_id, "codex_backend_turns.thread_id"),
+      startIdempotencyKey: sqliteText(row.start_idempotency_key, "codex_backend_turns.start_idempotency_key"),
+      originIntentId: sqliteText(row.origin_intent_id, "codex_backend_turns.origin_intent_id"),
+      originOperationId: sqliteText(row.origin_operation_id, "codex_backend_turns.origin_operation_id"),
+      originAuthorizationDecisionId: sqliteText(
+        row.origin_authorization_decision_id,
+        "codex_backend_turns.origin_authorization_decision_id",
+      ),
+      projectId: sqliteText(row.project_id, "codex_backend_turns.project_id"),
+      projectResourceRevision: positive(row.project_resource_revision, "codex_backend_turns.project_resource_revision"),
+      projectConfigRevision: positive(row.project_config_revision, "codex_backend_turns.project_config_revision"),
+      taskId: sqliteText(row.task_id, "codex_backend_turns.task_id"),
+      taskRevision: positive(row.task_revision, "codex_backend_turns.task_revision"),
+      inputReference,
+      executionId: sqliteText(row.execution_id, "codex_backend_turns.execution_id"),
+      executionRevision: positive(row.execution_revision, "codex_backend_turns.execution_revision"),
+      attemptNumber: positive(row.attempt_number, "codex_backend_turns.attempt_number"),
+      fencingToken: positive(row.fencing_token, "codex_backend_turns.fencing_token"),
+      predecessorBackendExecutionId: sqliteNullableText(
+        row.predecessor_backend_execution_id,
+        "codex_backend_turns.predecessor_backend_execution_id",
+      ),
+      predecessorThreadId: sqliteNullableText(row.predecessor_thread_id, "codex_backend_turns.predecessor_thread_id"),
+      policyBindingReference: sqliteText(row.policy_binding_reference, "codex_backend_turns.policy_binding_reference"),
+      workspaceContractId: workspaceContractId as "ato.workspace/v2",
+      workspaceId: sqliteText(row.workspace_id, "codex_backend_turns.workspace_id"),
+      workspaceGeneration: positive(row.workspace_generation, "codex_backend_turns.workspace_generation"),
+      workspaceRevision: positive(row.workspace_revision, "codex_backend_turns.workspace_revision"),
+      workspaceRootKey: sqliteText(row.workspace_root_key, "codex_backend_turns.workspace_root_key"),
+      ownershipBindingSha256: uppercaseSha256(
+        row.ownership_binding_sha256,
+        "codex_backend_turns.ownership_binding_sha256",
+      ),
+      workspaceHeadObjectId: lowercaseSha1(
+        row.workspace_head_object_id,
+        "codex_backend_turns.workspace_head_object_id",
+      ),
+      lifecycle,
+      terminalSignal,
+      cancellationRequestedAt: row.cancellation_requested_at === null ? null : timestamp(
+        row.cancellation_requested_at,
+        "codex_backend_turns.cancellation_requested_at",
+      ),
+      code: boundedCode(row.code, "codex_backend_turns.code"),
+      evidenceReference: opaqueEvidenceReference(row.evidence_reference, "codex_backend_turns.evidence_reference"),
+      revision: positive(row.revision, "codex_backend_turns.revision"),
+      createdAt: timestamp(row.created_at, "codex_backend_turns.created_at"),
+      updatedAt: timestamp(row.updated_at, "codex_backend_turns.updated_at"),
+    });
+  }));
+}
+
+export function readCodexBackendOperations(database: SqliteDatabase): readonly CodexBackendOperationRecord[] {
+  const kinds = new Set<CodexBackendOperationRecord["operationKind"]>(["start", "resume", "retry"]);
+  const lifecycles = new Set<CodexBackendOperationRecord["resultLifecycle"]>(["turn_succeeded", "failed"]);
+  const terminalSignals = new Set<CodexTurnTerminalSignal>(["turn.completed", "turn.failed"]);
+  return Object.freeze(database.prepare(
+    `SELECT backend_operation_id, idempotency_key, intent_id, authorization_decision_id,
+      operation_kind, backend_execution_id, thread_id, source_backend_execution_id,
+      source_thread_id, expected_fencing_token, expected_pre_revision, post_revision,
+      result_lifecycle, terminal_signal, receipt_id, receipt_sha256, created_at
+    FROM codex_backend_operations ORDER BY backend_operation_id`,
+  ).all().map((row) => {
+    const resultLifecycle = enumText(row.result_lifecycle, "codex_backend_operations.result_lifecycle", lifecycles);
+    const terminalSignal = enumText(row.terminal_signal, "codex_backend_operations.terminal_signal", terminalSignals);
+    if ((resultLifecycle === "turn_succeeded") !== (terminalSignal === "turn.completed")) {
+      throw persistenceFailure("CORRUPT_ROW", "Codex operation terminal identity is inconsistent");
+    }
+    return Object.freeze({
+      backendOperationId: sqliteText(row.backend_operation_id, "codex_backend_operations.backend_operation_id"),
+      idempotencyKey: sqliteText(row.idempotency_key, "codex_backend_operations.idempotency_key"),
+      intentId: sqliteText(row.intent_id, "codex_backend_operations.intent_id"),
+      authorizationDecisionId: sqliteText(
+        row.authorization_decision_id,
+        "codex_backend_operations.authorization_decision_id",
+      ),
+      operationKind: enumText(row.operation_kind, "codex_backend_operations.operation_kind", kinds),
+      backendExecutionId: sqliteText(row.backend_execution_id, "codex_backend_operations.backend_execution_id"),
+      threadId: sqliteText(row.thread_id, "codex_backend_operations.thread_id"),
+      sourceBackendExecutionId: sqliteNullableText(
+        row.source_backend_execution_id,
+        "codex_backend_operations.source_backend_execution_id",
+      ),
+      sourceThreadId: sqliteNullableText(row.source_thread_id, "codex_backend_operations.source_thread_id"),
+      expectedFencingToken: positive(row.expected_fencing_token, "codex_backend_operations.expected_fencing_token"),
+      expectedPreRevision: nullablePositive(row.expected_pre_revision, "codex_backend_operations.expected_pre_revision"),
+      postRevision: positive(row.post_revision, "codex_backend_operations.post_revision"),
+      resultLifecycle,
+      terminalSignal,
+      receiptId: sqliteText(row.receipt_id, "codex_backend_operations.receipt_id"),
+      receiptSha256: uppercaseSha256(row.receipt_sha256, "codex_backend_operations.receipt_sha256"),
+      createdAt: timestamp(row.created_at, "codex_backend_operations.created_at"),
+    });
+  }));
 }
 
 function lowercaseSha1(value: unknown, label: string): string {

@@ -4,6 +4,7 @@ import {
   EXPECTED_PRODUCTION_SOURCE_FILES,
   gitInventory,
   invariant,
+  productionBoundaryFailures,
   repoRoot,
 } from "./repo-utils.mjs";
 import { validateCodexEvidence } from "./codex-contract-lib.mjs";
@@ -17,9 +18,30 @@ invariant(
   JSON.stringify(productionFiles) === JSON.stringify(EXPECTED_PRODUCTION_SOURCE_FILES),
   "unexpected production source inventory",
 );
-for (const relative of productionFiles) {
-  const source = readFileSync(path.join(repoRoot, relative), "utf8");
-  invariant(!/codex|openai|@openai/iu.test(source), `${relative} depends on a Codex/OpenAI implementation`);
-}
+invariant(
+  productionBoundaryFailures(gitInventory(), (relative) => readFileSync(path.join(repoRoot, relative), "utf8")).length === 0,
+  "production boundary validation failed",
+);
+const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
+invariant(packageJson.dependencies?.["@openai/codex-sdk"] === "0.153.2", "Codex SDK package pin drifted");
+const worker = readFileSync(path.join(repoRoot, "src", "codex-sdk-worker.ts"), "utf8");
+for (const required of [
+  'from "@openai/codex-sdk"',
+  'PINNED_CODEX_SDK_VERSION = "0.153.2"',
+  ".startThread(threadOptions)",
+  ".resumeThread(request.threadId!, threadOptions)",
+  ".runStreamed(request.input",
+  "workingDirectory: request.workingDirectory",
+  'event.type === "thread.started"',
+  'event.type === "turn.completed"',
+  'event.type === "turn.failed"',
+]) invariant(worker.includes(required), `pinned Codex SDK driver surface drifted: ${required}`);
+const publicIndex = readFileSync(path.join(repoRoot, "src", "index.ts"), "utf8");
+invariant(
+  !/CodexExecution|CodexSdk|PinnedCodex|createCodex|createInjectedCodex|createPinnedCodex|CodexWorkspace|VerifiedCodex/u.test(
+    publicIndex,
+  ),
+  "Codex implementation escaped the package-private boundary",
+);
 
 console.log(process.argv.includes("--json") ? JSON.stringify(result) : JSON.stringify(result, null, 2));

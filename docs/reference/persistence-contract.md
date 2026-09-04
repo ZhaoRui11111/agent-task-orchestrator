@@ -14,6 +14,7 @@ baseline: exact Project/Task Domain snapshots, ProjectRegistry, local identity,
 vocabulary-version-1-through-6 epochs and grants, application requests,
 authorization decisions, lifecycle authorizations, sanitized audit, execution
 attempts/sequences, reliable Manual-loop evidence and journal records,
+package-private Codex execution intents and turn/terminal journal records,
 reconcile-first Manual dispatcher records, workspace generation/operation
 evidence, ProjectPolicy receipts, completion gates and generic/subtype decisions,
 terminal execution facts, integration reservations/effects/recovery, cleanup
@@ -25,8 +26,9 @@ application transaction owner; it does not authorize a mutation or select or
 invoke a Domain command. The local product facade and versioned CLI call these
 owners. The CLI never opens SQLite directly, while the facade performs only
 typed current-state reads needed to derive an existing owner command. The
-schema stores no scheduler registration/delivery, MCP, Codex, daemon, release,
-deployment, or general remote-network record. A future implementation receives
+schema stores no scheduler registration/delivery, MCP, Codex credential, raw
+SDK payload, daemon, release, deployment, or general remote-network record. A
+future implementation receives
 physical allocation only through its own approved schema change.
 
 Domain values are owned by the [domain contract](domain-contract.md). Manual
@@ -40,7 +42,7 @@ The repository ships exactly one immutable migration:
 
 | Version and file | Current physical allocation |
 | --- | --- |
-| `1`, `0001-current-baseline.sql` | The complete implemented local explicit-Manual Phase 2 plus fresh-only injected Phase 3 storage model described in this contract |
+| `1`, `0001-current-baseline.sql` | The complete implemented local explicit-Manual Phase 2, package-private Codex journal, and fresh-only injected Phase 3 storage model described in this contract |
 
 This baseline is for a genuinely fresh runtime only. It is not a forward path
 from an earlier prototype database and does not preserve any previous migration
@@ -51,7 +53,8 @@ schema version 1 while separately confirmed capability transitions advance
 vocabulary version 1 to 2, 2 to 3, 3 to 4, 4 to 5, and 5 to 6.
 
 The baseline does not pre-allocate scheduling registration/delivery, MCP,
-Codex, daemon, release, deployment, or general remote-network records.
+Codex credentials/account state/raw SDK content, daemon, release, deployment,
+or general remote-network records.
 
 ### Migration metadata
 
@@ -179,7 +182,7 @@ grant, execution row, or authority. Bootstrap creates only the fixed nineteen
 version-1 base grants. A separately confirmed contiguous upgrade is the only
 path that appends vocabulary-version-2, -3, -4, -5, or -6 origin grants.
 
-Reliable Manual-loop storage uses the same epoch/grant relations and the sole
+Reliable execution-loop storage uses the same epoch/grant relations and the sole
 current digest-version-2 `applicationStateProjection`. A confirmed
 version-2-to-3 upgrade appends one epoch and exactly twenty-nine current origin
 grants. The projection enumerates direct epochs and grants once under their
@@ -194,22 +197,45 @@ receipt, one finalization, and an optional immutable execution terminal fact.
 Each execution decision stores its decision-era Project resource and config
 revision; each journal mutation and finalization stores the fresh decision it
 consumed. Intent updates are limited to the closed one-step state/binding CAS;
-their tuple, adapter, Project/Task/execution/attempt/fence, predecessor, and
-operation-specific identities are immutable. Their closed failure projection
+their tuple, backend discriminant, adapter, Project/Task/execution/attempt/fence,
+predecessor, complete workspace identity, and operation-specific identities are
+immutable. Their closed failure projection
 alone may advance on executing-to-`retry_wait|ambiguous|failed`, retaining
 category, code, retry/ambiguity flags, nullable retry time, and retry count.
-`manual_backend_turns` is the sole narrowly mutable local adapter state and
+`manual_backend_turns` is the retained narrowly mutable Manual adapter state and
 allows only revision-incrementing, fence-preserving transitions; once a turn is
 `turn_succeeded`, `failed`, or `cancelled`, every update is rejected, including
 a same-lifecycle rewrite. Its operation journal and Manual completion decisions
-are immutable. All evidence is bounded IDs, enums,
+are immutable.
+
+`execution_operation_intents` discriminates `manual-local`/`none` from
+`codex-sdk`/`owned`. Codex intents bind the exact current workspace contract,
+ID, generation, revision, trusted root key, ownership digest, HEAD object, and
+`task-sha256` input reference. They do not store Task input bytes or a raw
+working-directory path. `codex_backend_turns` stores one immutable semantic
+turn owner per execution with nullable SDK thread identity, exact predecessor
+thread/execution lineage, lifecycle `unknown|active|turn_succeeded|failed`,
+nullable terminal signal `turn.completed|turn.failed`, cancellation-request
+time, bounded code/evidence reference, revision, and timestamps. Its legal
+updates only attach one stable thread, record one cancellation request, mark an
+unproved active turn unknown, or record one terminal transition while retaining
+the tuple and fence. `codex_backend_operations` is the immutable terminal
+operation/receipt lineage; it binds the originating intent/authorization,
+idempotency key, exact thread and predecessor, fence, terminal signal,
+post-revision, receipt ID, and receipt digest. A cancellation request is not a
+terminal operation or proof of `cancelled`.
+An execution ID may occur in exactly one backend-turn family: simultaneous
+`manual_backend_turns` and `codex_backend_turns` ownership is corrupt even
+though the tables have separate SQL uniqueness domains.
+
+All execution evidence is bounded IDs, enums,
 revisions, timestamps, hashes, and redacted references; no Task body, prompt,
 path, environment, credential, raw adapter payload/error, SQL, or stack is
 allocated.
 
 The baseline itself inserts no epoch/grant, lifecycle authorization,
-execution operation, Manual turn, receipt, finalization, terminal, or completion
-row. Fresh schema creation does not bootstrap application state. A separately
+execution operation, Manual or Codex turn, receipt, finalization, terminal, or
+completion row. Fresh schema creation does not bootstrap application state. A separately
 confirmed version-3-to-4 upgrade or later version-4 renewal appends one
 epoch and exactly thirty fresh origin grants in the same current relations;
 baseline creation, bootstrap, and earlier-version renewal add no
@@ -360,6 +386,7 @@ drift before mutation or normal readback.
 | `task_execution_sequences`, `execution_attempts` | `src/persistence/application-repository-transaction.ts` only inside the typed execution application transaction | `application-repository-readers.ts`, `application-repository-state.ts`, the execution application owner, backup verification, and doctor |
 | `execution_operation_requests`, `execution_authorization_decisions`, `execution_operation_audit`, `execution_operation_intents`, `execution_intent_authorization_bindings`, `execution_observations`, `execution_verified_receipts`, `execution_finalizations`, `execution_terminal_states`, `completion_decisions`, `manual_completion_decisions`, `policy_gated_completion_decisions` | `src/persistence/application-repository-transaction.ts` only inside reliable-loop or Phase 3 completion transactions after the application owner selects and authorizes the exact operation | `application-repository-readers.ts`, `application-repository-state.ts`, the reliable execution or Phase 3 completion owner, backup verification, and doctor |
 | `manual_backend_turns`, `manual_backend_operations` | `src/persistence/manual-backend-repository.ts` remains the semantic journal writer through the injected production Manual backend/control after a matching committed core intent; physical writes use the same `ApplicationTransaction` from `application-repository-transaction.ts` | the same journal plus `application-repository-readers.ts`, `application-repository-state.ts`, the reliable execution owner, backup verification, and doctor |
+| `codex_backend_turns`, `codex_backend_operations` | `src/persistence/codex-backend-repository.ts` is the package-private semantic journal writer through the injected Codex backend after a matching committed core intent; physical writes use the same `ApplicationTransaction` from `application-repository-transaction.ts` | the same journal plus `application-repository-readers.ts`, `application-repository-state.ts`, the package-private reliable execution owner, backup verification, and doctor |
 | `dispatcher_trigger_requests`, `dispatcher_authorization_decisions`, `dispatcher_runs`, `dispatcher_audit`, `dispatcher_reconciliation_items`, `dispatcher_reconciliation_summaries`, `dispatcher_memberships`, `dispatcher_members`, `dispatcher_member_denial_requests`, `dispatcher_member_denial_decisions`, `dispatcher_member_denial_audit`, `dispatcher_run_summaries` | `src/persistence/application-repository-transaction.ts` only inside the typed dispatcher application transaction after the dispatcher application owner selects and authorizes the exact transition | `application-repository-readers.ts`, `application-repository-state.ts`, the dispatcher application/orchestration owners, backup verification, and doctor |
 | `workspace_generations`, `workspace_authorization_decisions`, `workspace_operation_intents`, `workspace_observations`, `workspace_verified_receipts`, `workspace_finalizations`, `workspace_events`, `workspace_cleanup_attestations` | `src/persistence/application-repository-transaction.ts` only inside the typed workspace or Phase 3 cleanup transaction after the application owner selects, authorizes, observes, verifies, and finalizes the exact transition | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-2 `application-repository-digest.ts`, the workspace/Phase 3 application owner, backup verification, and doctor |
 | `project_policy_receipts`, `completion_gate_requests`, `completion_gate_authorization_decisions`, `completion_gate_intents`, `completion_gate_observations`, `completion_gate_verified_receipts`, `completion_gate_finalizations`, `completion_gate_events` | `src/persistence/application-repository-transaction.ts` only inside typed Phase 3 policy/gate transactions after the application owner chooses the exact operation | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-2 `application-repository-digest.ts`, the Phase 3 application owner, backup verification, and doctor |
@@ -368,8 +395,9 @@ drift before mutation or normal readback.
 | lifecycle lock and connection receipts | `src/persistence/runtime.ts` | persistence lifecycle operations only |
 | restore intent, retained generation, and restore receipt | `src/persistence/backup.ts` under the lifecycle lock | explicit recovery and current doctor/CLI surfaces |
 
-No product surface opens SQLite or writes these paths directly. The Manual
-adapter reaches only its declared journal writer and cannot write core records;
+No product surface opens SQLite or writes these paths directly. The Manual and
+package-private Codex adapters reach only their declared journal writers and
+cannot write core records;
 the injected workspace backend never writes SQLite; a CLI, MCP server,
 scheduler, adapter receipt, or Agent output cannot become a second writer.
 Future schema additions update this closure in the migration and ExecPlan that
@@ -509,7 +537,8 @@ checks SQLite storage classes, and invokes `createDomainSnapshot`. The current
 schema-version-1 application decoder then reads every registry, bootstrap, local
 identity, capability epoch/grant lineage, application and execution request,
 decision/audit/lifecycle record, execution sequence/attempt, operation stage,
-Manual journal, terminal fact, generic/subtype completion decision, dispatcher
+Manual journal, Codex turn/terminal-operation journal, terminal fact,
+generic/subtype completion decision, dispatcher
 record, all eight workspace record families, and every policy/gate/integration
 record family. It checks exact storage
 classes/enums/JSON/time shapes and all cross-record bindings and returns one
@@ -518,7 +547,8 @@ sequence/attempt/fence order, at most one active attempt, complete
 authorization/request identity, Project/Task revisions, lease/idempotency and
 supersession semantics, contiguous prepare/act/finalize authorization binding
 chains, exact intent-stage and durable retry evidence, independent inspect
-authorization, Manual turn/operation lineage, unique confirmation consumption,
+authorization, Manual turn/operation lineage, exact Codex intent/workspace/
+thread/predecessor/terminal-signal/operation lineage, unique confirmation consumption,
 terminal Task/execution/receipt/finalization/completion consistency, plus exact
 dispatcher trigger/run ownership, reconciliation completeness, sealed-member,
 claim/intent, and terminal-summary lineage. It has no historical schema reader,
@@ -548,6 +578,18 @@ invalid recover causation, unbounded evidence value, or impossible generation
 transition is `CORRUPT_ROW`. The complete workspace family appears once in the
 digest-version-2 application projection; backup, restore verification, and
 lifecycle authorization therefore bind it without a second projection.
+
+The same projection includes each Codex intent, turn, and terminal operation
+exactly once. The decoder rejects a Codex row with a Manual/no-workspace intent,
+missing ready workspace lineage, changed input/ownership/HEAD/fence tuple,
+replaced thread, invalid predecessor, cancellation-as-terminal assertion,
+terminal signal/lifecycle mismatch, cross-family execution ownership, or a
+substituted terminal receipt identity/digest. For every terminal operation it
+reconstructs the canonical bounded receipt projection from the originating Act
+request, intent, turn, and stored receipt ID, then requires the recomputed SHA-256
+to equal the stored digest. Backup,
+restore verification, lifecycle authorization, and restart therefore bind the
+same Codex evidence rather than trusting a separate adapter cache.
 
 For Phase 3 state, the decoder additionally proves exact ProjectPolicy receipt
 identity and gate-set uniqueness; gate request/authorization/intent/observation/
@@ -596,7 +638,7 @@ effect-capable state instead requires reliable-loop reconciliation.
 
 Every reliable-loop prepare commits its execution request/decision/audit and
 complete intent plus its first immutable authorization binding atomically before
-a possible Manual journal call. Executing CAS-binds a fresh Act decision;
+a possible Manual or package-private Codex journal call. Executing CAS-binds a fresh Act decision;
 observation and verification are separate short transactions; finalization
 CAS-binds a fresh Finalize decision with the result. The adapter/control call is
 outside all writer transactions. A denied fresh stage commits only its bounded
@@ -665,12 +707,14 @@ The sole migration is `0001-current-baseline.sql`, registry ID
 
 | Version | Canonical line ending | Canonical `checksum_sha256` |
 | --- | --- | --- |
-| `1` | LF | `48AEAA28BCA5152BC930149483E649D6C91E1E63D64D5BD29958492860AA95A5` |
+| `1` | LF | `E17C6ACFF0891C3B8FD6F1DADBF3616DDFCF4391F7F5D7427FE0F2F8CCFFED0D` |
 
-The pre-EP-03C development baseline checksum
+The pre-EP-03D development baseline checksum
+`48AEAA28BCA5152BC930149483E649D6C91E1E63D64D5BD29958492860AA95A5`
+and pre-EP-03C checksum
 `34440A65E9CC73BF8C6575F8563745D4FFDD71A9E065E6BD4A6062904174D8CA`
-is a named noncurrent identity for refusal evidence only; it has no migration,
-reader, adoption, or repair path.
+are named noncurrent identities for refusal evidence only; neither has a
+migration, reader, adoption, or repair path.
 
 The sole lazily loaded registry accepts a migration source only when it is the
 complete exact logical content transported with uniformly LF or uniformly
@@ -862,14 +906,17 @@ newer than the binary is refused. In-place downgrade does not exist; only the
 separately acknowledged verified-backup mechanism can publish older data.
 
 The current repository proves a local schema-version-1 persistence/application
-foundation, durable claims/leases/fences, reliable Manual-loop records, and
-explicit-Manual dispatcher records, plus the durable workspace generation/
+foundation, durable claims/leases/fences, reliable Manual-loop records,
+package-private Codex intent/thread/terminal records, and explicit-Manual
+dispatcher records, plus the durable workspace generation/
 operation/evidence foundation, Phase 3 policy/gate/completion/integration/
 cleanup records, and versioned local product CLI backup, separately confirmed
 restore, and read-only doctor surfaces on the observed development host. The
-typed Manual and injected Phase 3 facades compose those records without adding
-a second writer. This does not establish a release, Windows support, Codex or
-Scheduler adapter, scheduled delivery, MCP server, plugin, daemon, general
+typed Manual and injected Phase 3 facades compose their records without adding
+a second writer. The package-private Codex owner is not composed by a supported
+facade. This does not establish a release, Windows or Codex support,
+product-wired Codex or Scheduler adapter, scheduled delivery, MCP server,
+plugin, daemon, general
 network integration, deployment, public Phase 3 CLI, or external Project
 operation beyond explicitly injected disposable local effects. The Manual
 journal contains local no-workspace lifecycle facts only; ProjectRegistry

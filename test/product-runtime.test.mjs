@@ -624,6 +624,7 @@ test("product recovers a lost Manual start response and keeps unresolved externa
     let lost = true;
     const responseLoss = Object.freeze({
       contractId: manual.contractId,
+      backendKind: manual.backendKind,
       adapterId: manual.adapterId,
       adapterVersion: manual.adapterVersion,
       start(request) {
@@ -655,6 +656,7 @@ test("product recovers a lost Manual start response and keeps unresolved externa
     const manual = createManualExecutionBackend(ambiguous.store, { ingress: ambiguous.ingress });
     const unknown = Object.freeze({
       contractId: manual.contractId,
+      backendKind: manual.backendKind,
       adapterId: manual.adapterId,
       adapterVersion: manual.adapterVersion,
       start() { throw new Error("simulated-unknown-external-state"); },

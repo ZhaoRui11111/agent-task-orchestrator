@@ -24,6 +24,8 @@ import type {
   ExecutionTerminalStateRecord,
   ManualBackendTurnRecord,
   ManualBackendOperationRecord,
+  CodexBackendTurnRecord,
+  CodexBackendOperationRecord,
   CompletionDecisionRecord,
   ManualCompletionDecisionRecord,
   DispatcherTriggerRequestRecord,
@@ -350,7 +352,9 @@ export class ApplicationTransaction {
         input_reference, execution_id, execution_revision, attempt_number, fencing_token,
         source_execution_id, source_execution_revision, source_attempt_number, source_fencing_token,
         source_observation_number,
-        contract_id, adapter_id, adapter_version, policy_binding_reference, workspace_mode,
+        contract_id, backend_kind, adapter_id, adapter_version, policy_binding_reference, workspace_mode,
+        workspace_contract_id, workspace_id, workspace_generation, workspace_revision,
+        workspace_root_key, ownership_binding_sha256, workspace_head_object_id,
         backend_execution_id, thread_id, previous_receipt_id, expected_journal_revision,
         requested_deadline, continuation_reference, required_action_receipt_id, expected_lifecycle,
         reason_code, report_id, report_operation, report_code, evidence_reference, last_observation_number,
@@ -360,7 +364,8 @@ export class ApplicationTransaction {
       ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28,
         ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41, ?42,
-        ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53, ?54, ?55)`,
+        ?43, ?44, ?45, ?46, ?47, ?48, ?49, ?50, ?51, ?52, ?53, ?54, ?55, ?56,
+        ?57, ?58, ?59, ?60, ?61, ?62, ?63)`,
     ).run(
       record.intentId, record.operationId, record.idempotencyKey, record.operationKind,
       record.action, record.state, record.revision, record.actorId, record.requestId,
@@ -371,8 +376,11 @@ export class ApplicationTransaction {
       record.executionRevision, record.attemptNumber, record.fencingToken,
       record.sourceExecutionId, record.sourceExecutionRevision, record.sourceAttemptNumber,
       record.sourceFencingToken, record.sourceObservationNumber,
-      record.contractId, record.adapterId, record.adapterVersion,
-      record.policyBindingReference, record.workspaceMode, record.backendExecutionId,
+      record.contractId, record.backendKind, record.adapterId, record.adapterVersion,
+      record.policyBindingReference, record.workspaceMode, record.workspaceContractId,
+      record.workspaceId, record.workspaceGeneration, record.workspaceRevision,
+      record.workspaceRootKey, record.ownershipBindingSha256, record.workspaceHeadObjectId,
+      record.backendExecutionId,
       record.threadId, record.previousReceiptId, record.expectedJournalRevision,
       record.requestedDeadline, record.continuationReference, record.requiredActionReceiptId,
       record.expectedLifecycle, record.reasonCode, record.reportId, record.reportOperation,
@@ -585,6 +593,70 @@ export class ApplicationTransaction {
       record.threadId, record.sourceBackendExecutionId, record.sourceThreadId,
       record.expectedFencingToken, record.expectedPreRevision,
       record.postRevision, record.resultLifecycle, record.receiptId, record.createdAt,
+    );
+  }
+
+  insertCodexTurn(record: CodexBackendTurnRecord): void {
+    this.#database.prepare(
+      `INSERT INTO codex_backend_turns(
+        backend_execution_id, thread_id, start_idempotency_key, origin_intent_id,
+        origin_operation_id, origin_authorization_decision_id, project_id,
+        project_resource_revision, project_config_revision, task_id, task_revision,
+        input_reference, execution_id, execution_revision, attempt_number, fencing_token,
+        predecessor_backend_execution_id, predecessor_thread_id, policy_binding_reference,
+        workspace_contract_id, workspace_id, workspace_generation, workspace_revision,
+        workspace_root_key, ownership_binding_sha256, workspace_head_object_id, lifecycle,
+        terminal_signal, cancellation_requested_at, code, evidence_reference, revision,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      record.backendExecutionId, record.threadId, record.startIdempotencyKey,
+      record.originIntentId, record.originOperationId, record.originAuthorizationDecisionId,
+      record.projectId, record.projectResourceRevision, record.projectConfigRevision,
+      record.taskId, record.taskRevision, record.inputReference, record.executionId,
+      record.executionRevision, record.attemptNumber, record.fencingToken,
+      record.predecessorBackendExecutionId, record.predecessorThreadId,
+      record.policyBindingReference, record.workspaceContractId, record.workspaceId,
+      record.workspaceGeneration, record.workspaceRevision, record.workspaceRootKey,
+      record.ownershipBindingSha256, record.workspaceHeadObjectId, record.lifecycle,
+      record.terminalSignal, record.cancellationRequestedAt, record.code,
+      record.evidenceReference, record.revision, record.createdAt, record.updatedAt,
+    );
+  }
+
+  updateCodexTurn(record: CodexBackendTurnRecord, expectedRevision: number): void {
+    const result = this.#database.prepare(
+      `UPDATE codex_backend_turns SET
+        thread_id=?, lifecycle=?, terminal_signal=?, cancellation_requested_at=?,
+        code=?, evidence_reference=?, revision=?, updated_at=?
+      WHERE backend_execution_id=? AND execution_id=? AND fencing_token=? AND revision=?`,
+    ).run(
+      record.threadId, record.lifecycle, record.terminalSignal, record.cancellationRequestedAt,
+      record.code, record.evidenceReference, record.revision, record.updatedAt,
+      record.backendExecutionId, record.executionId, record.fencingToken, expectedRevision,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Codex turn revision/fence CAS failed", {
+        backendExecutionId: record.backendExecutionId,
+      });
+    }
+  }
+
+  insertCodexBackendOperation(record: CodexBackendOperationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO codex_backend_operations(
+        backend_operation_id, idempotency_key, intent_id, authorization_decision_id,
+        operation_kind, backend_execution_id, thread_id, source_backend_execution_id,
+        source_thread_id, expected_fencing_token, expected_pre_revision, post_revision,
+        result_lifecycle, terminal_signal, receipt_id, receipt_sha256, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.backendOperationId, record.idempotencyKey, record.intentId,
+      record.authorizationDecisionId, record.operationKind, record.backendExecutionId,
+      record.threadId, record.sourceBackendExecutionId, record.sourceThreadId,
+      record.expectedFencingToken, record.expectedPreRevision, record.postRevision,
+      record.resultLifecycle, record.terminalSignal, record.receiptId,
+      record.receiptSha256, record.createdAt,
     );
   }
 

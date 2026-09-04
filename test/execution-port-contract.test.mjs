@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  CODEX_EXECUTION_ENDPOINT_VERSION,
   EXECUTION_ADAPTER_ERROR_CATEGORIES,
   EXECUTION_CONTRACT_ID,
+  MANUAL_EXECUTION_ENDPOINT_VERSION,
   MANUAL_OUTCOME_CONTROL_ID,
   createApplicationService,
   createExecutionApplicationService,
@@ -91,6 +93,7 @@ test("Manual and test-only Fake adapters pass one strict start/inspect exchange 
     const exchanges = [];
     const capturingBackend = Object.freeze({
       contractId: manual.contractId,
+      backendKind: manual.backendKind,
       adapterId: manual.adapterId,
       adapterVersion: manual.adapterVersion,
       start(request) {
@@ -166,6 +169,7 @@ test("Manual and test-only Fake adapters pass one strict start/inspect exchange 
 });
 
 test("execution contract parsers reject missing, extra, cross-class, action, workspace, accessor, and proxy drift", () => {
+  assert.equal(EXECUTION_CONTRACT_ID, "ato.execution/v2");
   const fake = createFakeExecutionBackend();
   const semantic = Object.freeze({
     projectId: "project",
@@ -179,6 +183,7 @@ test("execution contract parsers reject missing, extra, cross-class, action, wor
     attemptNumber: 1,
     fencingToken: 1,
     policyBindingReference: "policy-ref",
+    backendKind: "manual-local",
     workspaceMode: "none",
   });
   const start = Object.freeze({
@@ -195,13 +200,41 @@ test("execution contract parsers reject missing, extra, cross-class, action, wor
     authorizationDecisionId: "decision-1",
     action: "execution.start",
     operation: "start",
+    input: null,
   });
   assert.notEqual(parseExecutionRequest(start), null);
+  assert.equal(parseExecutionRequest({ ...start, contractId: "ato.execution/v1" }), null);
   const { action: _action, ...missing } = start;
   assert.equal(parseExecutionRequest(missing), null);
   assert.equal(parseExecutionRequest({ ...start, unexpected: true }), null);
   assert.equal(parseExecutionRequest({ ...start, action: "execution.resume" }), null);
   assert.equal(parseExecutionRequest({ ...start, semantic: { ...semantic, workspaceMode: "managed" } }), null);
+  assert.equal(parseExecutionRequest({
+    ...start,
+    semantic: { ...semantic, workspaceId: "cross-class-workspace" },
+  }), null);
+  assert.equal(parseExecutionRequest({ ...start, input: "manual-must-not-receive-raw-input" }), null);
+  const codexSemantic = Object.freeze({
+    ...semantic,
+    inputReference: `task-sha256:${"a".repeat(64)}`,
+    backendKind: "codex-sdk",
+    workspaceMode: "owned",
+    workspaceContractId: "ato.workspace/v2",
+    workspaceId: "workspace-1",
+    workspaceGeneration: 1,
+    workspaceRevision: 2,
+    workspaceRootKey: "workspace-root",
+    ownershipBindingSha256: "A".repeat(64),
+    workspaceHeadObjectId: "b".repeat(40),
+  });
+  const codexStart = Object.freeze({ ...start, semantic: codexSemantic, input: "bounded Codex input" });
+  assert.notEqual(parseExecutionRequest(codexStart), null);
+  assert.equal(parseExecutionRequest({ ...codexStart, input: null }), null);
+  assert.equal(parseExecutionRequest({ ...codexStart, input: "é".repeat(524_289) }), null);
+  assert.equal(parseExecutionRequest({
+    ...codexStart,
+    semantic: { ...codexSemantic, backendKind: "manual-local" },
+  }), null);
   assert.equal(parseExecutionRequest({ ...start, workingDirectory: "C:/secret", environment: { TOKEN: "secret" } }), null);
   assert.equal(parseExecutionRequest({ ...start, idempotencyKey: "x".repeat(129) }), null);
 
@@ -238,6 +271,20 @@ test("execution contract parsers reject missing, extra, cross-class, action, wor
   assert.equal(validateExecutionPortResult(resultAccessor), null);
   assert.equal(validateManualOutcomeControlResult(resultAccessor), null);
   assert.equal(resultGetterReads, 0);
+
+  const fakeResult = fake.start(start);
+  assert.equal(fakeResult.ok, true);
+  assert.equal(fakeResult.receipt.observedEndpointVersion, MANUAL_EXECUTION_ENDPOINT_VERSION);
+  assert.equal(parseExecutionReceipt({ ...fakeResult.receipt, contractId: "ato.execution/v1" }), null);
+  assert.equal(parseExecutionReceipt({
+    ...fakeResult.receipt,
+    observedEndpointVersion: CODEX_EXECUTION_ENDPOINT_VERSION,
+  }), null);
+  assert.equal(parseExecutionReceipt({
+    ...fakeResult.receipt,
+    backendKind: "codex-sdk",
+    observedEndpointVersion: CODEX_EXECUTION_ENDPOINT_VERSION,
+  }), null);
 });
 
 test("closed adapter error flags and Manual outcome shapes are exact", () => {
@@ -273,7 +320,7 @@ test("closed adapter error flags and Manual outcome shapes are exact", () => {
     projectId: "project", projectResourceRevision: 1, projectConfigRevision: 1,
     taskId: "task", taskRevision: 3, inputReference: "input-ref",
     executionId: "execution-1", executionRevision: 1, attemptNumber: 1,
-    fencingToken: 1, policyBindingReference: "policy-ref", workspaceMode: "none",
+    fencingToken: 1, policyBindingReference: "policy-ref", backendKind: "manual-local", workspaceMode: "none",
   });
   const report = Object.freeze({
     contractId: MANUAL_OUTCOME_CONTROL_ID,

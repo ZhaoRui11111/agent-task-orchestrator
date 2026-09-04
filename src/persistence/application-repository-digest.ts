@@ -41,6 +41,8 @@ export function applicationStateProjection(state: ApplicationState): Readonly<Re
     grants: state.grants,
     identity: state.identity,
     manualBackendOperations: state.manualBackendOperations,
+    codexBackendOperations: state.codexBackendOperations,
+    codexTurns: state.codexTurns,
     completionDecisions: state.completionDecisions,
     manualCompletionDecisions: state.manualCompletionDecisions,
     manualTurns: state.manualTurns,

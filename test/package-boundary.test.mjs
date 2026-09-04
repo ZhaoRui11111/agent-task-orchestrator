@@ -31,7 +31,7 @@ test("package metadata and tracked inventory expose only the normal package boun
   assert.equal(packageJson.type, "module");
   assert.deepEqual(Object.keys(packageJson.exports), ["."]);
   assert.deepEqual(Object.keys(packageJson.bin), ["ato"]);
-  assert.equal(packageJson.dependencies, undefined);
+  assert.deepEqual(packageJson.dependencies, { "@openai/codex-sdk": "0.153.2" });
   const inventory = gitInventory();
   assert.deepEqual(inventory.filter((item) => item.startsWith("src/")), EXPECTED_PRODUCTION_SOURCE_FILES);
   assert.deepEqual(inventory.filter((item) => item.startsWith("migrations/")), EXPECTED_MIGRATION_FILES);

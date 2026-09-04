@@ -28,11 +28,18 @@ snapshot/registry/grant/decision/audit/lifecycle commits; persistence still
 neither authorizes nor selects a Domain mutation. The single current
 schema-version-1 baseline and the typed execution owners implement atomic
 claims, ordered attempts, leases, per-Task fencing, explicit
-confirmation-bound vocabulary upgrades, the corrected `ato.execution/v1` port,
-one durable local Manual backend journal, and the ordered
+confirmation-bound vocabulary upgrades, the sole current `ato.execution/v2`
+port, one durable local Manual backend journal, and the ordered
 intent/observation/verified-receipt/finalization protocol for start, inspect,
 resume, retry, cancellation, trusted Manual outcome reporting, reconciliation,
-and separately confirmed Manual completion acceptance. The explicit
+and separately confirmed Manual completion acceptance. A package-private,
+non-composed Codex SDK backend also implements v2 for an exact owned
+`ato.workspace/v2` generation and verified ephemeral Task input. It persists
+bounded thread/terminal evidence before convergence, never exposes raw SDK item
+payloads, never treats response loss as replay authority, and leaves Task
+completion to the existing completion owner. No supported package-root,
+product-runtime, dispatcher, API, or CLI route can construct or select it; the
+current vocabulary-version-6 grants remain Manual-only product authority. The explicit
 Manual dispatcher adds a separately upgraded `dispatch.run` capability,
 durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
 immutable finite candidate membership, one terminal outcome per member, and a
@@ -71,8 +78,9 @@ content or perform an external Project/workspace effect. The Phase 3 capability
 is an explicitly injected library surface with no public CLI command or default
 product composition; its disposable Git `2.53.0.windows.1` evidence is
 development evidence only. The repository still has no scheduler or scheduled
-trigger, MCP component, Codex adapter, product-wired Phase 3 route, daemon/
-service, external-service integration, release, deployment, or validated
+trigger, MCP component, product-wired Codex or Phase 3 route, Codex credential/
+destination authority, daemon/service, general external-service integration,
+release, deployment, real Codex account E2E, or validated
 platform-support claim. Do not describe those absent modules, platform support,
 safety properties, or integration behavior as implemented. Follow the
 [toolchain contract](docs/reference/toolchain-contract.md) for current
@@ -83,7 +91,7 @@ current finite local grant model, and the
 [persistence contract](docs/reference/persistence-contract.md) for the current
 schema and storage/recovery boundary. The
 [reliability protocol](docs/reference/reliability-protocol.md) owns the current
-claim/lease/fence, Manual effect, dispatcher fan-out, workspace, gate,
+claim/lease/fence, Manual and package-private Codex effects, dispatcher fan-out, workspace, gate,
 completion, integration, and cleanup protocols. The
 [CLI contract](docs/reference/cli-contract.md) alone owns commands, public output,
 and exit codes.

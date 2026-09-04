@@ -5,7 +5,8 @@
 This file is the sole normative owner of planned correlation, structured
 operational events, diagnostic access, and the application of redaction to
 operational events. No logger, diagnostic command, event exporter, or telemetry
-pipeline exists today. Current schema-version-1 application, Manual-loop, dispatcher request/
+pipeline exists today. Current schema-version-1 application, Manual-loop,
+package-private Codex turn/terminal journal, dispatcher request/
 decision/audit, reconciliation, member, no-execution member-denial, and summary
 rows, plus current policy receipts, completion-gate transition evidence,
 completion decisions, integration reservation/transition evidence, cleanup
@@ -99,6 +100,18 @@ outcome/reason codes, revisions/fences/counts/times, and nullable bounded
 evidence references. Policy receipts, verified gate receipts, generic and
 subtyped completion decisions, integration receipts/finalizations, and cleanup
 attestations are source-of-truth records rather than reconstructed events.
+
+The package-private Codex path likewise implements no operational event stream.
+Its source-of-truth subset is the exact execution intent/authorization/
+observation/verified-receipt/finalization chain plus `codex_backend_turns` and
+immutable terminal `codex_backend_operations`. Those rows retain only opaque
+backend/thread/operation/receipt identities, tuple revisions/fence/workspace
+bindings, closed lifecycle and `turn.completed|turn.failed` signals, timestamps,
+hashes, and bounded evidence references. The SDK thread ID is sensitive
+authoritative state: it is not copied into application audit, CLI output,
+compatibility evidence, or a general log. SDK item events, prompts, model/tool
+text, command/path values, usage detail, and raw error bodies are discarded at
+the driver boundary rather than converted into events.
 
 No current CLI or diagnostic surface exports any of these rows. Adding a logger,
 general event envelope, retention worker, query/export API, telemetry sink, or

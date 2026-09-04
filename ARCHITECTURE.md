@@ -11,7 +11,8 @@ Phase 3 library. One immutable schema-version-1 baseline directly owns metadata
 and exact Domain snapshots; ProjectRegistry; local identity;
 vocabulary-version-1-through-6 epochs and grants; application requests,
 authorization decisions, lifecycle handoffs and audit; execution attempts,
-Manual-loop evidence and journal state; dispatcher runs and membership;
+Manual-loop evidence and journal state; package-private Codex turn/operation
+evidence; dispatcher runs and membership;
 workspace generations and operation evidence; and Phase 3 policy receipts,
 completion gate evidence/decisions, integration reservations/effects, cleanup
 attestations, and bounded transition events. Lifecycle authorization uses the
@@ -31,7 +32,7 @@ product runtime or performs command effects. A typed product facade derives the
   dispatcher, and reliable-loop owners. A separate typed execution application
 service retains claim, inspection, and renewal. The typed
 `ReliableExecutionLoop` owns prepare/execute/observe/verify/finalize and
-reconcile-first continuation against the pure `ato.execution/v1` port. The
+reconcile-first continuation against the pure `ato.execution/v2` port. The
 production `manual-local` adapter implements a durable, independently
 inspectable no-workspace turn journal; a distinct trusted Manual outcome
 control supplies bounded lifecycle facts, and a separately authorized and
@@ -39,7 +40,12 @@ confirmed application decision alone may complete a Task from verified
 `turn_succeeded` evidence. The Manual dispatcher coordinates those
 owners after one explicit trigger: it durably reconciles old work, seals a
 finite candidate set, resolves every member, and publishes a summary only after
-  complete readback.
+complete readback. A separate package-private injected Codex implementation
+uses the same v2 protocol with an exact owned workspace, verified ephemeral
+Task input, and a durable bounded thread/turn journal. It is absent from the
+package-root facade and every product/application/dispatcher/CLI factory, so it
+is not an operational product route and does not broaden the Manual-only
+authorization vocabulary.
 
 The package root also exports pure `ato.project-policy/v1`,
 `ato.completion/v1`, `ato.integration/v1`, and sole current `ato.workspace/v2`
@@ -58,9 +64,10 @@ backend extended with attestation-bound cleanup. They write no SQLite state and
 are validated only against disposable repositories. The default Manual product
 and CLI construct none of them, expose no Phase 3 command, and still do not
 execute Task content or perform a Project/workspace effect. The repository
-implements no SchedulerBackend or scheduled trigger, MCP component, Codex
-adapter, daemon/service, supported platform integration, release, or
-deployment.
+implements no SchedulerBackend or scheduled trigger, MCP component,
+product-wired Codex route, Codex credential/destination authority,
+daemon/service, supported platform integration, release, or deployment. No
+real Codex account E2E or platform-support claim exists.
 
 ## Authority and ownership
 
@@ -114,7 +121,7 @@ The architecture separates:
   cancellation-reason predicate instead of defining a second text invariant.
 - `persistence`: the implemented SQLite runtime-root, connection, single
   current-baseline migration, combined schema-version-1 repository, transaction, lifecycle handoff,
-  execution attempt/sequence, Manual-loop and dispatcher record storage,
+  execution attempt/sequence, Manual-loop, package-private Codex journal, and dispatcher record storage,
   workspace generation/operation/evidence storage, Phase 3 policy/gate/
   completion/integration/cleanup evidence, backup, restore, read-only doctor,
   and typed-corruption owner. Backup
@@ -124,14 +131,16 @@ The architecture separates:
 - `dispatcher`: the implemented explicit-Manual reconcile-first
   run, ownership/takeover, finite fan-out, and recovery coordinator. It calls
   application and reliable owners rather than duplicating their decisions.
-- `ports`: the implemented pure `ato.execution/v1`, `ato.project-policy/v1`,
+- `ports`: the implemented pure `ato.execution/v2`, `ato.project-policy/v1`,
   `ato.completion/v1`, `ato.integration/v1`, and sole current
   `ato.workspace/v2` contract kits, plus the planned scheduler contract.
-- `adapters`: the implemented local Manual execution backend/control,
-  configured local ProjectPolicy, bounded local CompletionBackend, local Git
+- `adapters`: the implemented local Manual execution backend/control, the
+  package-private injected Codex SDK backend/driver, configured local
+  ProjectPolicy, bounded local CompletionBackend, local Git
   integration backend, and Windows Git workspace backend. The Phase 3 adapters
   are explicitly injected library surfaces tested only in disposable fixtures;
-  test Fakes are unexported. Codex and every other adapter remain planned.
+  test Fakes are unexported. Codex product composition and every other adapter
+  remain planned.
 - `product-runtime`: the implemented typed local Manual facade plus a separate
   injected Phase 3 facade. The Manual facade validates the closed public CAS
   tuple and returns only bounded redacted product views. The Phase 3 facade

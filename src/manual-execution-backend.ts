@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   EXECUTION_CONTRACT_ID,
+  MANUAL_EXECUTION_ENDPOINT_VERSION,
   MANUAL_OUTCOME_CONTROL_ID,
   parseExecutionRequest,
   parseManualOutcomeReport,
@@ -118,7 +119,8 @@ function mutationBase(
     correlationId: request.correlationId,
     adapterId,
     adapterVersion,
-    observedEndpointVersion: "local-manual/v1",
+    backendKind: "manual-local",
+    observedEndpointVersion: MANUAL_EXECUTION_ENDPOINT_VERSION,
     observedExecutionId: request.semantic.executionId,
     outcome: "succeeded",
     code: result.operation.operationKind === "start" ? "manual_started" :
@@ -137,6 +139,7 @@ function mutationBase(
 
 export class ManualExecutionBackend implements ExecutionBackend, ManualOutcomeControl {
   readonly contractId = EXECUTION_CONTRACT_ID;
+  readonly backendKind = "manual-local" as const;
   readonly outcomeContractId = MANUAL_OUTCOME_CONTROL_ID;
   readonly adapterId: string;
   readonly adapterVersion: string;
@@ -172,7 +175,9 @@ export class ManualExecutionBackend implements ExecutionBackend, ManualOutcomeCo
   }
 
   #validAdapter(request: ExecutionStartRequest | ExecutionResumeRequest | ExecutionInspectRequest | ExecutionCancelRequest): boolean {
-    return request.contractId === EXECUTION_CONTRACT_ID && request.adapterId === this.adapterId && request.adapterVersion === this.adapterVersion;
+    return request.contractId === EXECUTION_CONTRACT_ID && request.adapterId === this.adapterId &&
+      request.adapterVersion === this.adapterVersion && request.semantic.backendKind === this.backendKind &&
+      request.semantic.workspaceMode === "none";
   }
 
   start(value: ExecutionStartRequest): ExecutionPortResult<ExecutionStartReceipt> {
@@ -253,7 +258,8 @@ export class ManualExecutionBackend implements ExecutionBackend, ManualOutcomeCo
         correlationId: request.correlationId,
         adapterId: this.adapterId,
         adapterVersion: this.adapterVersion,
-        observedEndpointVersion: "local-manual/v1" as const,
+        backendKind: this.backendKind,
+        observedEndpointVersion: MANUAL_EXECUTION_ENDPOINT_VERSION,
         operation: "inspect" as const,
         observedExecutionId: request.semantic.executionId,
         outcome: "succeeded" as const,

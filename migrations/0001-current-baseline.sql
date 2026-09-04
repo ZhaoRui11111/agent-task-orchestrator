@@ -633,11 +633,25 @@ CREATE TABLE execution_operation_intents (
   source_attempt_number INTEGER,
   source_fencing_token INTEGER,
   source_observation_number INTEGER,
-  contract_id TEXT NOT NULL CHECK (contract_id = 'ato.execution/v1'),
+  contract_id TEXT NOT NULL CHECK (contract_id = 'ato.execution/v2'),
+  backend_kind TEXT NOT NULL CHECK (backend_kind IN ('manual-local', 'codex-sdk')),
   adapter_id TEXT NOT NULL CHECK (length(adapter_id) BETWEEN 1 AND 128),
   adapter_version TEXT NOT NULL CHECK (length(adapter_version) BETWEEN 1 AND 128),
   policy_binding_reference TEXT NOT NULL CHECK (length(policy_binding_reference) BETWEEN 1 AND 128),
-  workspace_mode TEXT NOT NULL CHECK (workspace_mode = 'none'),
+  workspace_mode TEXT NOT NULL CHECK (workspace_mode IN ('none', 'owned')),
+  workspace_contract_id TEXT CHECK (workspace_contract_id IS NULL OR workspace_contract_id = 'ato.workspace/v2'),
+  workspace_id TEXT CHECK (workspace_id IS NULL OR length(workspace_id) BETWEEN 1 AND 128),
+  workspace_generation INTEGER CHECK (workspace_generation IS NULL OR workspace_generation > 0),
+  workspace_revision INTEGER CHECK (workspace_revision IS NULL OR workspace_revision > 0),
+  workspace_root_key TEXT CHECK (workspace_root_key IS NULL OR length(workspace_root_key) BETWEEN 1 AND 128),
+  ownership_binding_sha256 TEXT CHECK (
+    ownership_binding_sha256 IS NULL OR
+    (length(ownership_binding_sha256) = 64 AND ownership_binding_sha256 NOT GLOB '*[^0-9A-F]*')
+  ),
+  workspace_head_object_id TEXT CHECK (
+    workspace_head_object_id IS NULL OR
+    (length(workspace_head_object_id) = 40 AND workspace_head_object_id NOT GLOB '*[^0-9a-f]*')
+  ),
   backend_execution_id TEXT,
   thread_id TEXT,
   previous_receipt_id TEXT,
@@ -671,6 +685,17 @@ CREATE TABLE execution_operation_intents (
   CHECK (report_id IS NULL OR length(report_id) BETWEEN 1 AND 128),
   CHECK (report_code IS NULL OR length(report_code) BETWEEN 1 AND 64),
   CHECK (evidence_reference IS NULL OR length(evidence_reference) BETWEEN 1 AND 128),
+  CHECK (
+    (backend_kind = 'manual-local' AND workspace_mode = 'none'
+      AND workspace_contract_id IS NULL AND workspace_id IS NULL AND workspace_generation IS NULL
+      AND workspace_revision IS NULL AND workspace_root_key IS NULL
+      AND ownership_binding_sha256 IS NULL AND workspace_head_object_id IS NULL)
+    OR
+    (backend_kind = 'codex-sdk' AND workspace_mode = 'owned'
+      AND workspace_contract_id = 'ato.workspace/v2' AND length(workspace_id) > 0
+      AND workspace_generation > 0 AND workspace_revision > 0 AND length(workspace_root_key) > 0
+      AND ownership_binding_sha256 IS NOT NULL AND workspace_head_object_id IS NOT NULL)
+  ),
   CHECK (
     (retry_count = 0 AND last_error_category IS NULL AND last_error_code IS NULL
       AND last_error_retryable IS NULL AND last_error_ambiguous IS NULL AND retry_after IS NULL)
@@ -721,7 +746,9 @@ CREATE TABLE execution_operation_intents (
   FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
-  FOREIGN KEY (source_execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+  FOREIGN KEY (source_execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, workspace_generation)
+    REFERENCES workspace_generations(workspace_id, generation) ON UPDATE RESTRICT ON DELETE RESTRICT
 ) STRICT;
 
 CREATE INDEX execution_intents_execution_order
@@ -917,6 +944,100 @@ CREATE TABLE manual_backend_operations (
 CREATE INDEX manual_backend_operations_turn_order
   ON manual_backend_operations(backend_execution_id, post_revision, backend_operation_id);
 
+CREATE TABLE codex_backend_turns (
+  backend_execution_id TEXT PRIMARY KEY NOT NULL CHECK (length(backend_execution_id) BETWEEN 1 AND 128),
+  thread_id TEXT CHECK (thread_id IS NULL OR length(thread_id) BETWEEN 1 AND 128),
+  start_idempotency_key TEXT NOT NULL CHECK (length(start_idempotency_key) BETWEEN 1 AND 128),
+  origin_intent_id TEXT NOT NULL UNIQUE CHECK (length(origin_intent_id) BETWEEN 1 AND 128),
+  origin_operation_id TEXT NOT NULL UNIQUE CHECK (length(origin_operation_id) BETWEEN 1 AND 128),
+  origin_authorization_decision_id TEXT NOT NULL CHECK (length(origin_authorization_decision_id) BETWEEN 1 AND 128),
+  project_id TEXT NOT NULL CHECK (length(project_id) > 0),
+  project_resource_revision INTEGER NOT NULL CHECK (project_resource_revision > 0),
+  project_config_revision INTEGER NOT NULL CHECK (project_config_revision > 0),
+  task_id TEXT NOT NULL CHECK (length(task_id) > 0),
+  task_revision INTEGER NOT NULL CHECK (task_revision > 0),
+  input_reference TEXT NOT NULL CHECK (
+    length(input_reference) = 76 AND substr(input_reference, 1, 12) = 'task-sha256:'
+    AND substr(input_reference, 13) NOT GLOB '*[^0-9a-f]*'
+  ),
+  execution_id TEXT NOT NULL UNIQUE CHECK (length(execution_id) BETWEEN 1 AND 128),
+  execution_revision INTEGER NOT NULL CHECK (execution_revision > 0),
+  attempt_number INTEGER NOT NULL CHECK (attempt_number > 0),
+  fencing_token INTEGER NOT NULL CHECK (fencing_token > 0),
+  predecessor_backend_execution_id TEXT,
+  predecessor_thread_id TEXT,
+  policy_binding_reference TEXT NOT NULL CHECK (length(policy_binding_reference) BETWEEN 1 AND 128),
+  workspace_contract_id TEXT NOT NULL CHECK (workspace_contract_id = 'ato.workspace/v2'),
+  workspace_id TEXT NOT NULL CHECK (length(workspace_id) BETWEEN 1 AND 128),
+  workspace_generation INTEGER NOT NULL CHECK (workspace_generation > 0),
+  workspace_revision INTEGER NOT NULL CHECK (workspace_revision > 0),
+  workspace_root_key TEXT NOT NULL CHECK (length(workspace_root_key) BETWEEN 1 AND 128),
+  ownership_binding_sha256 TEXT NOT NULL CHECK (
+    length(ownership_binding_sha256) = 64 AND ownership_binding_sha256 NOT GLOB '*[^0-9A-F]*'
+  ),
+  workspace_head_object_id TEXT NOT NULL CHECK (
+    length(workspace_head_object_id) = 40 AND workspace_head_object_id NOT GLOB '*[^0-9a-f]*'
+  ),
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('unknown', 'active', 'turn_succeeded', 'failed')),
+  terminal_signal TEXT CHECK (terminal_signal IS NULL OR terminal_signal IN ('turn.completed', 'turn.failed')),
+  cancellation_requested_at TEXT,
+  code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
+  evidence_reference TEXT CHECK (evidence_reference IS NULL OR length(evidence_reference) BETWEEN 1 AND 128),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+  CHECK ((predecessor_backend_execution_id IS NULL AND predecessor_thread_id IS NULL)
+    OR (length(predecessor_backend_execution_id) > 0 AND length(predecessor_thread_id) > 0)),
+  CHECK (
+    (lifecycle IN ('unknown', 'active') AND terminal_signal IS NULL)
+    OR (lifecycle = 'turn_succeeded' AND terminal_signal = 'turn.completed')
+    OR (lifecycle = 'failed' AND terminal_signal = 'turn.failed')
+  ),
+  FOREIGN KEY (origin_intent_id) REFERENCES execution_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (origin_authorization_decision_id) REFERENCES execution_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (predecessor_backend_execution_id) REFERENCES codex_backend_turns(backend_execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (workspace_id, workspace_generation)
+    REFERENCES workspace_generations(workspace_id, generation) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE codex_backend_operations (
+  backend_operation_id TEXT PRIMARY KEY NOT NULL CHECK (length(backend_operation_id) BETWEEN 1 AND 128),
+  idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL UNIQUE CHECK (length(intent_id) BETWEEN 1 AND 128),
+  authorization_decision_id TEXT NOT NULL CHECK (length(authorization_decision_id) BETWEEN 1 AND 128),
+  operation_kind TEXT NOT NULL CHECK (operation_kind IN ('start', 'resume', 'retry')),
+  backend_execution_id TEXT NOT NULL CHECK (length(backend_execution_id) BETWEEN 1 AND 128),
+  thread_id TEXT NOT NULL CHECK (length(thread_id) BETWEEN 1 AND 128),
+  source_backend_execution_id TEXT,
+  source_thread_id TEXT,
+  expected_fencing_token INTEGER NOT NULL CHECK (expected_fencing_token > 0),
+  expected_pre_revision INTEGER,
+  post_revision INTEGER NOT NULL CHECK (post_revision > 0),
+  result_lifecycle TEXT NOT NULL CHECK (result_lifecycle IN ('turn_succeeded', 'failed')),
+  terminal_signal TEXT NOT NULL CHECK (terminal_signal IN ('turn.completed', 'turn.failed')),
+  receipt_id TEXT NOT NULL UNIQUE CHECK (length(receipt_id) BETWEEN 1 AND 128),
+  receipt_sha256 TEXT NOT NULL UNIQUE CHECK (
+    length(receipt_sha256) = 64 AND receipt_sha256 NOT GLOB '*[^0-9A-F]*'
+  ),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  CHECK ((result_lifecycle = 'turn_succeeded' AND terminal_signal = 'turn.completed')
+    OR (result_lifecycle = 'failed' AND terminal_signal = 'turn.failed')),
+  CHECK (expected_pre_revision IS NULL OR expected_pre_revision > 0),
+  CHECK ((operation_kind IN ('resume', 'retry') AND length(source_backend_execution_id) > 0
+      AND length(source_thread_id) > 0)
+    OR (operation_kind = 'start' AND source_backend_execution_id IS NULL AND source_thread_id IS NULL)),
+  FOREIGN KEY (intent_id) REFERENCES execution_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (authorization_decision_id) REFERENCES execution_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (backend_execution_id) REFERENCES codex_backend_turns(backend_execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (source_backend_execution_id) REFERENCES codex_backend_turns(backend_execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE INDEX codex_backend_operations_turn_order
+  ON codex_backend_operations(backend_execution_id, post_revision, backend_operation_id);
+
 CREATE TABLE manual_completion_decisions (
   completion_decision_id TEXT PRIMARY KEY NOT NULL CHECK (length(completion_decision_id) BETWEEN 1 AND 128),
   operation_id TEXT NOT NULL UNIQUE CHECK (length(operation_id) BETWEEN 1 AND 128),
@@ -1026,6 +1147,26 @@ WHEN NOT (
           AND receipt.adapter_receipt_id = observation.adapter_receipt_id
           AND finalization.verified_receipt_id = receipt.verified_receipt_id
       )
+      OR EXISTS (
+        SELECT 1
+        FROM codex_backend_turns AS turn
+        JOIN execution_operation_intents AS intent ON intent.execution_id = OLD.execution_id
+        JOIN execution_observations AS observation ON observation.intent_id = intent.intent_id
+        JOIN execution_verified_receipts AS receipt ON receipt.intent_id = intent.intent_id
+        JOIN execution_finalizations AS finalization ON finalization.intent_id = intent.intent_id
+        JOIN codex_backend_operations AS operation ON operation.intent_id = intent.intent_id
+        WHERE turn.execution_id = OLD.execution_id AND turn.lifecycle = 'failed'
+          AND intent.backend_kind = 'codex-sdk' AND intent.state = 'finalized'
+          AND observation.lifecycle = 'failed'
+          AND observation.backend_execution_id = turn.backend_execution_id
+          AND observation.thread_id = turn.thread_id
+          AND observation.journal_revision = turn.revision
+          AND receipt.adapter_receipt_id = observation.adapter_receipt_id
+          AND finalization.verified_receipt_id = receipt.verified_receipt_id
+          AND operation.backend_execution_id = turn.backend_execution_id
+          AND operation.result_lifecycle = 'failed'
+          AND operation.post_revision = turn.revision
+      )
     )
   )
 )
@@ -1080,8 +1221,16 @@ WHEN NEW.intent_id <> OLD.intent_id OR NEW.operation_id <> OLD.operation_id OR N
   OR NEW.source_attempt_number IS NOT OLD.source_attempt_number
   OR NEW.source_fencing_token IS NOT OLD.source_fencing_token
   OR NEW.source_observation_number IS NOT OLD.source_observation_number
-  OR NEW.contract_id <> OLD.contract_id OR NEW.adapter_id <> OLD.adapter_id OR NEW.adapter_version <> OLD.adapter_version
+  OR NEW.contract_id <> OLD.contract_id OR NEW.backend_kind <> OLD.backend_kind
+  OR NEW.adapter_id <> OLD.adapter_id OR NEW.adapter_version <> OLD.adapter_version
   OR NEW.policy_binding_reference <> OLD.policy_binding_reference OR NEW.workspace_mode <> OLD.workspace_mode
+  OR NEW.workspace_contract_id IS NOT OLD.workspace_contract_id
+  OR NEW.workspace_id IS NOT OLD.workspace_id
+  OR NEW.workspace_generation IS NOT OLD.workspace_generation
+  OR NEW.workspace_revision IS NOT OLD.workspace_revision
+  OR NEW.workspace_root_key IS NOT OLD.workspace_root_key
+  OR NEW.ownership_binding_sha256 IS NOT OLD.ownership_binding_sha256
+  OR NEW.workspace_head_object_id IS NOT OLD.workspace_head_object_id
   OR NEW.backend_execution_id IS NOT OLD.backend_execution_id OR NEW.thread_id IS NOT OLD.thread_id
   OR NEW.previous_receipt_id IS NOT OLD.previous_receipt_id OR NEW.expected_journal_revision IS NOT OLD.expected_journal_revision
   OR NEW.requested_deadline <> OLD.requested_deadline OR NEW.continuation_reference IS NOT OLD.continuation_reference
@@ -1193,6 +1342,47 @@ END;
 
 CREATE TRIGGER manual_backend_operations_no_delete BEFORE DELETE ON manual_backend_operations BEGIN
   SELECT RAISE(ABORT, 'Manual backend operations are immutable');
+END;
+
+CREATE TRIGGER codex_backend_turns_update_guard
+BEFORE UPDATE ON codex_backend_turns
+WHEN NEW.backend_execution_id <> OLD.backend_execution_id
+  OR NEW.start_idempotency_key <> OLD.start_idempotency_key
+  OR NEW.origin_intent_id <> OLD.origin_intent_id OR NEW.origin_operation_id <> OLD.origin_operation_id
+  OR NEW.origin_authorization_decision_id <> OLD.origin_authorization_decision_id
+  OR NEW.project_id <> OLD.project_id OR NEW.project_resource_revision <> OLD.project_resource_revision
+  OR NEW.project_config_revision <> OLD.project_config_revision OR NEW.task_id <> OLD.task_id
+  OR NEW.task_revision <> OLD.task_revision OR NEW.input_reference <> OLD.input_reference
+  OR NEW.execution_id <> OLD.execution_id OR NEW.execution_revision <> OLD.execution_revision
+  OR NEW.attempt_number <> OLD.attempt_number OR NEW.fencing_token <> OLD.fencing_token
+  OR NEW.predecessor_backend_execution_id IS NOT OLD.predecessor_backend_execution_id
+  OR NEW.predecessor_thread_id IS NOT OLD.predecessor_thread_id
+  OR NEW.policy_binding_reference <> OLD.policy_binding_reference
+  OR NEW.workspace_contract_id <> OLD.workspace_contract_id OR NEW.workspace_id <> OLD.workspace_id
+  OR NEW.workspace_generation <> OLD.workspace_generation OR NEW.workspace_revision <> OLD.workspace_revision
+  OR NEW.workspace_root_key <> OLD.workspace_root_key
+  OR NEW.ownership_binding_sha256 <> OLD.ownership_binding_sha256
+  OR NEW.workspace_head_object_id <> OLD.workspace_head_object_id
+  OR NEW.created_at <> OLD.created_at OR NEW.updated_at <= OLD.updated_at OR NEW.revision <> OLD.revision + 1
+  OR (OLD.thread_id IS NOT NULL AND NEW.thread_id IS NOT OLD.thread_id)
+  OR (OLD.cancellation_requested_at IS NOT NULL AND NEW.cancellation_requested_at IS NOT OLD.cancellation_requested_at)
+  OR OLD.lifecycle IN ('turn_succeeded', 'failed')
+  OR (OLD.lifecycle = 'unknown' AND NEW.lifecycle NOT IN ('unknown', 'active'))
+  OR (OLD.lifecycle = 'active' AND NEW.lifecycle NOT IN ('unknown', 'active', 'turn_succeeded', 'failed'))
+BEGIN
+  SELECT RAISE(ABORT, 'Codex turn update violates identity, fence, revision or terminal immutability');
+END;
+
+CREATE TRIGGER codex_backend_turns_no_delete BEFORE DELETE ON codex_backend_turns BEGIN
+  SELECT RAISE(ABORT, 'Codex turns cannot be deleted');
+END;
+
+CREATE TRIGGER codex_backend_operations_no_update BEFORE UPDATE ON codex_backend_operations BEGIN
+  SELECT RAISE(ABORT, 'Codex backend operations are immutable');
+END;
+
+CREATE TRIGGER codex_backend_operations_no_delete BEFORE DELETE ON codex_backend_operations BEGIN
+  SELECT RAISE(ABORT, 'Codex backend operations are immutable');
 END;
 
 CREATE TRIGGER manual_completion_decisions_no_update BEFORE UPDATE ON manual_completion_decisions BEGIN

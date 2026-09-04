@@ -8,7 +8,7 @@ required for a platform or external API support claim. The project now has one
 internal current SQLite baseline at schema version `1`, a provisional package-root
   Domain/ProjectRegistry/authorization/application/claim/Manual-loop/dispatcher/
   workspace/Phase-3/persistence surface, implemented closed pure
-`ato.execution/v1`, `ato.project-policy/v1`, `ato.completion/v1`,
+`ato.execution/v2`, `ato.project-policy/v1`, `ato.completion/v1`,
 `ato.integration/v1`, and `ato.workspace/v2` local ports, and one implemented
 provisional `ato.api/v1` local explicit-Manual product CLI major.
 It still has no released product,
@@ -26,7 +26,7 @@ create or change this policy.
   `0` means a genuinely fresh database with no application object and shipped
   versions begin at `1`. The current and only accepted target is `1`.
   `0001-current-baseline.sql` directly owns the complete implemented local
-  explicit-Manual Phase 2 plus fresh-only Phase 3 storage shape, including
+  explicit-Manual Phase 2, package-private Codex journal, and fresh-only Phase 3 storage shape, including
   lifecycle state-digest version 2 and authorization vocabularies 1 through 6.
   Schema version and
   authorization vocabulary are independent counters. Exact migration
@@ -110,9 +110,23 @@ unshipped planned `start` operation from `execution.claim` plus workspace/
 working-directory/environment requirements to `execution.start` with
 `workspace_mode=none`. No implementation, export, negotiation, persisted
 receipt, or consumer existed, so no compatible reader or artifact was changed.
-The corrected v1 is now implemented and closed. A later required-field,
-authorization, side-effect, lifecycle, receipt, or error-meaning change requires
-`ato.execution/v2`; an adapter version bump alone cannot reinterpret v1.
+That corrected v1 was implemented and closed at the EP-02B baseline; an adapter
+version bump alone could not reinterpret it.
+
+EP-03D consumes a separately authorized unreleased fresh-only replacement. The
+sole current execution contract is `ato.execution/v2`: retained Manual calls use
+the discriminated `manual-local`/`workspaceMode=none` branch and
+`local-manual/v2`, while the package-private Codex branch requires
+`codex-sdk`/`workspaceMode=owned`, exact current `ato.workspace/v2` ownership/
+HEAD identity, a SHA-256 Task-input reference, bounded ephemeral input at the
+effect boundary, and `openai-codex-sdk/v1` receipts. `ato.execution/v1` and
+`local-manual/v1` are retired and rejected. There is no v1 reader, alias,
+fallback, translation, migration, dual write, or deprecation window. The Codex
+constructor/configuration/driver/injected service remain outside the supported
+package root and every current product/application/dispatcher/API/CLI factory,
+so this port change neither adds an operational Codex route nor reinterprets
+vocabulary-version-6 authority. A later required-field, authorization,
+side-effect, lifecycle, receipt, or error-meaning change requires v3.
 
 EP-03A is the first implementation of `ato.workspace/v1`. The package was still
 private and unreleased, and no earlier workspace implementation, export,

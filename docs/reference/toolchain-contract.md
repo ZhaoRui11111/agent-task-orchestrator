@@ -18,8 +18,10 @@ The repository uses:
   `package.json#engines.node` value;
 - pnpm `11.19.0`, selected by the exact `packageManager` and
   `engines.pnpm` values; and
-- TypeScript `5.9.3` as the only development dependency, with no production
-  dependencies.
+- TypeScript `5.9.3` as the only development dependency; and
+- `@openai/codex-sdk` `0.153.2` as the only direct production dependency, with
+  its exact `@openai/codex` `0.153.2` CLI/runtime dependency and six exact
+  optional platform packages frozen by the lockfile.
 
 The TypeScript configuration keeps strict checking and natively enables both
 `noUnusedLocals` and `noUnusedParameters`. Repository lint verifies those
@@ -27,8 +29,9 @@ options remain enabled; unused declarations or imports must be removed at
 their owner rather than hidden by dummy reads, renaming, suppression, or broad
 exports.
 
-`pnpm-lock.yaml` is required and must resolve that exact TypeScript version
-with registry integrity metadata. Dependency lifecycle scripts are disabled
+`pnpm-lock.yaml` is required and must resolve those exact TypeScript, Codex SDK,
+Codex CLI, and optional platform-package versions with registry integrity
+metadata. Dependency lifecycle scripts are disabled
 for installation and are prohibited in this package. Automatic dependency
 repair before a package script is disabled: installation is an explicit step,
 so an offline validation command cannot silently become a registry operation.
@@ -120,20 +123,23 @@ into a disposable consumer without registry access, typecheck the public
   absence of read-only doctor side effects. Packed declarations must contain one
   product API major, one public error table/type, the current schema-1
   backup/restore declarations, and no synthetic scaffold/capability-status
-  registry.
+  registry. The exact packed inventory is 228 files, including the compiled
+  package-private Codex modules but exposing them through no package export.
 
 The package-root library export is the explicit operational facade. It exposes
 the pure TypeScript Domain Core including its canonical cancellation-reason predicate,
 ProjectRegistry identity owner, finite authorization
-owner, typed Phase 1 and claim application services, the pure execution port
-  kit, production local Manual backend/control, reliable execution loop,
+owner, typed Phase 1 and claim application services, the pure execution-v2 port
+  kit, production local Manual backend/control, and public Manual reliable-loop
+  surface,
 reconcile-first Manual dispatcher, the exact ProjectPolicy/completion/
 integration/workspace port kits, typed durable workspace and Phase 3 application
 services, the explicitly injected Phase 3 product-library facade, local
 ProjectPolicy/completion/Git-integration adapters, the product-unwired Windows
 Git workspace adapter, typed local Manual product facade, current
 schema-version-1 persistence foundation, local lifecycle surfaces, and
-versioned product CLI API; it does not maintain a parallel hand-synchronized
+versioned product CLI API; it exports no Codex factory, configuration, driver,
+or injected Codex service and does not maintain a parallel hand-synchronized
 capability-status registry. The packed inventory includes the
 single immutable SQL file under `migrations/`. The source and compiled migration
 registry consume either a uniform LF or CRLF transport of that file and
@@ -145,7 +151,7 @@ wildcard. The `ato` console is the local Phase 1 and explicit-Manual Phase 2
 product CLI defined by the
 [CLI/API contract](cli-contract.md).
 
-Production source is exactly these 53 files:
+Production source is exactly these 57 files:
 
 - `src/index.ts`, `src/domain.ts`, `src/cli.ts`, `src/cli-api.ts`,
   `src/cli-api-model.ts`, `src/cli-api-parser.ts`,
@@ -156,6 +162,7 @@ Production source is exactly these 53 files:
   `src/application-domain.ts`, `src/application-service.ts`,
   `src/execution-application.ts`, `src/execution-port.ts`,
   `src/execution-loop.ts`, `src/manual-execution-backend.ts`,
+  `src/codex-execution-backend.ts`, `src/codex-sdk-worker.ts`,
   `src/dispatcher-application.ts`, `src/dispatcher.ts`,
   `src/project-policy-port.ts`, `src/local-project-policy.ts`,
   `src/completion-port.ts`, `src/completion-application.ts`,
@@ -175,6 +182,8 @@ Production source is exactly these 53 files:
   `src/persistence/doctor.ts`, `src/persistence/errors.ts`,
   `src/persistence/index.ts`, `src/persistence/local-ingress.ts`,
   `src/persistence/manual-backend-repository.ts`,
+  `src/persistence/codex-backend-repository.ts`,
+  `src/persistence/codex-receipt-digest.ts`,
   `src/persistence/migrations.ts`, `src/persistence/repository.ts`,
   `src/persistence/runtime.ts`, `src/persistence/store.ts`, and
   `src/persistence/values.ts`.
@@ -192,9 +201,14 @@ ProjectPolicy adapter imports exactly `node:crypto`; the local completion
 backend imports exactly `node:child_process`, `node:crypto`, `node:fs`, and
 `node:path`; and the local Git integration backend imports exactly those same
 four built-ins. They use no shell, package dependency, or wildcard built-in
-exception. The package has no production dependency and must not acquire a
-scheduler, MCP, production Codex adapter, daemon, remote service effect, or
-default product/CLI Phase 3 composition as part of this boundary. The four
+exception. The package-private Codex backend imports exactly `node:crypto`,
+`node:fs`, and `node:path`; the SDK worker
+is the sole production importer of `@openai/codex-sdk`, and the Codex journal
+imports no Node built-in. No other source may mention a Codex/OpenAI boundary
+without entering the exact audited allowlist. The package must not acquire a
+scheduler, MCP, product-wired Codex route, credential broker, daemon, general
+remote service effect, or default product/CLI Phase 3 composition as part of
+this boundary. The four
 Phase 3 adapters are explicitly injected library surfaces; their effects are
 limited to trusted configuration and local disposable files/repositories. The
 Fake backends remain test-only and absent from the packed inventory.
@@ -208,13 +222,13 @@ The following package scripts are the public local entry points:
 | `pnpm lint` | Repository hygiene, frozen configuration, source-boundary, and diff checks |
 | `pnpm typecheck` | Strict TypeScript checking without output |
 | `pnpm build` | Produce the ESM package and declarations |
-| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop/dispatcher/workspace/Phase-3/product-facade atomicity and security, exact port/adapter contracts, gate/completion/integration/cleanup crash/restart recovery, persistence, versioned CLI, doctor, and real local disposable-fixture contracts |
-| `pnpm test:persistence` | Run the targeted current schema-version-1 baseline, repository/decoder, Manual journal/evidence, dispatcher/workspace/Phase-3 durable records, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
+| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop/package-private-Codex/dispatcher/workspace/Phase-3/product-facade atomicity and security, exact port/adapter contracts, Codex SDK-driver/workspace/failpoint restart, gate/completion/integration/cleanup crash/restart recovery, persistence, versioned CLI, doctor, and real local disposable-fixture contracts |
+| `pnpm test:persistence` | Run the targeted current schema-version-1 baseline, repository/decoder, Manual and Codex journal/evidence, dispatcher/workspace/Phase-3 durable records, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
 | `pnpm docs:check` | Resolve exact-case repository-relative Markdown links, validate same-file and cross-file heading fragments, and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |
 | `pnpm package:smoke` | Pack and consume the declared package boundary offline |
 | `pnpm spike:sqlite` | Run the local Windows SQLite feasibility procedure |
-| `pnpm spike:codex` | Check the recorded Codex public-contract evidence and core isolation boundary |
+| `pnpm spike:codex` | Check exact official/pinned-package Codex capability evidence, package-private isolation, `externalE2E=not_run`, and `supportClaim=false` |
 | `pnpm verify:offline` | Run every local gate above that does not require a registry vulnerability query |
 | `pnpm dependency:audit` | Query the configured package registry vulnerability service for production dependencies |
 

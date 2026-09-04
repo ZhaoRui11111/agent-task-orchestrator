@@ -63,6 +63,9 @@ if (packageJson.engines?.pnpm !== "11.19.0" || packageJson.packageManager !== "p
 if (packageJson.devDependencies?.typescript !== "5.9.3") {
   failures.push("TypeScript must remain exactly pinned at 5.9.3");
 }
+if (JSON.stringify(packageJson.dependencies) !== JSON.stringify({ "@openai/codex-sdk": "0.153.2" })) {
+  failures.push("Codex SDK production dependency inventory drifted");
+}
 if (packageJson.type !== "module" || packageJson.private !== true) {
   failures.push("package must remain private-by-default ESM");
 }
@@ -79,7 +82,7 @@ if (tsconfig.compilerOptions?.rewriteRelativeImportExtensions !== true) {
 if (tsconfig.compilerOptions?.noUnusedLocals !== true || tsconfig.compilerOptions?.noUnusedParameters !== true) {
   failures.push("TypeScript unused declaration enforcement drifted");
 }
-if (EXPECTED_PRODUCTION_SOURCE_FILES.length !== 53) {
+if (EXPECTED_PRODUCTION_SOURCE_FILES.length !== 57) {
   failures.push("production source count drifted");
 }
 failures.push(

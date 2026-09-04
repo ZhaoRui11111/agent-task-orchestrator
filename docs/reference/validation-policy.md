@@ -18,6 +18,7 @@ successful narrow check does not waive another applicable route.
 | Persistence, schema, migration, backup, restore, or doctor | Targeted repository tests, exact fresh-baseline and incompatible/noncurrent refusal matrix, canonical migration identity from uniform LF and CRLF transports, malformed/mixed-EOL pre-mutation refusal, concurrent-reader/writer tests, read-only diagnostic tests, and interruption or corruption recovery |
 | Dispatcher, ProjectPolicy, gate/completion, workspace lifecycle, integration/publication, lease, cleanup, or recovery | Exact port/hostile-shape tests, policy-purity and freshness matrices, competing-worker/reservation tests, fencing and CAS tests, point-of-use ownership/path negatives, and failpoint recovery at every durable transition |
 | Adapter or external side effect | Shared adapter contract suite plus E2E on every platform/API combination for which support will be claimed |
+| Package-private Codex execution | Exact v2 discriminant/hostile-shape tests; pinned SDK declaration/event-driver tests; owned-workspace/cwd/input/HEAD/dirty/alias/reparse negatives; pre-SDK journal and every durable failpoint restart; same-thread continuation, terminal, cancellation, corruption, redaction, no-auto-completion, and package-root/factory non-reachability checks; real account E2E is `not_run` unless separately authorized and cannot support a claim |
 | CLI, MCP, or another public interface | Schema and negative-input tests plus application-service parity tests proving there is no second business-rule implementation |
 | Authorization, filesystem, secret, privacy, or other security boundary | Authorization tests and the negative-test obligations owned by the [threat model](../security/threat-model.md#negative-test-obligations) |
 | Repository task-artifact, test-residue, or prune authorization policy | Exact manifest/schema/ignore/tracked-overlap and standing-grant tests; deterministic single-`mkdir`/`EEXIST`, disappearance, root replacement, immediately bound generation replacement with both original and replacement bytes preserved, generation-only cleanup, fixed-root empty/nonempty, and injected removal-error transitions plus multi-process stress; a creator paused after root inspection must still succeed after nested SQLite proves it deferred fixed-root contraction; success-only path-based baseline addition/removal/replacement, parent global-quiescent fixed-root contraction from an absent baseline, failed-diagnostic retention, native recursive discovery, and unowned inherited-test-context refusal; creator-root containment and static Windows reparse negatives that explicitly do not promote the wrapper to a security boundary and distinguish its refusal from coordinator anchored alias unlink; standalone package/SQLite exact-root absence and reclaim-error propagation; then a fresh manifest-backed coordinator task proving partial-prune retry semantics when applicable, head-bound receipt, and root absence |
@@ -101,10 +102,17 @@ migration-source refusal before SQLite mutation, exact combined repository
 mapping, concurrent reader/writer behavior, runtime-root negatives, lifecycle
 authorization, backup, restore, read-only doctor, typed corruption, and
 failpoint recovery. The typed execution owners add explicit no-auto-upgrade,
-atomic claim, shared port-contract, real Manual journal, exact idempotency,
+atomic claim, shared v2 port-contract, real Manual journal, exact idempotency,
 competing writer, lost-response, every-stage crash/restart, independent inspect,
 verified-not-finalized, ambiguity, completion separation, reconciliation,
 higher-fence continuation, stale-fence, corruption, and redaction evidence. The
+package-private Codex path adds pinned-driver `thread.started` and terminal-event
+tests, exact owned-workspace/cwd/HEAD/cleanliness and input-digest negatives,
+durable terminal replay, every-stage close/reopen recovery, response-loss
+ambiguity/no blind replay, cancellation without fabricated terminal proof,
+combined-decoder corruption, no-auto-completion, and source/build/packed root-
+surface non-reachability evidence. No account, credential, or real Codex turn is
+used, so `externalE2E=not_run` and `supportClaim=false`. The
 dispatcher adds trigger/authorization atomicity, bounded
 heartbeat/takeover, reconcile-before-seal ordering, immutable membership,
 claim/start-intent atomicity, competing-worker, every-checkpoint restart,
@@ -133,8 +141,8 @@ have closed-command/environment, hostile-tree/path/reparse/hardlink,
 evidence-root, ownership-manifest, point-of-use cleanup-attestation, local
 fast-forward/push, response-loss, restart, and disposable-fixture E2E coverage.
 This is implementation evidence, not a platform-support claim. There is still
-no SchedulerBackend or scheduled trigger, MCP, production Codex adapter,
-default product/CLI Phase 3 route, external-service integration, or support-
+no SchedulerBackend or scheduled trigger, MCP, product-wired or supported Codex
+route, default product/CLI Phase 3 route, external-service integration, or support-
 matrix harness, so those routes remain unimplemented and cannot be claimed as
 passing. Repository task-artifact checks cover only maintainer workflow scratch
 and do not count as product persistence or general destructive-action support.

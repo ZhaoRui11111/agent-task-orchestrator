@@ -221,3 +221,13 @@ declare module "node:url" {
   export function fileURLToPath(url: URL | string): string;
   export function pathToFileURL(path: string): URL;
 }
+
+// @openai/codex-sdk@0.153.2 exposes this type-only import from a package that it
+// lists only as a development dependency. EP-03D intentionally drops all item
+// payloads at the SDK boundary, so a closed opaque placeholder is sufficient.
+declare module "@modelcontextprotocol/sdk/types.js" {
+  export interface ContentBlock {
+    readonly type: string;
+    readonly [key: string]: unknown;
+  }
+}

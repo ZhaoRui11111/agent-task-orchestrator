@@ -71,6 +71,21 @@ Windows adapter tests establish local development evidence for canonical path,
 Git registration, HEAD, inventory, ownership, and path safety; they do not
 establish a supported platform or any cleanup claim.
 
+A package-private Codex execution backend may consume one such current `ready`
+generation only through the exact `ato.execution/v2` owned-workspace tuple. It
+requires the configured Project `rootKey` to match ProjectRegistry, reopens the
+trusted workspace/root identities, and uses the same `windows-git-local`
+physical inspection owner to verify the complete ownership manifest,
+authoritative worktree registration, repository identity, ownership receipt,
+detached HEAD, and clean inventory before using the canonical generation
+directory as the SDK working directory. It compares the inspected repository
+identity with the current durable ready receipt on both sides of the check.
+This consumer neither creates nor cleans a workspace, cannot
+select a caller path, and does not turn Codex turn success into Task completion.
+It is absent from every supported package-root/product/dispatcher/API/CLI
+factory; current vocabulary-version-6 grants supply no Codex destination,
+credential, disclosure, or workspace-effect authority.
+
 ## Run and workspace topology
 
 The durable identity/generation rules and the Windows adapter path layout in

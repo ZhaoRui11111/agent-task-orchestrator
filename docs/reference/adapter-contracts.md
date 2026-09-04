@@ -4,13 +4,16 @@
 
 This file is the sole normative owner of port directions, current port
 identifiers and versions, operation shapes, receipt envelopes, and adapter
-error taxonomy. The package implements the pure `ato.execution/v1`,
+error taxonomy. The package implements the pure `ato.execution/v2`,
 `ato.project-policy/v1`, `ato.completion/v1`, `ato.integration/v1`, and sole
 current `ato.workspace/v2` contract kits. Concrete local implementations are
-the durable `manual-local` execution adapter/control, configured
+the durable `manual-local` execution adapter/control, a package-private and
+non-composed `openai-codex-sdk-local` execution adapter/driver, configured
 `local-project-policy`, bounded `local-completion`,
 `local-git-integration`, and `windows-git-local` workspace backend. Fake
-backends are test-only and unexported. Scheduler remains planned.
+backends are test-only and unexported. The Codex constructor, configuration,
+driver, and injected service are absent from the supported package root and all
+current product/application/dispatcher/CLI factories. Scheduler remains planned.
 
 The Phase 3 ports and local adapters are direct injected library surfaces. The
 default product runtime and sole current `ato.api/v1` CLI construct none of
@@ -27,7 +30,7 @@ declare an unverified external effect successful, or write SQLite directly.
 
 | Port | Direction relative to core | Current contract ID | Responsibility boundary |
 | --- | --- | --- | --- |
-| Execution | Outbound: reliable application loop calls adapter; the implemented Manual dispatcher calls that loop | `ato.execution/v1` | Start, resume, inspect, or request cancellation of one no-workspace execution turn |
+| Execution | Outbound: reliable application loop calls adapter; the implemented Manual dispatcher calls only its retained Manual branch | `ato.execution/v2` | Start, resume, inspect, or request cancellation of one discriminated Manual no-workspace or package-private Codex owned-workspace turn |
 | Workspace | Outbound: workspace application coordinator calls injected backend | `ato.workspace/v2` | Reserve, create, inspect, recover, or attestation-bound cleanup of one exactly bound workspace generation |
 | Scheduler | Outbound lifecycle plus inbound trigger delivery | `ato.scheduler/v1` | Register/inspect/remove a schedule and deliver a bounded dispatch trigger |
 | ProjectPolicy | Outbound: application calls adapter | `ato.project-policy/v1` | Evaluate mutation, completion requirements, integration, and cleanup policy |
@@ -43,7 +46,7 @@ compatible. This file owns the current shapes.
 Each implemented port section below owns one exact closed call shape; unknown,
 missing, accessor-backed, or cross-class fields are rejected. The generic
 classes describe responsibility boundaries shared by current and later ports,
-not a field union that an implemented v1 call may extend. In particular,
+not a field union that an implemented call may extend. In particular,
 `ato.workspace/v2` uses the exact specialized envelope documented in its
 section and keeps actor, authorization-decision, confirmation, and policy facts
 inside the durable application owner rather than forwarding them to the
@@ -138,64 +141,107 @@ Receipt schema validation proves shape only. The
 owns independent observation, semantic verification, freshness, and
 finalization of mutating effects.
 
-## ExecutionBackend: `ato.execution/v1`
+## ExecutionBackend: `ato.execution/v2`
 
-Before its first implementation, EP-02B corrected the planned `start` shape
-from `execution.claim` plus workspace/working-directory/environment fields to
-the distinct `execution.start` action and `workspace_mode=none`. Repository
-evidence showed no earlier port implementation, export, negotiation, persisted
-receipt, or consumer, so no shipped artifact was reinterpreted. The v1 shape
-below is now implemented and closed: adding a required field, changing an
-action/side effect, or changing receipt/error meaning requires a new major.
+EP-03D replaces the unreleased v1 shape with one fresh-only current major. V2
+retains the Manual operation meanings, adds an exact backend/workspace
+discriminant, and permits bounded Task input only for the Codex effect boundary.
+`ato.execution/v1` and `local-manual/v1` are invalid: there is no reader, alias,
+fallback, translation, migration, dual write, or negotiation path.
 
 Every operation carries the exact contract/adapter/version/correlation/deadline
 envelope and a semantic identity containing Project resource/config revisions,
-Task/input/execution/attempt/fence revisions, local policy binding, and
-`workspace_mode=none`. It contains no workspace receipt, working directory,
-environment, prompt, source content, path, or credential value.
+Task/input/execution/attempt/fence revisions, and policy binding. The closed
+semantic variants are:
+
+- `backendKind=manual-local`, `workspaceMode=none`: no workspace field exists,
+  and `start`/`resume` input is exactly null;
+- `backendKind=codex-sdk`, `workspaceMode=owned`: the tuple additionally binds
+  `ato.workspace/v2`, workspace ID/generation/revision, trusted workspace-root
+  key, uppercase ownership-binding SHA-256, and exact lowercase 40-hex current
+  workspace HEAD. Its input reference is exactly
+  `task-sha256:<lowercase-64-hex>`; `start`/`resume` carries the matching
+  nonempty Task body only for the immediate effect call, bounded to 1 MiB.
+
+Unknown, accessor-backed, cross-variant, wrong-case, omitted, or extra fields
+are rejected before adapter dispatch. Receipts echo the backend kind and exactly
+`local-manual/v2` or `openai-codex-sdk/v1`; endpoint/backend/workspace mismatch
+is incompatible evidence.
 
 Operations are:
 
-- `start` (mutating-effect, `execution.start`): input adds committed
-  operation/intent/idempotency and final-allow identities to the common semantic
-  tuple. Receipt adds backend execution ID, nullable durable thread ID,
-  `workspace_mode=none`, and lifecycle `started|deferred|rejected`.
-- `resume` (mutating-effect, `execution.resume` or `execution.retry`): input adds the existing backend execution/thread ID, continuation
-  reference, previous turn receipt, and expected thread identity. Receipt adds
-  observed thread ID and lifecycle. Returning a different thread is a conflict,
-  not an implicit replacement.
-- `inspect` (read/inspection, `execution.inspect`): input identifies the backend execution/thread and last observation.
-  Receipt adds lifecycle `unknown|queued|active|waiting|turn_succeeded|failed|cancelled`
-  and a redacted result/evidence reference. Shape and digest validity do not make
-  it authoritative: the reliable owner must match the exact durable Manual turn
-  identity, semantic tuple, revision, lifecycle, code, and evidence. A
-  `cancelled` receipt additionally requires the exact durable request-cancel and
-  `confirm_cancelled` operation lineage; a forged but well-shaped receipt cannot
-  terminalize a Task.
-- `request_cancel` (mutating-effect, `execution.cancel`): input adds expected backend lifecycle and cancellation
-  reason code. Receipt reports `requested|already_terminal|rejected`; only a
-  later inspection can prove interruption.
+- `start` (mutating-effect, `execution.start`): adds committed
+  operation/intent/idempotency and final-allow identities. Its receipt adds the
+  backend execution ID, nullable durable thread ID, matching workspace mode, and
+  lifecycle `started|deferred|rejected`.
+- `resume` (mutating-effect, `execution.resume` or `execution.retry`): adds the
+  predecessor backend execution/thread ID, continuation reference, previous
+  turn receipt, and expected thread identity. A Codex continuation belongs to a
+  new fenced successor execution and must use the same durable thread; a changed
+  thread is a conflict, not implicit replacement.
+- `inspect` (read/inspection, `execution.inspect`): identifies the backend turn
+  and last observation. Its receipt adds lifecycle
+  `unknown|queued|active|waiting|turn_succeeded|failed|cancelled` and a bounded
+  result/evidence reference. Shape and digest validity are insufficient: the
+  reliable owner matches the exact durable backend journal, semantic tuple,
+  revision, lifecycle, code, and evidence lineage.
+- `request_cancel` (mutating-effect, `execution.cancel`): adds expected backend
+  lifecycle and a bounded reason code. Its receipt reports
+  `requested|already_terminal|rejected`; only independently durable terminal
+  evidence can prove interruption.
 
 `turn_succeeded` is an execution-turn fact, never a Task completion decision.
-Raw prompt, source content, and credentials follow the
+Raw Task input, model output, commands, paths, SDK item payloads, external error
+text, and credentials follow the
 [privacy and logging contract](../security/privacy-and-logging.md).
 
-The implemented local Manual backend persists an exact idempotent turn and
+The retained local Manual backend persists an exact idempotent turn and
 operation journal and exposes independent `inspect`; it never authorizes an
 operation, changes a Task, or executes Task content. Its separate
 `ato.manual-outcome-control/v1` accepts only the closed
 `activate|wait|succeed|fail|confirm_cancelled` report set through the
-application-owned, trusted current OS/runtime-derived actor/principal/root path. Each report binds the
-same semantic identity, current `execution.inspect` allow, a fresh
-`manual.turn.report` confirmation, expected journal revision/lifecycle, and
-bounded code/evidence reference. Terminal Manual lifecycles are immutable, and
-`confirm_cancelled` additionally requires an exact prior cancellation-request
-revision. The loop then inspects through `ato.execution/v1`; the control return
-is not itself finalization or completion evidence. Immediately before every
-journal mutation the backend requires the intent's current fresh Act binding
-and rechecks its referenced finite grant; replay may return an already committed
-operation, but a new mutation cannot consume a revoked, expired, stale, or
-prepare-only decision.
+application-owned, trusted current OS/runtime-derived actor/principal/root path.
+Each report binds the Manual semantic identity, current `execution.inspect`
+allow, a fresh `manual.turn.report` confirmation, expected journal
+revision/lifecycle, and bounded code/evidence reference. Terminal Manual
+lifecycles are immutable, and `confirm_cancelled` additionally requires an
+exact prior cancellation-request revision. The loop then inspects through v2;
+the control return is not itself finalization or completion evidence.
+Immediately before every journal mutation the backend requires the intent's
+current fresh Act binding and rechecks its referenced finite grant; replay may
+return an already committed operation, but a new mutation cannot consume a
+revoked, expired, stale, or prepare-only decision.
+
+The package-private Codex backend is `openai-codex-sdk-local` at adapter version
+`0.153.2`, backed only by pinned `@openai/codex-sdk` `0.153.2`. Before SDK access
+it requires each configured Project binding to include the registry `rootKey`
+alongside `projectId` and path, and requires that identity to match the current
+durable Project record. It reopens trusted disjoint Project/workspace roots and
+delegates physical proof to the sole `windows-git-local` workspace inspection
+owner, which derives the canonical generation path and verifies the complete
+ownership manifest, authoritative Git worktree registration, repository
+identity, detached HEAD, and clean inventory including ignored entries. The
+Codex verifier compares that physical repository identity with the current
+ready workspace receipt before and after inspection and independently
+recomputes the Task-input digest. It runs the SDK with that exact working directory,
+workspace-write sandbox, network and web search disabled, and approval policy
+`never`. A journal row is committed before SDK invocation. New-thread identity
+is accepted only from the first valid `thread.started`; continuation uses
+`resumeThread` with the exact predecessor thread. Only `thread.started`,
+`turn.started`, `turn.completed`, and `turn.failed` cross the driver boundary;
+all item events and raw errors are dropped.
+
+The SDK exposes no independent remote inspect or turn identifier. Therefore the
+backend's `inspect` is a read of its own exact durable journal, and any crash or
+lost response after SDK access but before trustworthy terminal persistence is
+`unknown`/ambiguous rather than replay authority. `AbortSignal` requests active
+in-process cancellation when such a controller is available, but is not terminal
+cancellation proof. The current non-composed harness admits no concurrent second
+intent while start is unfinished, so unavailable cancellation returns bounded
+ambiguity rather than claiming the signal was sent. The backend does not
+fabricate `cancelled`, retry an effect-possible start, or complete a Task. No
+supported package-root or product factory exposes this adapter, and no real
+account/platform support claim follows from package or fake-driver tests.
 
 ## WorkspaceBackend: `ato.workspace/v2`
 

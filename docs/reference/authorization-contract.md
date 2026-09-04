@@ -11,7 +11,9 @@ actions, six Manual-loop actions, one dispatcher action, five workspace actions,
 and twelve completion/integration actions across contiguous vocabulary versions
 1 through 6. It is not an operating-system
 account system, team identity service, RBAC product, cloud identity provider,
-or authorization for development and external actions.
+or authorization for development and external actions. The package-private
+Codex SDK implementation does not add an action or reinterpret any existing
+grant.
 
 Runtime grants never authorize repository development, network or secret
 access, pull requests, release, deployment, scheduling, arbitrary filesystem
@@ -21,7 +23,12 @@ lease renewal, and reconcile-gated takeover. The six Manual-loop actions
 authorize only the exact local no-workspace port/journal, inspection,
 continuation, cancellation-request, and verified-completion operations defined
 below; they grant no network, Project filesystem, Codex, Git, workspace,
-scheduler or completion-gate authority. `dispatch.run` authorizes only one
+scheduler or completion-gate authority. In particular, the existence of the
+internal `ato.execution/v2` Codex branch creates no authority to select its
+destination, resolve a credential, disclose Task input, or perform a Project/
+workspace effect. No supported package-root or product factory can construct
+that branch; operational composition requires a later explicit authorization
+result. `dispatch.run` authorizes only one
 bounded dispatcher trigger/run ownership and continuation; it does not imply
 execution claim/start/takeover, adapter, Project, filesystem, network, or
 completion authority. The `runtime.backup` and `runtime.restore`
@@ -425,7 +432,7 @@ identity, current `execution.inspect` authority for the exact scope, and one
 fresh `manual.turn.report` confirmation. No actor name is privileged and CLI
 text cannot assert or replace any identity member. The owner commits that
 decision and report intent before calling the injected outcome control, then
-observes the result through `ato.execution/v1`. A `turn_succeeded` finalization
+observes the result through `ato.execution/v2`. A `turn_succeeded` finalization
 leaves the Task running. Only a distinct `execution.completion.accept`
 evaluation with a different fresh confirmation and the exact current verified
 receipt/finalization can atomically record the Manual completion decision,
@@ -581,7 +588,9 @@ ProjectPolicy receipts, completion-gate evidence, integration reservations/
 effects/events, cleanup attestations, authorization decisions, and audit rows
 are append-only apart from
 the narrowly constrained lease/attempt, intent-state, and Manual-turn CAS
-transitions. Grant rows are
+transitions. Package-private Codex turn/terminal rows are subject to the same
+immutable intent/authorization and narrow revision-CAS rules, but their presence
+is evidence rather than a new capability. Grant rows are
 insert-only except for the single CAS revocation transition. ProjectRegistry
 rows cannot be deleted. SQLite constraints, foreign keys, triggers, combined
 typed decoding, and terminal readback enforce these shapes.
@@ -610,5 +619,6 @@ package-library-only. The CLI upgrade command may reach vocabulary version 6
 and manage its finite grants, but adds no Phase 3 operation command, error, or
 alternate authorization owner. This implementation does not provide login,
 credentials, team accounts, RBAC, cloud identity, SchedulerBackend/scheduled
-delivery, MCP, Codex, general network effects, release, deployment, or a
+delivery, MCP, operational/product-wired Codex, general network effects,
+release, deployment, or a
 platform-support claim.

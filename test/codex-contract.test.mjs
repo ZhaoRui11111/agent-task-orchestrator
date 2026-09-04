@@ -9,33 +9,34 @@ const current = JSON.parse(
   readFileSync(path.join(repoRoot, "docs", "feasibility", "codex-stable-public-contract.json"), "utf8"),
 );
 
-test("current Codex evidence passes only as an explicit blocked boundary", () => {
+test("current Codex evidence passes only as pinned-package preflight evidence", () => {
   assert.deepEqual(validateCodexEvidence(current), {
     boundaryStatus: "passed",
-    evidenceMode: "blocked",
+    evidenceMode: "package_validated",
+    packagePreflight: "passed",
     externalE2E: "not_run",
     supportClaim: false,
   });
 });
 
-test("blocked Codex evidence cannot create a support claim", () => {
+test("package-only Codex evidence cannot create a support claim", () => {
   assert.throws(() => validateCodexEvidence({ ...current, supportClaim: true }), /support claim/u);
 });
 
-test("validated Codex mode refuses absent official and real evidence", () => {
-  const structurallyValidated = {
+test("package-validated Codex mode refuses absent official or pinned-package evidence", () => {
+  const withoutOfficialEvidence = {
     ...current,
-    evidenceMode: "validated",
     officialDocumentation: { status: "not_run", sources: [] },
-    windowsObservation: {
-      status: "not_run",
-      environment: "not-observed",
-      procedure: "not-run",
-      result: "not-run",
-    },
-    supportClaim: true,
   };
-  assert.throws(() => validateCodexEvidence(structurallyValidated), /accepts blocked evidence only/u);
+  assert.throws(() => validateCodexEvidence(withoutOfficialEvidence), /documentation evidence is incomplete/u);
+  assert.throws(
+    () => validateCodexEvidence({
+      ...current,
+      pinnedPackage: { ...current.pinnedPackage, inspectionStatus: "not_run" },
+    }),
+    /pinned Codex package evidence drifted/u,
+  );
+  assert.throws(() => validateCodexEvidence({ ...current, evidenceMode: "validated" }), /unknown Codex evidence mode/u);
 });
 
 test("Codex evidence rejects raw thread or path identities", () => {
@@ -49,33 +50,36 @@ test("Codex evidence rejects unknown private-interface fields", () => {
 test("synthetic positive shape cannot create E2E or support evidence", () => {
   const synthetic = {
     ...current,
-    evidenceMode: "validated",
-    officialDocumentation: { status: "validated", sources: ["https://developers.openai.com/codex/stable-public-fixture"] },
+    externalE2E: "passed",
     windowsObservation: {
-      status: "validated",
-      environment: "synthetic-validator-fixture",
-      procedure: "synthetic-validator-fixture",
-      result: "synthetic-validator-fixture",
+      status: "passed",
+      reason: "synthetic-validator-fixture",
     },
     capabilities: current.capabilities.map((capability) => ({ ...capability, status: "validated" })),
     supportClaim: true,
   };
-  assert.throws(() => validateCodexEvidence(synthetic), /accepts blocked evidence only/u);
+  assert.throws(() => validateCodexEvidence(synthetic), /package-only evidence cannot create an external support claim/u);
   assert.throws(
     () =>
       validateCodexEvidence({
-        ...synthetic,
-        officialDocumentation: { status: "validated", sources: ["https://example.com/"] },
+        ...current,
+        officialDocumentation: {
+          ...current.officialDocumentation,
+          sources: ["https://example.com/codex", current.officialDocumentation.sources[1]],
+        },
       }),
     /nonofficial OpenAI source/u,
   );
   assert.throws(
     () =>
       validateCodexEvidence({
-        ...synthetic,
+        ...current,
         officialDocumentation: {
-          status: "validated",
-          sources: ["https://user:secret@developers.openai.com/codex/?token=sentinel#raw"],
+          ...current.officialDocumentation,
+          sources: [
+            "https://user:secret@developers.openai.com/codex/sdk?token=sentinel#raw",
+            current.officialDocumentation.sources[1],
+          ],
         },
       }),
     /user-info|sensitive/u,
@@ -83,19 +87,17 @@ test("synthetic positive shape cannot create E2E or support evidence", () => {
   assert.throws(
     () =>
       validateCodexEvidence({
-        ...synthetic,
+        ...current,
         windowsObservation: {
-          status: "validated",
-          environment: "win32",
-          procedure: "read C:\\Users\\raw-user\\project and raw prompt",
-          result: "raw model text only",
+          status: "not_run",
+          reason: "read C:\\Users\\raw-user\\project and raw prompt",
         },
       }),
     /sensitive\/raw value/u,
   );
 });
 
-test("blocked capability criteria cannot be replaced with fabricated or sensitive proof", () => {
+test("package capability criteria cannot be replaced with fabricated or sensitive proof", () => {
   const fabricated = {
     ...current,
     capabilities: current.capabilities.map((capability, index) =>

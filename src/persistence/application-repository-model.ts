@@ -273,11 +273,19 @@ export interface ExecutionOperationIntent {
   readonly sourceAttemptNumber: number | null;
   readonly sourceFencingToken: number | null;
   readonly sourceObservationNumber: number | null;
-  readonly contractId: "ato.execution/v1";
+  readonly contractId: "ato.execution/v2";
+  readonly backendKind: "manual-local" | "codex-sdk";
   readonly adapterId: string;
   readonly adapterVersion: string;
   readonly policyBindingReference: string;
-  readonly workspaceMode: "none";
+  readonly workspaceMode: "none" | "owned";
+  readonly workspaceContractId: "ato.workspace/v2" | null;
+  readonly workspaceId: string | null;
+  readonly workspaceGeneration: number | null;
+  readonly workspaceRevision: number | null;
+  readonly workspaceRootKey: string | null;
+  readonly ownershipBindingSha256: string | null;
+  readonly workspaceHeadObjectId: string | null;
   readonly backendExecutionId: string | null;
   readonly threadId: string | null;
   readonly previousReceiptId: string | null;
@@ -422,6 +430,66 @@ export interface ManualBackendOperationRecord {
   readonly postRevision: number;
   readonly resultLifecycle: ManualTurnLifecycle;
   readonly receiptId: string;
+  readonly createdAt: string;
+}
+
+export type CodexTurnLifecycle = "unknown" | "active" | "turn_succeeded" | "failed";
+export type CodexTurnTerminalSignal = "turn.completed" | "turn.failed";
+
+export interface CodexBackendTurnRecord {
+  readonly backendExecutionId: string;
+  readonly threadId: string | null;
+  readonly startIdempotencyKey: string;
+  readonly originIntentId: string;
+  readonly originOperationId: string;
+  readonly originAuthorizationDecisionId: string;
+  readonly projectId: string;
+  readonly projectResourceRevision: number;
+  readonly projectConfigRevision: number;
+  readonly taskId: string;
+  readonly taskRevision: number;
+  readonly inputReference: string;
+  readonly executionId: string;
+  readonly executionRevision: number;
+  readonly attemptNumber: number;
+  readonly fencingToken: number;
+  readonly predecessorBackendExecutionId: string | null;
+  readonly predecessorThreadId: string | null;
+  readonly policyBindingReference: string;
+  readonly workspaceContractId: "ato.workspace/v2";
+  readonly workspaceId: string;
+  readonly workspaceGeneration: number;
+  readonly workspaceRevision: number;
+  readonly workspaceRootKey: string;
+  readonly ownershipBindingSha256: string;
+  readonly workspaceHeadObjectId: string;
+  readonly lifecycle: CodexTurnLifecycle;
+  readonly terminalSignal: CodexTurnTerminalSignal | null;
+  readonly cancellationRequestedAt: string | null;
+  readonly code: string;
+  readonly evidenceReference: string | null;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CodexBackendOperationRecord {
+  readonly backendOperationId: string;
+  readonly idempotencyKey: string;
+  readonly intentId: string;
+  readonly authorizationDecisionId: string;
+  readonly operationKind: "start" | "resume" | "retry";
+  readonly backendExecutionId: string;
+  readonly threadId: string;
+  readonly sourceBackendExecutionId: string | null;
+  readonly sourceThreadId: string | null;
+  readonly expectedFencingToken: number;
+  readonly expectedPreRevision: number | null;
+  readonly postRevision: number;
+  readonly resultLifecycle: Extract<CodexTurnLifecycle, "turn_succeeded" | "failed">;
+  readonly terminalSignal: CodexTurnTerminalSignal;
+  readonly receiptId: string;
+  readonly receiptSha256: string;
   readonly createdAt: string;
 }
 
@@ -1237,6 +1305,8 @@ export interface ApplicationState {
   readonly executionTerminalStates: readonly ExecutionTerminalStateRecord[];
   readonly manualTurns: readonly ManualBackendTurnRecord[];
   readonly manualBackendOperations: readonly ManualBackendOperationRecord[];
+  readonly codexTurns: readonly CodexBackendTurnRecord[];
+  readonly codexBackendOperations: readonly CodexBackendOperationRecord[];
   readonly completionDecisions: readonly CompletionDecisionRecord[];
   readonly manualCompletionDecisions: readonly ManualCompletionDecisionRecord[];
   readonly dispatcherTriggerRequests: readonly DispatcherTriggerRequestRecord[];

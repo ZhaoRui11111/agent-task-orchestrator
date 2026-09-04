@@ -1,5 +1,6 @@
 import {
   EXECUTION_CONTRACT_ID,
+  MANUAL_EXECUTION_ENDPOINT_VERSION,
   MANUAL_OUTCOME_CONTROL_ID,
   parseExecutionRequest,
   parseManualOutcomeReport,
@@ -46,6 +47,7 @@ function transitionAllowed(lifecycle, operation) {
 
 export class FakeExecutionBackend {
   contractId = EXECUTION_CONTRACT_ID;
+  backendKind = "manual-local";
   outcomeContractId = MANUAL_OUTCOME_CONTROL_ID;
   adapterId = "fake-test-only";
   adapterVersion = "1.0.0-test";
@@ -92,7 +94,8 @@ export class FakeExecutionBackend {
       correlationId: request.correlationId,
       adapterId: this.adapterId,
       adapterVersion: this.adapterVersion,
-      observedEndpointVersion: "local-manual/v1",
+      backendKind: this.backendKind,
+      observedEndpointVersion: MANUAL_EXECUTION_ENDPOINT_VERSION,
       observedExecutionId: request.semantic.executionId,
       outcome: "succeeded",
       code: operation === "start" ? "fake_started" : operation === "resume" ? "fake_resumed" : "fake_cancel_recorded",
@@ -195,7 +198,8 @@ export class FakeExecutionBackend {
       correlationId: request.correlationId,
       adapterId: this.adapterId,
       adapterVersion: this.adapterVersion,
-      observedEndpointVersion: "local-manual/v1",
+      backendKind: this.backendKind,
+      observedEndpointVersion: MANUAL_EXECUTION_ENDPOINT_VERSION,
       operation: "inspect",
       observedExecutionId: request.semantic.executionId,
       outcome: "succeeded",

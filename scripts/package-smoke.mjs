@@ -311,6 +311,14 @@ const expectedEntries = [
   "package/dist/cli.d.ts.map",
   "package/dist/cli.js",
   "package/dist/cli.js.map",
+  "package/dist/codex-execution-backend.d.ts",
+  "package/dist/codex-execution-backend.d.ts.map",
+  "package/dist/codex-execution-backend.js",
+  "package/dist/codex-execution-backend.js.map",
+  "package/dist/codex-sdk-worker.d.ts",
+  "package/dist/codex-sdk-worker.d.ts.map",
+  "package/dist/codex-sdk-worker.js",
+  "package/dist/codex-sdk-worker.js.map",
   "package/dist/completion-application.d.ts",
   "package/dist/completion-application.d.ts.map",
   "package/dist/completion-application.js",
@@ -399,6 +407,14 @@ const expectedEntries = [
   "package/dist/persistence/backup.d.ts.map",
   "package/dist/persistence/backup.js",
   "package/dist/persistence/backup.js.map",
+  "package/dist/persistence/codex-backend-repository.d.ts",
+  "package/dist/persistence/codex-backend-repository.d.ts.map",
+  "package/dist/persistence/codex-backend-repository.js",
+  "package/dist/persistence/codex-backend-repository.js.map",
+  "package/dist/persistence/codex-receipt-digest.d.ts",
+  "package/dist/persistence/codex-receipt-digest.d.ts.map",
+  "package/dist/persistence/codex-receipt-digest.js",
+  "package/dist/persistence/codex-receipt-digest.js.map",
   "package/dist/persistence/database.d.ts",
   "package/dist/persistence/database.d.ts.map",
   "package/dist/persistence/database.js",
@@ -471,7 +487,7 @@ const expectedEntries = [
   "package/package.json",
 ].sort();
 
-invariant(expectedEntries.length === 212, `packed expected inventory count drifted: ${expectedEntries.length}`);
+invariant(expectedEntries.length === 228, `packed expected inventory count drifted: ${expectedEntries.length}`);
 
 const packageManagerVersion = pnpm(["--version"], repoRoot).stdout.trim();
 invariant(packageManagerVersion === "11.19.0", `pnpm version drifted: ${packageManagerVersion}`);
@@ -555,6 +571,7 @@ export async function resolve(specifier, context, nextResolve) {
     "cli-api.d.ts",
   ].map((relative) => readFileSync(path.join(repoRoot, "dist", relative), "utf8")).join("\n");
   const indexDeclarations = readFileSync(path.join(repoRoot, "dist", "index.d.ts"), "utf8");
+  const sourceIndex = readFileSync(path.join(repoRoot, "src", "index.ts"), "utf8");
   invariant(
     cliFacadeDeclarations.includes("CLI_API_VERSION") &&
       cliFacadeDeclarations.includes("PUBLIC_ERROR_TABLE") &&
@@ -575,6 +592,12 @@ export async function resolve(specifier, context, nextResolve) {
       indexDeclarations,
     ),
     "packed declarations retain a synthetic capability-status surface",
+  );
+  invariant(
+    !/CodexExecution|CodexSdk|PinnedCodex|createCodex|createInjectedCodex|createPinnedCodex|CodexWorkspace|VerifiedCodex|CODEX_EXECUTION_ADAPTER_ID/u.test(
+      `${sourceIndex}\n${indexDeclarations}`,
+    ),
+    "package root exposes the package-private Codex execution composition",
   );
 
   pnpm(["pack", "--pack-destination", generation], repoRoot);
@@ -723,6 +746,11 @@ void windowsGitBackend;
       "--eval",
       `import { randomUUID } from "node:crypto";
       import("agent-task-orchestrator").then(async (m) => {
+        const forbiddenCodexExports = Object.keys(m).filter((name) =>
+          /CodexExecution|CodexSdk|PinnedCodex|createCodex|createInjectedCodex|createPinnedCodex|CodexWorkspace|VerifiedCodex|CODEX_EXECUTION_ADAPTER_ID/u.test(name));
+        if (forbiddenCodexExports.length !== 0) {
+          throw new Error("package root exposes the package-private Codex execution composition");
+        }
         const layout = m.prepareRuntimeLayout({
           runtimeRoot: process.env.ATO_SMOKE_RUNTIME,
           sourceCheckoutRoot: process.env.ATO_SMOKE_CHECKOUT,

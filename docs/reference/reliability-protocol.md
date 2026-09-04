@@ -6,12 +6,17 @@ This file is the sole normative owner of the durable operation protocol:
 semantic identity, claims, leases, fencing, idempotency, revision CAS,
 intent/receipt/finalization, publication, recovery, retry propagation, and
 observable fan-out. The current library implements execution claims, ordered
-attempts, leases, per-Task fencing, exact CAS, restart readback, the corrected
-`ato.execution/v1` port, one durable local Manual backend/control, and the
+attempts, leases, per-Task fencing, exact CAS, restart readback, the sole current
+`ato.execution/v2` port, one durable local Manual backend/control, one
+package-private non-composed Codex SDK backend/journal, and the
 ordered intent/observation/verified-receipt/finalization protocol for start,
 inspect, resume, retry, cancellation, Manual outcome reporting, verified
 interruption, reconcile-first expired execution, and separately accepted Manual
-completion. It also implements one explicit-Manual dispatcher with
+completion. The Codex branch adds exact owned-workspace/HEAD/cwd and verified
+ephemeral-input binding, durable thread/terminal evidence, and ambiguity without
+blind replay; it is not exposed through a supported package-root or product
+factory and does not add operational authorization. It also implements one
+explicit-Manual dispatcher with
 durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
 immutable finite membership, one terminal outcome per member, and
 completeness-gated summaries. One typed product facade exposes only these
@@ -24,9 +29,10 @@ recovery, cleanup attestations, and generic completion/terminal-execution
 convergence. Its configured local adapters perform bounded gate, expected-old
 local ref, configured local-file push, and owner-attested cleanup effects
 outside writer transactions. The default product runtime and CLI construct none
-of them. There is still no SchedulerBackend or scheduled trigger, MCP, Codex
-adapter, general network integration, release, deployment, or platform-support
-claim.
+of them. There is still no SchedulerBackend or scheduled trigger, MCP,
+product-wired Codex route or Codex credential/destination authority, general
+network integration, release, deployment, real Codex account E2E, or
+platform-support claim.
 
 Task-state meaning comes from the [domain contract](domain-contract.md), record
 layout from the [persistence contract](persistence-contract.md), permission from
@@ -64,7 +70,7 @@ immediately before invocation, and each result mutation requires a new
 may CAS-bind such a fresh allow only when its request, decision, audit, actor,
 action, Project resource/config revision and execution revision independently
 match the entire tuple and name the same intent as their one consumer. The
-Manual journal operation records the consumed `act` decision and the
+backend journal operation records the consumed `act` decision and the
 finalization records the consumed `finalize` decision. Prior bindings,
 decisions, and attempt evidence remain immutable. Every authorization
 evaluation has a fresh attempt identity independent of the next successful
@@ -99,6 +105,16 @@ execution/attempt/fence/observation. The stored tuple remains authoritative;
 the semantic key and idempotency key cannot hide drift. The implementation
 stores no workspace receipt, working directory, environment, prompt, source
 content, path, or credential value.
+
+Current package-private Codex intents bind the same common tuple plus
+`backend_kind=codex-sdk`, `workspace_mode=owned`, the exact current
+`ato.workspace/v2` workspace ID/generation/revision/root key, ownership-binding
+digest and HEAD object, and `task-sha256` input reference. The raw Task body is
+rederived only at the effect boundary, bounded to 1 MiB, compared with that
+reference before intent/effect and again by the backend, and never stored in an
+intent, journal, receipt, audit row, or default result. Start/resume also bind
+the exact SDK backend/endpoint, and continuation binds the predecessor
+execution/thread/receipt while requiring a new fenced successor execution.
 
 Current workspace intents bind the exact reserve/create/inspect/recover/cleanup
 action, Project resource/config/root identity, Task revision, dispatcher run/
@@ -174,7 +190,7 @@ winner. No adapter call occurs in that transaction; a later explicit
   lower than or different from the current token is rejected before mutation.
 
 The direct effect-free takeover shortcut is unavailable when reliable-loop state
-contains an unfinished intent, Manual journal operation, or terminal evidence.
+contains an unfinished intent, Manual or Codex journal operation, or terminal evidence.
 The typed claim service returns `RECONCILIATION_REQUIRED`; the Manual loop first
 performs authorized independent inspection and persists the result. Only a
 proven safe continuation may atomically supersede the predecessor and create
@@ -198,8 +214,12 @@ current state is reconciled explicitly.
 
 ## Intent, receipt, verification, and finalization
 
-The local Manual execution loop implements the generic state set and ordered
-protocol in this section. The workspace foundation uses the same durable
+The local Manual execution loop and package-private Codex execution service
+implement the generic state set and ordered protocol in this section. Their
+backend journals remain distinct: Manual inspection reads the Manual control
+state, while Codex inspection reads only its locally durable thread/terminal
+evidence because the pinned SDK exposes no independent remote inspect. The
+workspace foundation uses the same durable
 prepare/effect-possible/observe/verify/finalize ownership rule through its
 specialized generation protocol below; it does not reuse Manual rows or invent
 Manual-only `retry_wait`. Publication, completion gates, and dispatcher fan-out
@@ -253,6 +273,79 @@ An adapter return value is evidence to inspect, not automatic proof. A receipt
 proves only what its verification verdict and bound identity say. An external
 effect is never performed before its durable intent, and a terminal domain
 result is never accepted before verified finalization.
+
+## Package-private Codex turn protocol
+
+This section is implemented only by the internal injected Codex path. It adds no
+supported package-root factory, product/backend selector, dispatcher/API/CLI
+route, credential broker, or destination authority.
+
+Before any SDK access, the reliable owner reopens the current Task and exact
+owned ready workspace tuple, verifies the Task body's SHA-256 reference, commits
+the core intent, moves it to `executing` with a fresh Act binding, and calls the
+backend outside every SQLite writer transaction. The backend then reopens its
+trusted disjoint Project/workspace roots and requires the configured Project
+`rootKey` to match ProjectRegistry. It delegates physical proof to the sole
+`windows-git-local` workspace inspection owner, including the canonical
+generation path, complete ownership manifest, authoritative worktree
+registration, repository identity, no alias/reparse substitution, matching
+ownership receipt, exact detached HEAD, and clean inventory including ignored
+entries. The verifier compares the observed repository identity with the
+current durable ready receipt before and after that check, then recomputes the
+input digest.
+It commits `codex_backend_turns` with lifecycle `unknown` before invoking the
+pinned SDK. That ordering makes absence of the exact turn row durable proof that
+the SDK driver was not reached by this operation.
+
+A new turn obtains its durable thread identity only from one valid
+`thread.started` event and moves the journal to `active`. A continuation calls
+the SDK's same-thread resume surface only for the exact predecessor thread and a
+new fenced successor execution. Replacing or omitting the thread is a conflict.
+The driver accepts only `thread.started`, `turn.started`, `turn.completed`, and
+`turn.failed`; item content and raw error text never cross into durable state.
+One terminal event atomically advances the turn and appends its immutable
+terminal operation/receipt identity. Duplicate, missing, malformed, or changed
+terminal/thread evidence is not success.
+
+One execution attempt may own a Manual turn or a Codex turn, never both. Both
+start paths refuse a turn already owned by either backend family before a new
+intent or adapter access, and the combined persistence decoder rejects any
+cross-family overlap as corruption.
+
+The SDK provides no external turn ID or authoritative remote inspection. The
+subsequent independent `execution.inspect` therefore reopens the exact local
+Codex journal and verifies its intent, workspace, input, thread, terminal,
+receipt, revision, and fence lineage. The core observation, verified receipt,
+and finalization then use the ordinary ordered protocol. A verified
+`turn.completed` maps only to `turn_succeeded`; it leaves the Task running until
+the separate existing completion owner accepts all required evidence.
+
+Restart behavior is exact:
+
+| Durable point | Codex outcome |
+| --- | --- |
+| No core intent | No SDK call is inferred. |
+| `pending` | Reauthorize, CAS to `executing`, commit the backend turn before SDK access, and call once. |
+| `executing`, exact Codex turn absent | Journal absence proves the backend did not reach the SDK; reauthorize and perform the first call. |
+| `executing`, turn `unknown` or `active` without a terminal operation | The SDK may have run; do not call or resume blindly. Persist/return explicit unknown or ambiguity and require new evidence or an authorized successor. |
+| `executing`, exact terminal operation present | Reconstruct the bounded receipt from durable thread/terminal evidence and continue by inspection; do not invoke the SDK again. |
+| `observed` | Verify the persisted observation only. |
+| `verified` | Re-run only current-authorized finalization CAS. |
+| `finalized` | Revalidate trusted identity and return the bounded durable result without SDK access. |
+
+Cancellation of an already terminal `turn_succeeded` or `failed` Codex turn is
+a verified no-effect result: the backend returns `already_terminal`, leaves the
+turn revision unchanged, and the reliable owner still records fresh inspect,
+receipt, and finalization evidence for that cancellation intent. If a future
+authorized composition can prepare a valid cancellation intent while
+the same process still owns an active controller, the backend marks the turn's
+cancellation request before signaling its `AbortController`. The current
+non-composed harness does not admit a concurrent second intent while start is
+unfinished, so its cancellation surface normally reports the unavailable state
+as bounded ambiguity. In either case a signal is a request, not proof of
+interruption. Only subsequently durable SDK terminal evidence may terminalize
+the turn; absence after abort remains unknown/ambiguous, and the backend never
+fabricates `cancelled` or replays the effect to discover the answer.
 
 ## Durable workspace generation protocol
 
@@ -438,8 +531,8 @@ reported; it is not adopted or deleted.
 | --- | --- |
 | No committed intent | No external call is assumed or replayed. Re-run begins with a new or deterministically recovered intent. |
 | `pending` | CAS to `executing` and call once, or abandon with an audited terminal failure before any call. |
-| `executing`, no receipt, current live owner/fence | Inspect Manual state first. The same semantic operation may use its unchanged idempotency key only when the port's idempotency rule makes response-loss replay safe; otherwise enter `ambiguous`. |
-| `pending` or `executing`, expired/foreign owner fence | Do not invoke the old-fence mutation. Reconcile by inspection only; an absent local Manual start journal is terminal no-effect evidence, while any unprovable state becomes `ambiguous`. Only after every intent is finalized may takeover allocate a higher attempt/fence. |
+| `executing`, no receipt, current live owner/fence | Inspect the selected backend journal first. For Manual, apply its exact local idempotency rule. For Codex, only absence of the pre-SDK turn row proves the first call is still safe; any present nonterminal row forbids replay and becomes explicit unknown/ambiguity. |
+| `pending` or `executing`, expired/foreign owner fence | Do not invoke the old-fence mutation. Reconcile by inspection only; an absent local Manual start journal or absent pre-SDK Codex turn row is terminal no-effect evidence, while any unprovable state becomes `ambiguous`. Only after every intent is finalized may takeover allocate a higher attempt/fence. |
 | External effect present, no receipt | Construct a new observation from authoritative external state, verify it, and continue; do not repeat the effect. |
 | `observed` | Re-run verification against the bound tuple and current policy. |
 | `verified`, not finalized | Re-run finalization CAS. A conflict leaves the effect recorded and routes reconciliation; it does not fake rollback. |
@@ -480,7 +573,10 @@ retryable, non-ambiguous adapter refusal first persists `retry_wait`; calls
 before its nullable due time return that durable state without another adapter
 call, and a due retry reauthorizes and invokes the same operation/key. The
 adapter's exact bounded category, code, flags, retry time, and count remain
-observable in durable intent evidence.
+observable in durable intent evidence. Codex does not inherit blind replay
+permission: a continuation/retry requires a new fenced successor execution and
+the exact predecessor thread, while an effect-possible unproved start remains
+ambiguous.
 
 Non-retryable failures move the intent to `failed` and the owning Task to the
 appropriate domain outcome. Resource, rate, disk, authorization, compatibility,

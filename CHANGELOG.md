@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Replaced the unreleased closed `ato.execution/v1` shape with the sole current
+  fresh-only `ato.execution/v2`. The retained `manual-local` adapter now uses
+  `local-manual/v2`; the new discriminated owned-workspace branch is implemented
+  by a package-private `@openai/codex-sdk` `0.153.2` backend with exact current
+  workspace/HEAD/cwd checks, SHA-256-bound ephemeral Task input, durable bounded
+  thread/terminal evidence, restart convergence without blind replay, truthful
+  cancellation ambiguity, and no automatic Task completion. The v1 reader,
+  alias, fallback, migration, and dual write are absent. No package-root factory,
+  default product/application/dispatcher/CLI route, credential/destination
+  authority, real Codex account E2E, or platform-support claim was added.
+
 - Added the fresh-only injected Phase 3 library closure without changing the
   default 33-command/37-error `ato.api/v1` CLI or the three backup/restore JSON
   formats. The package now exports exact `ato.project-policy/v1`,

@@ -1,10 +1,20 @@
 {
-  "schemaVersion": 1,
-  "evidenceMode": "blocked",
+  "schemaVersion": 2,
+  "evidenceMode": "package_validated",
   "officialDocumentation": {
-    "status": "not_run",
-    "reason": "network_not_authorized",
-    "sources": []
+    "status": "verified",
+    "sources": [
+      "https://developers.openai.com/codex/sdk",
+      "https://developers.openai.com/codex/app-server"
+    ]
+  },
+  "pinnedPackage": {
+    "name": "@openai/codex-sdk",
+    "version": "0.153.2",
+    "runtimeDependency": "@openai/codex@0.153.2",
+    "integrity": "sha512-If4CYvo+Zpf6CCKxhuoyhgNbaS93UI9pYfscWr529CxCQK5fhlLQA29efutQVwuj8w9EcMhNM4rjn7zu67S+/w==",
+    "inspectionStatus": "passed",
+    "accountExecution": "not_run"
   },
   "windowsObservation": {
     "status": "not_run",
@@ -13,24 +23,25 @@
   "capabilities": [
     {
       "id": "new_thread",
-      "status": "unverified",
-      "requiredEvidence": "stable public operation plus real returned durable thread identity"
+      "status": "package_verified",
+      "requiredEvidence": "pinned streamed start operation whose first identity event supplies the durable thread identity"
     },
     {
       "id": "same_thread_resume",
-      "status": "unverified",
-      "requiredEvidence": "stable public continuation operation preserving the exact prior thread identity"
+      "status": "package_verified",
+      "requiredEvidence": "pinned resume operation preserving the exact supplied durable thread identity"
     },
     {
       "id": "cwd_project_binding",
-      "status": "unverified",
-      "requiredEvidence": "stable public input and receipt proving the accepted working directory and project identity"
+      "status": "package_verified",
+      "requiredEvidence": "pinned working-directory option plus exact local owned-workspace verification before effect"
     },
     {
       "id": "completion_evidence",
-      "status": "unverified",
-      "requiredEvidence": "stable public inspection result distinct from raw model text and bound to the exact execution turn"
+      "status": "package_verified",
+      "requiredEvidence": "pinned structured turn terminal event distinct from model text and bound to one local durable turn"
     }
   ],
+  "externalE2E": "not_run",
   "supportClaim": false
 }

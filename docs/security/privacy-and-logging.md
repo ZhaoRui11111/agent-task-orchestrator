@@ -5,7 +5,8 @@
 This file is the sole normative owner of data classification, prompt and secret
 handling, log-content redaction, retention, diagnostic disclosure, and default
 no telemetry. The current schema-version-1 application owners implement sanitized append-only
-Phase 1, claim, reliable Manual-loop, explicit-Manual dispatcher, and dedicated
+Phase 1, claim, reliable Manual-loop, package-private Codex turn/terminal,
+explicit-Manual dispatcher, and dedicated
 workspace/ProjectPolicy/gate/completion/integration/cleanup audit/evidence
 subsets, and the local product CLI/read-only doctor implement
 the closed display subset described below. No runtime logger, secret provider,
@@ -83,6 +84,20 @@ The durable intent failure projection is limited to the closed adapter
 category, bounded code, retryable/ambiguous booleans, nullable canonical retry
 time, and integer retry count. Raw adapter messages, payloads, stacks, SQL, and
 Task/source content are discarded before that projection.
+
+The package-private Codex path reuses the authoritative Task body only as
+bounded ephemeral effect input after recomputing its exact
+`task-sha256:<lowercase-64-hex>` reference. It does not duplicate those bytes,
+the working-directory path, repository content, environment, credential, SDK
+item event, model/tool text, command, output, usage detail, or raw error in an
+intent, journal, receipt, audit row, result, feasibility record, or default
+diagnostic. The driver drops all item events. A completed event contributes only
+a digest of its closed terminal/usage projection; the usage values themselves
+are not persisted. `codex_backend_turns` retains the sensitive SDK thread ID
+only because same-thread continuity and restart verification require that
+authoritative identity. It remains inside typed persistence and is absent from
+application audit, the current product/CLI, compatibility evidence, and logs.
+No current supported route resolves a credential or discloses input to Codex.
 
 The dispatcher stores only opaque trigger/request/run/resource/member/
 execution/intent identities, owner and revision facts, timestamps, bounded

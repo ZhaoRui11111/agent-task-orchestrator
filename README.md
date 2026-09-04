@@ -15,6 +15,16 @@ provides the 33-command/37-error Project, Task, dependency, authorization,
 backup/restore, doctor, Manual execution, and dispatcher surface without
 executing Task content or touching a Project repository.
 
+The package's sole current execution port is `ato.execution/v2`. The retained
+`manual-local` adapter uses `workspaceMode=none` and remains the only backend
+constructed by the supported package root, product runtime, dispatcher, API,
+or CLI. A package-private `@openai/codex-sdk` `0.153.2` backend implements the
+owned-workspace branch with verified ephemeral Task input and durable bounded
+thread/terminal evidence, but no supported public factory can select it. It was
+validated with deterministic injected drivers and disposable Git fixtures only;
+no real account turn, credential use, Windows/Codex support claim, or automatic
+Task completion follows from that evidence.
+
 The package additionally exposes the fresh-only Phase 3 library closure. It
 implements the exact `ato.project-policy/v1`, `ato.completion/v1`, and
 `ato.integration/v1` ports; replaces the unreleased workspace boundary with
@@ -34,8 +44,9 @@ of them, add no Phase 3 command or public error, and retain the three independen
 backup/restore JSON schema-version-1 formats unchanged. Local Git and filesystem
 effects are validated only in disposable repository fixtures; no product
 platform support is claimed. The repository still has no MCP server,
-SchedulerBackend or scheduled trigger, Codex adapter, daemon/service, release,
-deployment, or general network integration.
+SchedulerBackend or scheduled trigger, product-wired Codex route or Codex
+credential/destination authority, daemon/service, release, deployment, or
+general network integration.
 
 Unimplemented planned capabilities are not current capabilities. Design
 proposals and roadmaps must remain clearly labeled until their implementations
@@ -182,9 +193,9 @@ before the real local Manual effect is invoked through the reliable loop.
 Restart and takeover continue from those durable rows; a terminal run summary
 is withheld until every sealed member and every claimed intent is complete.
 
-The package and sole current `ato.api/v1` product surface expose this one Manual
+The package root and sole current `ato.api/v1` product surface expose this one Manual
 trigger and durable run resume. They add no scheduler cadence or
-SchedulerBackend, daemon, MCP, production Codex/Git/workspace behavior,
+SchedulerBackend, daemon, MCP, selectable Codex/Git/workspace behavior,
 completion gates,
 release, or platform-support claim. The dispatcher—not CLI code—owns candidate
 selection, reconciliation, fan-out, and summary completeness. Its ordering and

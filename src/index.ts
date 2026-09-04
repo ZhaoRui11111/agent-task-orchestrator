@@ -48,7 +48,29 @@ export type {
 } from "./execution-application.ts";
 export * from "./execution-port.ts";
 export * from "./manual-execution-backend.ts";
-export * from "./execution-loop.ts";
+export {
+  RELIABLE_EXECUTION_ERROR_CODES,
+  createReliableExecutionService,
+  createReliableExecutionServiceWithHooks,
+} from "./execution-loop.ts";
+export type {
+  ExecutionLoopCancelCommand,
+  ExecutionLoopInspectCommand,
+  ExecutionLoopResumeCommand,
+  ExecutionLoopStartCommand,
+  ManualCompletionCommand,
+  ManualOutcomeCommand,
+  ReliableExecutionConfirmationRequest,
+  ReliableExecutionError,
+  ReliableExecutionErrorCode,
+  ReliableExecutionFailure,
+  ReliableExecutionIngress,
+  ReliableExecutionResult,
+  ReliableExecutionService,
+  ReliableExecutionSuccess,
+  ReliableExecutionTestHooks,
+  ReliableExecutionView,
+} from "./execution-loop.ts";
 export * from "./dispatcher-application.ts";
 export * from "./dispatcher.ts";
 export {

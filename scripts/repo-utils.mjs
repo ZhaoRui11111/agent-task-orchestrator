@@ -32,6 +32,8 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/cli-api-runtime.ts",
   "src/cli-api.ts",
   "src/cli.ts",
+  "src/codex-execution-backend.ts",
+  "src/codex-sdk-worker.ts",
   "src/completion-application.ts",
   "src/completion-port.ts",
   "src/dispatcher-application.ts",
@@ -55,6 +57,8 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/persistence/application-repository-transaction.ts",
   "src/persistence/application-repository.ts",
   "src/persistence/backup.ts",
+  "src/persistence/codex-backend-repository.ts",
+  "src/persistence/codex-receipt-digest.ts",
   "src/persistence/database.ts",
   "src/persistence/doctor.ts",
   "src/persistence/errors.ts",
@@ -120,6 +124,33 @@ export const EXPECTED_PHASE3_NODE_BUILTINS = Object.freeze({
   ]),
   "src/local-project-policy.ts": Object.freeze(["node:crypto"]),
   "src/workspace-port.ts": Object.freeze(["node:crypto"]),
+});
+
+const ALLOWED_CODEX_SOURCE_FILES = new Set([
+  "src/codex-execution-backend.ts",
+  "src/codex-sdk-worker.ts",
+  "src/execution-loop.ts",
+  "src/execution-port.ts",
+  "src/node-builtins.d.ts",
+  "src/persistence/application-repository-digest.ts",
+  "src/persistence/application-repository-model.ts",
+  "src/persistence/application-repository-readers.ts",
+  "src/persistence/application-repository-state.ts",
+  "src/persistence/application-repository-transaction.ts",
+  "src/persistence/application-repository.ts",
+  "src/persistence/codex-backend-repository.ts",
+  "src/persistence/codex-receipt-digest.ts",
+]);
+
+export const EXPECTED_CODEX_NODE_BUILTINS = Object.freeze({
+  "src/codex-execution-backend.ts": Object.freeze([
+    "node:crypto",
+    "node:fs",
+    "node:path",
+  ]),
+  "src/codex-sdk-worker.ts": Object.freeze([]),
+  "src/persistence/codex-backend-repository.ts": Object.freeze([]),
+  "src/persistence/codex-receipt-digest.ts": Object.freeze([]),
 });
 
 export const EXPECTED_PACKAGE_SCRIPTS = Object.freeze({
@@ -189,8 +220,14 @@ export function productionBoundaryFailures(inventory, readSource) {
 
   for (const relative of productionFiles.filter((item) => item.endsWith(".ts"))) {
     const source = readSource(relative);
-    if (/codex|openai|@openai|scripts\//iu.test(source)) {
-      failures.push(`${relative}: production source depends on feasibility/vendor code`);
+    if (/scripts\//u.test(source)) {
+      failures.push(`${relative}: production source depends on repository tooling`);
+    }
+    if (/codex|openai|@openai/iu.test(source) && !ALLOWED_CODEX_SOURCE_FILES.has(relative)) {
+      failures.push(`${relative}: Codex implementation escaped its package-private owner set`);
+    }
+    if (/\bfrom\s+["']@openai\/codex-sdk["']/u.test(source) && relative !== "src/codex-sdk-worker.ts") {
+      failures.push(`${relative}: Codex SDK import escaped its sole driver owner`);
     }
     if (relative.endsWith(".d.ts")) continue;
     const builtins = [
@@ -213,18 +250,25 @@ export function productionBoundaryFailures(inventory, readSource) {
       JSON.stringify([...builtins].sort()) !== JSON.stringify(expectedPhase3Builtins)) {
       failures.push(`${relative}: Phase 3 Node built-in mapping drifted`);
     }
+    const expectedCodexBuiltins = EXPECTED_CODEX_NODE_BUILTINS[relative];
+    if (expectedCodexBuiltins !== undefined &&
+      JSON.stringify([...builtins].sort()) !== JSON.stringify(expectedCodexBuiltins)) {
+      failures.push(`${relative}: Codex Node built-in mapping drifted`);
+    }
     for (const builtin of builtins) {
       const registryBuiltin = relative === "src/project-registry.ts" &&
         (builtin === "node:fs" || builtin === "node:path");
       const cliBuiltin = expectedCliBuiltins?.includes(builtin) === true;
       const manualAdapterBuiltin = relative === "src/manual-execution-backend.ts" && builtin === "node:crypto";
       const phase3Builtin = expectedPhase3Builtins?.includes(builtin) === true;
+      const codexBuiltin = expectedCodexBuiltins?.includes(builtin) === true;
       if (
         !relative.startsWith("src/persistence/") && !registryBuiltin && !cliBuiltin && !manualAdapterBuiltin &&
-        !workspaceGitBuiltins && !phase3Builtin
+        !workspaceGitBuiltins && !phase3Builtin && !codexBuiltin
       ) {
         failures.push(`${relative}: Node built-in escaped the persistence owner boundary`);
-      } else if (!workspaceGitBuiltins && expectedPhase3Builtins === undefined && !ALLOWED_PERSISTENCE_BUILTINS.has(builtin)) {
+      } else if (!workspaceGitBuiltins && expectedPhase3Builtins === undefined && expectedCodexBuiltins === undefined &&
+        !ALLOWED_PERSISTENCE_BUILTINS.has(builtin)) {
         failures.push(`${relative}: undeclared persistence built-in ${builtin}`);
       }
     }

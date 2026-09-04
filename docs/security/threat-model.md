@@ -14,7 +14,7 @@ application commands/queries and lifecycle handoffs, narrowing policy, separate
 high-risk confirmation, append-only decisions/audit, a strict redacted product
 CLI/read-only doctor, verified backup/restore recovery, explicit
 confirmation-bound one-step execution-capability upgrades, atomic claim/lease/
-fence handling, strict `ato.execution/v1` ingress, durable authorization-bound
+fence handling, strict `ato.execution/v2` ingress, durable authorization-bound
 intent/observation/verified-receipt/finalization, a local no-workspace Manual
 journal/control, reconcile-first recovery, verified interruption, separately
 confirmed Manual completion, redaction, stale-fence refusal, and an
@@ -26,14 +26,17 @@ v2 ports, separately authorized policy/gate/completion/integration/cleanup
 actions, no-blind-replay recovery, strict hostile receipt parsing, gate
 freshness, integration fencing/partial-success classification, attestation-
 bound owned cleanup, bounded redacted transition evidence, test Fakes, and local
-Windows adapters. The workspace backend implements direct-exclusive creation,
+Windows adapters, plus a package-private non-composed Codex SDK backend with
+exact owned-workspace/input/thread/terminal binding, a pre-SDK durable journal,
+bounded event projection, and no-blind-replay restart behavior. The workspace backend implements direct-exclusive creation,
 ownership-manifest, authoritative inspect/recover, and verified quarantine-
 then-delete cleanup; the completion and Git integration adapters execute only
 bounded configured local effects. It still has no MCP server, SchedulerBackend
-or scheduled trigger, production Codex adapter, default product/CLI Phase 3
-route, team identity/RBAC, external-service integration, or supported platform
-security boundary. The sole current `ato.api/v1` facade and CLI expose only the
-local Manual subset; no backend executes Task content.
+or scheduled trigger, supported or product-wired Codex route, Codex credential/
+destination authority, default product/CLI Phase 3 route, team identity/RBAC,
+general external-service integration, or supported platform security boundary.
+The sole current `ato.api/v1` facade and CLI expose only the local Manual subset;
+no supported product route executes Task content.
 
 The model assumes one local operator and treats repository content, Task text,
 prompts, adapter responses, tool output, filesystem entries, Git metadata, MCP
@@ -97,6 +100,7 @@ into a support claim.
 | T8 | CLI or a future MCP surface exposes arbitrary shell, SQL, filesystem, cleanup, or external actions; malformed/oversized input bypasses application rules. | Offer only narrow versioned command schemas; validate size/type/version before runtime open; call the same application/authorization owners; omit arbitrary shell/SQL/filesystem endpoints; require distinct current grants and confirmation for the implemented high-risk actions. | A compromised local account remains outside the application's checks; no MCP surface exists yet. |
 | T9 | A stale lease holder, replayed receipt, or stale gate writes after takeover or HEAD/policy change. | The current claim and Manual-loop owners bind execution, owner, lease/execution/Task revisions, Project revisions, attempt/fence, intent, independently observed receipt, and finalization; they reconcile before replacement and reject old-fence writes. Workspace and Phase 3 additionally bind generation/revision, run/member lineage, immutable ownership digest, policy/config receipt, full gate identity/freshness, integration reservation/lease/object/ref state, cleanup attestation, and adapter receipt digests. The local adapters reopen owner-bound evidence at point of use, and the final completion transaction rechecks current authorization, Task revision, execution fence, HEAD, policy, gates, integration, and preservation facts. | The Manual journal and local library adapters are inspectable only in their configured local scope; any effect whose physical state cannot prove absence or exact ownership remains ambiguous and requires operator resolution. |
 | T10 | A policy adapter, dependency, or external API changes behavior/version without detection. | Use exact port/version negotiation, policy revision binding, evidence-bound support claims, and incompatibility errors from the [adapter](../reference/adapter-contracts.md) and [versioning](../reference/versioning-compatibility-contract.md) owners. | A correctly versioned but compromised dependency can still act maliciously within granted OS permissions. |
+| T11 | A Codex call runs in a substituted/dirty/wrong-HEAD workspace, consumes changed Task input, replaces a durable thread, leaks SDK content, or is blindly replayed after response loss. | Keep construction package-private and non-composed; require the exact current `ato.workspace/v2` ownership tuple, canonical configured cwd, detached HEAD, clean tracked/untracked/ignored inventory and SHA-256 Task-input match before the pre-SDK journal and again at point of use; accept thread identity only from `thread.started`; retain only closed terminal hashes; drop item/raw-error events; and treat any present unproved turn as ambiguity rather than replay authority. | The SDK/process can modify data already writable within its verified workspace, and a same-user or privileged process can exceed application checks; no real-account or platform-support evidence exists. |
 
 ## Negative-test obligations
 
@@ -106,7 +110,7 @@ produce binary evidence for every applicable row.
 The current implementation covers the runtime-root and ProjectRegistry portions
 of N1, the local content/authorization portion of N3, the application audit plus
 CLI/doctor disclosure subset of N4, the current schema-version-1 SQLite/
-application/lifecycle/Manual-loop/dispatcher/workspace/Phase-3 record portions
+application/lifecycle/Manual-loop/package-private-Codex/dispatcher/workspace/Phase-3 record portions
 of N5 and N11, the local Manual/gate/workspace/integration intent/effect/
 inspection/receipt/finalization/crash/restart/stale-fence subset of N6 and N10,
 the explicit-Manual dispatcher worker-death/fan-out subset of N7, and the sole-
@@ -117,8 +121,11 @@ Windows/Git host, local adapters cover applicable N1/N2 path, name, repository-
 topology, object/tree, junction/reparse/hardlink, ownership, evidence-root,
 identity-handshake, closed inventory, direct-exclusive creation, local fast-
 forward/push, authoritative inspection/recovery, and attestation-bound cleanup
-cases. Operational logger, SchedulerBackend/scheduled delivery, MCP, production
-Codex adapter, default product/CLI Phase 3 composition, and external-service
+cases. Deterministic injected-driver and disposable Git fixtures additionally
+cover Codex port discrimination, workspace/input/thread/terminal/cancellation,
+every-stage restart, no-replay, corruption, and redaction behavior. Operational
+logger, SchedulerBackend/scheduled delivery, MCP, product-wired Codex,
+real-account Codex, default product/CLI Phase 3 composition, and external-service
 publication remain future obligations; local adapter-library evidence cannot
 satisfy them or a support claim.
 
@@ -159,12 +166,14 @@ logic but cannot satisfy a real platform/API support row.
 
 The implemented controls are limited to the Phase 1 local boundaries, the
 local explicit-Manual Phase 2 product, reliable loop and dispatcher, and the
-injected local workspace/Phase 3 library and adapters named above.
+package-private non-composed Codex boundary plus injected local workspace/Phase
+3 library and adapters named above.
 This model does not claim release
 readiness, multi-user isolation, RBAC,
 cloud security, remote availability, arbitrary-code sandboxing, malware
 detection, perfect secret/PII detection, guaranteed rollback of external
-effects, default product/CLI filesystem/Git containment, general or automatic
+effects, operational Codex authorization/account isolation, default product/CLI
+filesystem/Git containment, general or automatic
 cleanup, arbitrary Git integration/ref/push behavior, supported MCP exposure,
 or support for any
 platform/API absent validated compatibility evidence.

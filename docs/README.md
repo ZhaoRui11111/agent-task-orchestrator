@@ -60,10 +60,15 @@ gate.
 Plans describe proposed, active, or completed development work. They do not become current product capability without matching implementation, tests, and current documentation.
 
 Current references distinguish the implemented sole-`ato.api/v1` explicit
-local-Manual product from the separately injected Phase 3 library. The latter
-contains ProjectPolicy, completion gates, integration reservation/local Git
-effects, and attestation-bound workspace cleanup but has no default product or
-CLI wiring. SchedulerBackend, scheduled delivery, MCP, Codex, daemon/service,
-release, deployment, and any supported-platform claim remain unimplemented.
+local-Manual product from the package-private, non-composed Codex execution
+backend and the separately injected Phase 3 library. The Codex backend
+implements the owned-workspace branch of `ato.execution/v2` with a pinned SDK
+and bounded durable evidence, but no supported package-root or product factory
+can construct it and no real-account support evidence exists. The Phase 3
+library contains ProjectPolicy, completion gates, integration reservation/local
+Git effects, and attestation-bound workspace cleanup but has no default product
+or CLI wiring. SchedulerBackend, scheduled delivery, MCP, product-wired Codex,
+daemon/service, release, deployment, and any supported-platform claim remain
+unimplemented.
 
 All links in authoritative documentation must be repository-relative and resolve to committed files.

@@ -5,12 +5,12 @@ const REQUIRED_CAPABILITIES = [
   "same_thread_resume",
 ];
 const REQUIRED_EVIDENCE = Object.freeze({
-  completion_evidence: "stable public inspection result distinct from raw model text and bound to the exact execution turn",
-  cwd_project_binding: "stable public input and receipt proving the accepted working directory and project identity",
-  new_thread: "stable public operation plus real returned durable thread identity",
-  same_thread_resume: "stable public continuation operation preserving the exact prior thread identity",
+  completion_evidence: "pinned structured turn terminal event distinct from model text and bound to one local durable turn",
+  cwd_project_binding: "pinned working-directory option plus exact local owned-workspace verification before effect",
+  new_thread: "pinned streamed start operation whose first identity event supplies the durable thread identity",
+  same_thread_resume: "pinned resume operation preserving the exact supplied durable thread identity",
 });
-const OFFICIAL_HOSTS = new Set(["developers.openai.com", "platform.openai.com"]);
+const OFFICIAL_HOSTS = new Set(["developers.openai.com", "learn.chatgpt.com", "platform.openai.com"]);
 const FORBIDDEN_KEYS = new Set([
   "apikey",
   "api_key",
@@ -82,10 +82,40 @@ export function validateCodexEvidence(record) {
   rejectSensitiveValues(record);
   requireExactKeys(
     record,
-    ["schemaVersion", "evidenceMode", "officialDocumentation", "windowsObservation", "capabilities", "supportClaim"],
+    [
+      "capabilities", "evidenceMode", "externalE2E", "officialDocumentation", "pinnedPackage",
+      "schemaVersion", "supportClaim", "windowsObservation",
+    ],
     "Codex evidence",
   );
-  if (record.schemaVersion !== 1) fail("unsupported Codex evidence schema");
+  if (record.schemaVersion !== 2) fail("unsupported Codex evidence schema");
+  if (record.evidenceMode !== "package_validated") fail("unknown Codex evidence mode");
+  if (record.externalE2E !== "not_run" || record.supportClaim !== false) {
+    fail("package-only evidence cannot create an external support claim");
+  }
+  requireExactKeys(record.officialDocumentation, ["sources", "status"], "official documentation");
+  if (record.officialDocumentation.status !== "verified" ||
+    !Array.isArray(record.officialDocumentation.sources) || record.officialDocumentation.sources.length !== 2) {
+    fail("official Codex documentation evidence is incomplete");
+  }
+  for (const source of record.officialDocumentation.sources) validateOfficialSource(source);
+  requireExactKeys(
+    record.pinnedPackage,
+    ["accountExecution", "inspectionStatus", "integrity", "name", "runtimeDependency", "version"],
+    "pinned package",
+  );
+  if (record.pinnedPackage.name !== "@openai/codex-sdk" || record.pinnedPackage.version !== "0.153.2" ||
+    record.pinnedPackage.runtimeDependency !== "@openai/codex@0.153.2" ||
+    record.pinnedPackage.integrity !==
+      "sha512-If4CYvo+Zpf6CCKxhuoyhgNbaS93UI9pYfscWr529CxCQK5fhlLQA29efutQVwuj8w9EcMhNM4rjn7zu67S+/w==" ||
+    record.pinnedPackage.inspectionStatus !== "passed" || record.pinnedPackage.accountExecution !== "not_run") {
+    fail("pinned Codex package evidence drifted");
+  }
+  requireExactKeys(record.windowsObservation, ["reason", "status"], "Windows observation");
+  if (record.windowsObservation.status !== "not_run" ||
+    record.windowsObservation.reason !== "account_network_and_execution_not_authorized") {
+    fail("Windows observation boundary drifted");
+  }
   if (!Array.isArray(record.capabilities)) fail("capabilities must be an array");
   for (const capability of record.capabilities) {
     requireExactKeys(capability, ["id", "status", "requiredEvidence"], `capability ${capability?.id ?? "unknown"}`);
@@ -98,33 +128,14 @@ export function validateCodexEvidence(record) {
   }
   const ids = record.capabilities.map((item) => item.id).sort();
   if (JSON.stringify(ids) !== JSON.stringify(REQUIRED_CAPABILITIES)) fail("required Codex capability inventory drifted");
-
-  if (record.evidenceMode === "blocked") {
-    requireExactKeys(record.officialDocumentation, ["status", "reason", "sources"], "blocked official documentation");
-    requireExactKeys(record.windowsObservation, ["status", "reason"], "blocked Windows observation");
-    if (record.supportClaim !== false) fail("blocked evidence cannot create a support claim");
-    if (record.officialDocumentation?.status !== "not_run" || record.officialDocumentation?.reason !== "network_not_authorized") {
-      fail("blocked official-documentation result is not exact");
-    }
-    if (!Array.isArray(record.officialDocumentation.sources) || record.officialDocumentation.sources.length !== 0) {
-      fail("blocked mode cannot retain documentation sources");
-    }
-    if (
-      record.windowsObservation?.status !== "not_run" ||
-      record.windowsObservation?.reason !== "account_network_and_execution_not_authorized"
-    ) {
-      fail("blocked Windows observation is not exact");
-    }
-    if (record.capabilities.some((item) => item.status !== "unverified")) fail("blocked capabilities must remain unverified");
-    return { boundaryStatus: "passed", evidenceMode: "blocked", externalE2E: "not_run", supportClaim: false };
+  if (record.capabilities.some((item) => item.status !== "package_verified")) {
+    fail("pinned-package capabilities must use the exact package_verified status");
   }
-
-  if (record.evidenceMode !== "validated") fail("unknown Codex evidence mode");
-  requireExactKeys(record.officialDocumentation, ["status", "sources"], "validated official documentation");
-  requireExactKeys(record.windowsObservation, ["status", "environment", "procedure", "result"], "validated Windows observation");
-  if (!Array.isArray(record.officialDocumentation.sources)) fail("validated sources must be an array");
-  for (const source of record.officialDocumentation.sources) validateOfficialSource(source);
-  fail(
-    "validated Codex evidence is unavailable: EP-00B has no authorized stable-public verifier and accepts blocked evidence only",
-  );
+  return {
+    boundaryStatus: "passed",
+    evidenceMode: "package_validated",
+    packagePreflight: "passed",
+    externalE2E: "not_run",
+    supportClaim: false,
+  };
 }

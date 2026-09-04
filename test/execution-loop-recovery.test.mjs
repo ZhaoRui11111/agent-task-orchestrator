@@ -282,6 +282,7 @@ function responseLossAdapter(manual, lostMethod) {
   };
   return Object.freeze({
     contractId: manual.contractId,
+    backendKind: manual.backendKind,
     outcomeContractId: manual.outcomeContractId,
     adapterId: manual.adapterId,
     adapterVersion: manual.adapterVersion,
@@ -347,6 +348,7 @@ test("an ambiguous start with no durable Manual effect finalizes waiting and exa
     const manual = createManualExecutionBackend(store, { ingress: runtime.ingress });
     const ambiguous = Object.freeze({
       contractId: manual.contractId,
+      backendKind: manual.backendKind,
       adapterId: manual.adapterId,
       adapterVersion: manual.adapterVersion,
       start() { throw new Error("simulated-unknown-external-state"); },
@@ -397,6 +399,7 @@ test("expired pending and executing intents never invoke an old-fence effect and
         let manual = createManualExecutionBackend(runtime.store, { ingress: runtime.ingress });
         const wrap = () => Object.freeze({
           contractId: manual.contractId,
+          backendKind: manual.backendKind,
           adapterId: manual.adapterId,
           adapterVersion: manual.adapterVersion,
           start(request) { startCalls += 1; return manual.start(request); },

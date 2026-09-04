@@ -1,8 +1,9 @@
 # Codex stable public contract feasibility record
 
-This is a non-normative EP-00B evidence record. Codex remains a prospective
-adapter behind the planned public port boundary; the core scaffold has no
-Codex or OpenAI dependency.
+This is the non-normative EP-03D capability record for the package-private
+Codex adapter. The repository pins `@openai/codex-sdk` `0.153.2`, but no
+supported product, application, dispatcher, CLI, or package-root factory can
+select or construct the adapter.
 
 ## Required observations
 
@@ -14,21 +15,28 @@ documentation and real target-environment evidence for all of:
 - binding execution to the exact working directory or project; and
 - obtaining stable completion evidence without scraping private state.
 
-The exact blocked-evidence schema is
+The exact package-evidence schema is
 [`codex-stable-public-contract.json`](codex-stable-public-contract.json). The
-EP-00B contract checker accepts only that exact blocked record. It rejects
-every `validated` or support-producing mode, nonofficial or credential-bearing
-source URL, changed capability criterion, raw path, identifier, prompt-shaped
-free text, and secret-shaped value. A later positive route requires a separately
-implemented stable-public verifier bound to authorized official documentation
-and real Windows receipts; a structurally plausible JSON fixture is not proof.
+contract checker accepts only the pinned package identity, official OpenAI
+documentation sources, four closed package-verified capabilities, and the
+explicit no-account boundary. It also checks the SDK import has one internal
+driver owner and that the package root exposes no Codex factory,
+configuration, driver, or injected composition service.
 
 ## Current boundary
 
-Official documentation lookup needs network access, and a real Codex Windows
-observation can additionally require authorized product execution and an
-account. Those actions were not authorized for this candidate evidence pass.
-They are therefore recorded as `not_run`, every required capability remains
-`unverified`, and `supportClaim` remains `false`. This truthful blocked record
-can validate the adapter/core boundary; it cannot validate Codex compatibility
-or become an E2E pass.
+The official [Codex SDK documentation](https://developers.openai.com/codex/sdk)
+describes the server-side TypeScript library and its start, continue, and
+resume operations. The pinned package's declarations and shipped implementation
+add the exact evidence used here: `workingDirectory`, `runStreamed()`, the
+first `thread.started` identity event, `turn.completed`/`turn.failed`, and
+`AbortSignal` forwarding without an authoritative cancelled terminal promise.
+The [App Server documentation](https://developers.openai.com/codex/app-server)
+is recorded only to preserve the explicit exclusion: EP-03D does not implement
+or fall back to App Server.
+
+No real Codex turn, credential, account, external Project, or platform-support
+test was used. `externalE2E=not_run` and `supportClaim=false` therefore remain
+mandatory. Package/type inspection, deterministic injected-driver tests, and
+disposable local Git tests establish the internal adapter boundary; they do not
+establish Windows/account support.

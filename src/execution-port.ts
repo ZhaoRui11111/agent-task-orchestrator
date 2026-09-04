@@ -1,4 +1,11 @@
-export const EXECUTION_CONTRACT_ID = "ato.execution/v1" as const;
+export const EXECUTION_CONTRACT_ID = "ato.execution/v2" as const;
+export const MANUAL_EXECUTION_ENDPOINT_VERSION = "local-manual/v2" as const;
+export const CODEX_EXECUTION_ENDPOINT_VERSION = "openai-codex-sdk/v1" as const;
+
+export type ExecutionBackendKind = "manual-local" | "codex-sdk";
+export type ExecutionEndpointVersion =
+  | typeof MANUAL_EXECUTION_ENDPOINT_VERSION
+  | typeof CODEX_EXECUTION_ENDPOINT_VERSION;
 
 export const EXECUTION_ADAPTER_ERROR_CATEGORIES = Object.freeze([
   "invalid_request",
@@ -22,7 +29,7 @@ export type ExecutionAdapterErrorCategory = (typeof EXECUTION_ADAPTER_ERROR_CATE
 export type ExecutionAction = "execution.start" | "execution.resume" | "execution.retry" | "execution.cancel";
 export type ExecutionLifecycle = "unknown" | "queued" | "active" | "waiting" | "turn_succeeded" | "failed" | "cancelled";
 
-export interface ExecutionSemanticIdentity {
+interface ExecutionSemanticCommon {
   readonly projectId: string;
   readonly projectResourceRevision: number;
   readonly projectConfigRevision: number;
@@ -34,8 +41,25 @@ export interface ExecutionSemanticIdentity {
   readonly attemptNumber: number;
   readonly fencingToken: number;
   readonly policyBindingReference: string;
-  readonly workspaceMode: "none";
 }
+
+export type ExecutionSemanticIdentity = Readonly<ExecutionSemanticCommon & (
+  | {
+    readonly backendKind: "manual-local";
+    readonly workspaceMode: "none";
+  }
+  | {
+    readonly backendKind: "codex-sdk";
+    readonly workspaceMode: "owned";
+    readonly workspaceContractId: "ato.workspace/v2";
+    readonly workspaceId: string;
+    readonly workspaceGeneration: number;
+    readonly workspaceRevision: number;
+    readonly workspaceRootKey: string;
+    readonly ownershipBindingSha256: string;
+    readonly workspaceHeadObjectId: string;
+  }
+)>;
 
 interface ExecutionCallBase {
   readonly contractId: typeof EXECUTION_CONTRACT_ID;
@@ -58,6 +82,7 @@ interface ExecutionMutationBase extends ExecutionCallBase {
 export interface ExecutionStartRequest extends ExecutionMutationBase {
   readonly operation: "start";
   readonly action: "execution.start";
+  readonly input: string | null;
 }
 
 export interface ExecutionResumeRequest extends ExecutionMutationBase {
@@ -68,6 +93,7 @@ export interface ExecutionResumeRequest extends ExecutionMutationBase {
   readonly continuationReference: string;
   readonly previousTurnReceiptId: string;
   readonly expectedThreadId: string;
+  readonly input: string | null;
 }
 
 export interface ExecutionInspectRequest extends ExecutionCallBase {
@@ -101,7 +127,8 @@ interface ExecutionReceiptBase {
   readonly correlationId: string;
   readonly adapterId: string;
   readonly adapterVersion: string;
-  readonly observedEndpointVersion: "local-manual/v1";
+  readonly backendKind: ExecutionBackendKind;
+  readonly observedEndpointVersion: ExecutionEndpointVersion;
   readonly observedExecutionId: string;
   readonly outcome: "succeeded" | "deferred" | "rejected";
   readonly code: string;
@@ -125,7 +152,7 @@ export interface ExecutionStartReceipt extends ExecutionMutationReceiptBase {
   readonly backendExecutionId: string;
   readonly threadId: string | null;
   readonly lifecycle: "started" | "deferred" | "rejected";
-  readonly workspaceMode: "none";
+  readonly workspaceMode: "none" | "owned";
 }
 
 export interface ExecutionInspectReceipt extends ExecutionReceiptBase {
@@ -164,12 +191,13 @@ export type ExecutionPortResult<T extends ExecutionPortReceipt = ExecutionPortRe
 
 export interface ExecutionBackend {
   readonly contractId: typeof EXECUTION_CONTRACT_ID;
+  readonly backendKind: ExecutionBackendKind;
   readonly adapterId: string;
   readonly adapterVersion: string;
-  start(request: ExecutionStartRequest): ExecutionPortResult<ExecutionStartReceipt>;
-  resume(request: ExecutionResumeRequest): ExecutionPortResult<ExecutionStartReceipt>;
-  inspect(request: ExecutionInspectRequest): ExecutionPortResult<ExecutionInspectReceipt>;
-  requestCancel(request: ExecutionCancelRequest): ExecutionPortResult<ExecutionCancelReceipt>;
+  start(request: ExecutionStartRequest): ExecutionPortResult<ExecutionStartReceipt> | Promise<ExecutionPortResult<ExecutionStartReceipt>>;
+  resume(request: ExecutionResumeRequest): ExecutionPortResult<ExecutionStartReceipt> | Promise<ExecutionPortResult<ExecutionStartReceipt>>;
+  inspect(request: ExecutionInspectRequest): ExecutionPortResult<ExecutionInspectReceipt> | Promise<ExecutionPortResult<ExecutionInspectReceipt>>;
+  requestCancel(request: ExecutionCancelRequest): ExecutionPortResult<ExecutionCancelReceipt> | Promise<ExecutionPortResult<ExecutionCancelReceipt>>;
 }
 
 export const MANUAL_OUTCOME_CONTROL_ID = "ato.manual-outcome-control/v1" as const;
@@ -342,19 +370,51 @@ function sha256(value: unknown): value is string {
   return typeof value === "string" && /^[0-9A-F]{64}$/u.test(value);
 }
 
+function sha1(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{40}$/u.test(value);
+}
+
+function taskInputReference(value: unknown): value is string {
+  return typeof value === "string" && /^task-sha256:[0-9a-f]{64}$/u.test(value);
+}
+
+function effectInput(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 &&
+    new TextEncoder().encode(value).byteLength <= 1_048_576;
+}
+
 function parseSemantic(value: unknown): ExecutionSemanticIdentity | null {
-  const record = exactRecord(value, [
+  const workspaceMode = ownDataValue(value, "workspaceMode");
+  const commonKeys = [
     "attemptNumber", "executionId", "executionRevision", "fencingToken", "inputReference",
-    "policyBindingReference", "projectConfigRevision", "projectId", "projectResourceRevision",
+    "backendKind", "policyBindingReference", "projectConfigRevision", "projectId", "projectResourceRevision",
     "taskId", "taskRevision", "workspaceMode",
-  ]);
+  ] as const;
+  const record = workspaceMode === "owned"
+    ? exactRecord(value, [
+      ...commonKeys, "ownershipBindingSha256", "workspaceContractId", "workspaceGeneration",
+      "workspaceHeadObjectId", "workspaceId", "workspaceRevision", "workspaceRootKey",
+    ])
+    : exactRecord(value, commonKeys);
   if (
     record === null || !bounded(record.projectId) || !positive(record.projectResourceRevision) ||
     !positive(record.projectConfigRevision) || !bounded(record.taskId) || !positive(record.taskRevision) ||
     !operationalIdentifier(record.inputReference) || !operationalIdentifier(record.executionId) ||
     !positive(record.executionRevision) ||
     !positive(record.attemptNumber) || !positive(record.fencingToken) ||
-    !operationalIdentifier(record.policyBindingReference) || record.workspaceMode !== "none"
+    !operationalIdentifier(record.policyBindingReference)
+  ) return null;
+  if (record.workspaceMode === "none") {
+    return record.backendKind === "manual-local"
+      ? Object.freeze(record as unknown as ExecutionSemanticIdentity)
+      : null;
+  }
+  if (
+    record.workspaceMode !== "owned" || record.backendKind !== "codex-sdk" ||
+    record.workspaceContractId !== "ato.workspace/v2" || !taskInputReference(record.inputReference) ||
+    !operationalIdentifier(record.workspaceId) || !positive(record.workspaceGeneration) ||
+    !positive(record.workspaceRevision) || !operationalIdentifier(record.workspaceRootKey) ||
+    !sha256(record.ownershipBindingSha256) || !sha1(record.workspaceHeadObjectId)
   ) return null;
   return Object.freeze(record as unknown as ExecutionSemanticIdentity);
 }
@@ -377,21 +437,25 @@ function validMutation(record: Readonly<UnknownRecord>): record is Readonly<Unkn
 export function parseExecutionRequest(value: unknown): ExecutionPortRequest | null {
   const operation = ownDataValue(value, "operation");
   if (operation === "start") {
-    const record = exactRecord(value, [...CALL_KEYS, ...MUTATION_KEYS, "operation"]);
-    return record !== null && validMutation(record) && record.action === "execution.start"
+    const record = exactRecord(value, [...CALL_KEYS, ...MUTATION_KEYS, "input", "operation"]);
+    const semantic = record === null ? null : parseSemantic(record.semantic);
+    return record !== null && semantic !== null && validMutation(record) && record.action === "execution.start" &&
+      (semantic.backendKind === "manual-local" ? record.input === null : effectInput(record.input))
       ? Object.freeze({ ...record, semantic: parseSemantic(record.semantic) }) as unknown as ExecutionStartRequest
       : null;
   }
   if (operation === "resume") {
     const record = exactRecord(value, [
-      ...CALL_KEYS, ...MUTATION_KEYS, "backendExecutionId", "continuationReference", "expectedThreadId",
+      ...CALL_KEYS, ...MUTATION_KEYS, "backendExecutionId", "continuationReference", "expectedThreadId", "input",
       "operation", "previousTurnReceiptId", "threadId",
     ]);
-    return record !== null && validMutation(record) &&
+    const semantic = record === null ? null : parseSemantic(record.semantic);
+    return record !== null && semantic !== null && validMutation(record) &&
       (record.action === "execution.resume" || record.action === "execution.retry") &&
       operationalIdentifier(record.backendExecutionId) && operationalIdentifier(record.threadId) &&
       operationalIdentifier(record.continuationReference) && operationalIdentifier(record.previousTurnReceiptId) &&
-      record.expectedThreadId === record.threadId
+      record.expectedThreadId === record.threadId &&
+      (semantic.backendKind === "manual-local" ? record.input === null : effectInput(record.input))
       ? Object.freeze({ ...record, semantic: parseSemantic(record.semantic) }) as unknown as ExecutionResumeRequest
       : null;
   }
@@ -448,7 +512,9 @@ export function parseExecutionAdapterError(value: unknown): ExecutionAdapterErro
 function validReceiptBase(record: Readonly<UnknownRecord>): boolean {
   return operationalIdentifier(record.receiptId) && record.contractId === EXECUTION_CONTRACT_ID &&
     operationalIdentifier(record.correlationId) && operationalIdentifier(record.adapterId) &&
-    operationalIdentifier(record.adapterVersion) && record.observedEndpointVersion === "local-manual/v1" &&
+    operationalIdentifier(record.adapterVersion) &&
+    ((record.backendKind === "manual-local" && record.observedEndpointVersion === MANUAL_EXECUTION_ENDPOINT_VERSION) ||
+      (record.backendKind === "codex-sdk" && record.observedEndpointVersion === CODEX_EXECUTION_ENDPOINT_VERSION)) &&
     operationalIdentifier(record.observedExecutionId) && ["succeeded", "deferred", "rejected"].includes(record.outcome as string) &&
     operationalIdentifier(record.code, 64) && timestamp(record.observedAt) &&
     (record.validUntil === null || timestamp(record.validUntil)) &&
@@ -457,7 +523,7 @@ function validReceiptBase(record: Readonly<UnknownRecord>): boolean {
 }
 
 const RECEIPT_BASE_KEYS = [
-  "adapterId", "adapterVersion", "code", "contractId", "correlationId", "evidenceReference", "integritySha256",
+  "adapterId", "adapterVersion", "backendKind", "code", "contractId", "correlationId", "evidenceReference", "integritySha256",
   "observationNumber", "observedAt", "observedEndpointVersion", "observedExecutionId", "outcome", "receiptId", "validUntil",
 ] as const;
 const MUTATION_RECEIPT_KEYS = [
@@ -476,7 +542,9 @@ export function parseExecutionReceipt(value: unknown): ExecutionPortReceipt | nu
       positive(record.observedPostRevision) && operationalIdentifier(record.backendExecutionId) &&
       (record.threadId === null || operationalIdentifier(record.threadId)) &&
       ["started", "deferred", "rejected"].includes(record.lifecycle as string) &&
-      record.workspaceMode === "none" ? Object.freeze(record as unknown as ExecutionStartReceipt) : null;
+      ((record.backendKind === "manual-local" && record.workspaceMode === "none") ||
+        (record.backendKind === "codex-sdk" && record.workspaceMode === "owned"))
+      ? Object.freeze(record as unknown as ExecutionStartReceipt) : null;
   }
   if (operation === "inspect") {
     const record = exactRecord(value, [

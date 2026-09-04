@@ -41,5 +41,8 @@
   },
   "devDependencies": {
     "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "0.153.2"
   }
 }

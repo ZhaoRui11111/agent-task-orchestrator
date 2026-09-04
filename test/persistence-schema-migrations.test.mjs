@@ -24,7 +24,7 @@ import {
   expectPersistenceError,
 } from "./persistence-test-helpers.mjs";
 
-const BASELINE_CHECKSUM = "48AEAA28BCA5152BC930149483E649D6C91E1E63D64D5BD29958492860AA95A5";
+const BASELINE_CHECKSUM = "E17C6ACFF0891C3B8FD6F1DADBF3616DDFCF4391F7F5D7427FE0F2F8CCFFED0D";
 
 const CURRENT_TABLES = Object.freeze([
   "application_audit",
@@ -35,6 +35,8 @@ const CURRENT_TABLES = Object.freeze([
   "authorization_decisions",
   "authorization_grants",
   "authorization_local_identity",
+  "codex_backend_operations",
+  "codex_backend_turns",
   "completion_decisions",
   "completion_gate_authorization_decisions",
   "completion_gate_events",
@@ -99,6 +101,7 @@ const CURRENT_TABLES = Object.freeze([
 const CURRENT_INDEXES = Object.freeze([
   "authorization_grants_actor_action_index",
   "authorization_grants_project_index",
+  "codex_backend_operations_turn_order",
   "dispatcher_authorization_decisions_request_index",
   "dispatcher_runs_status_lease_index",
   "execution_attempts_one_active_per_task",
@@ -132,6 +135,10 @@ const CURRENT_TRIGGERS = Object.freeze([
   "authorization_grants_revoke_only",
   "authorization_local_identity_no_delete",
   "authorization_local_identity_no_update",
+  "codex_backend_operations_no_delete",
+  "codex_backend_operations_no_update",
+  "codex_backend_turns_no_delete",
+  "codex_backend_turns_update_guard",
   "completion_decisions_no_delete",
   "completion_decisions_no_update",
   "completion_gate_authorization_decisions_no_delete",
@@ -367,6 +374,22 @@ test("fresh initialization atomically creates the exact current schema", async (
         database.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='application_lifecycle_authorizations'").get().sql,
         /state_digest_version\s*=\s*2/u,
       );
+      const executionIntentGuard = database.prepare(
+        "SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='execution_operation_intents_transition_guard'",
+      ).get().sql;
+      assert.match(executionIntentGuard, /NEW\.backend_kind\s*<>\s*OLD\.backend_kind/u);
+      assert.match(executionIntentGuard, /NEW\.workspace_mode\s*<>\s*OLD\.workspace_mode/u);
+      for (const field of [
+        "workspace_contract_id",
+        "workspace_id",
+        "workspace_generation",
+        "workspace_revision",
+        "workspace_root_key",
+        "ownership_binding_sha256",
+        "workspace_head_object_id",
+      ]) {
+        assert.match(executionIntentGuard, new RegExp(`NEW\\.${field}\\s+IS NOT\\s+OLD\\.${field}`, "u"));
+      }
     } finally {
       database.close();
     }

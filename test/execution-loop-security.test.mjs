@@ -37,6 +37,7 @@ function poisonServiceCounters() {
   });
   const adapter = Object.freeze({
     contractId: EXECUTION_CONTRACT_ID,
+    backendKind: "manual-local",
     outcomeContractId: MANUAL_OUTCOME_CONTROL_ID,
     adapterId: "poison-adapter",
     adapterVersion: "1.0.0",
@@ -301,6 +302,7 @@ test("fresh Act and Finalize authorization blocks revoked execution authority at
         let startCalls = 0;
         const countingBackend = Object.freeze({
           contractId: manual.contractId,
+          backendKind: manual.backendKind,
           adapterId: manual.adapterId,
           adapterVersion: manual.adapterVersion,
           start(request) { startCalls += 1; return manual.start(request); },
@@ -388,6 +390,7 @@ test("the reliable loop binds both trusted principal and persisted runtime-root 
     let startCalls = 0;
     const backend = Object.freeze({
       contractId: manual.contractId,
+      backendKind: manual.backendKind,
       adapterId: manual.adapterId,
       adapterVersion: manual.adapterVersion,
       start(request) { startCalls += 1; return manual.start(request); },
@@ -432,6 +435,7 @@ test("finalized start and Manual outcome replay revalidate principal and runtime
     const calls = { start: 0, inspect: 0, outcome: 0 };
     const backend = Object.freeze({
       contractId: manual.contractId,
+      backendKind: manual.backendKind,
       adapterId: manual.adapterId,
       adapterVersion: manual.adapterVersion,
       start(request) { calls.start += 1; return manual.start(request); },
@@ -501,6 +505,7 @@ test("independent inspection always consumes fresh current authority and can rec
     const inspectionDecisionIds = [];
     const backend = Object.freeze({
       contractId: manual.contractId,
+      backendKind: manual.backendKind,
       adapterId: manual.adapterId,
       adapterVersion: manual.adapterVersion,
       start: (request) => manual.start(request),
@@ -613,6 +618,7 @@ test("a syntactically valid forged inspect receipt cannot fabricate verified can
     runtime.ingress.setNow("2026-08-30T12:00:05.000Z");
     const forged = Object.freeze({
       contractId: manual.contractId,
+      backendKind: manual.backendKind,
       adapterId: manual.adapterId,
       adapterVersion: manual.adapterVersion,
       start: (request) => manual.start(request),
@@ -675,6 +681,7 @@ test("retry_wait preserves exact adapter taxonomy and retries the same operation
     const calls = [];
     const backend = Object.freeze({
       contractId: manual.contractId,
+      backendKind: manual.backendKind,
       adapterId: manual.adapterId,
       adapterVersion: manual.adapterVersion,
       start(request) {
@@ -760,6 +767,7 @@ test("Task content and adapter error detail never enter bounded execution record
     const manual = createManualExecutionBackend(runtime.store, { ingress: runtime.ingress });
     const hostile = Object.freeze({
       contractId: manual.contractId,
+      backendKind: manual.backendKind,
       adapterId: manual.adapterId,
       adapterVersion: manual.adapterVersion,
       start(request) {

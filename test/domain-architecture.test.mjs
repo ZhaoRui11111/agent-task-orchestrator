@@ -12,6 +12,7 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "BASE_AUTHORIZATION_ACTIONS",
   "CLAIM_AUTHORIZATION_ACTIONS",
   "CLI_API_VERSION",
+  "CODEX_EXECUTION_ENDPOINT_VERSION",
   "COMPLETION_CONTRACT_ID",
   "COMPLETION_FAILURE_CATEGORIES",
   "COMPLETION_GATE_LIFECYCLES",
@@ -42,6 +43,7 @@ const EXPECTED_RUNTIME_EXPORTS = Object.freeze([
   "LOCAL_PROJECT_POLICY_ADAPTER_ID",
   "LOCAL_PROJECT_POLICY_ADAPTER_VERSION",
   "MANUAL_EXECUTION_AUTHORIZATION_ACTIONS",
+  "MANUAL_EXECUTION_ENDPOINT_VERSION",
   "MANUAL_AUTHORIZATION_ACTIONS",
   "MANUAL_OUTCOME_CONTROL_ID",
   "ManualExecutionBackend",
@@ -192,7 +194,7 @@ test("the package exposes the local explicit-Manual and injected Phase 3 product
   ]);
 });
 
-test("the product API has one current major while ato.execution/v1 stays independent", () => {
+test("the product API has one current major while ato.execution/v2 stays independent", () => {
   const cliModelSource = readFileSync(path.join(repoRoot, "src", "cli-api-model.ts"), "utf8");
   const cliSources = [
     "cli-api-model.ts",
@@ -208,7 +210,7 @@ test("the product API has one current major while ato.execution/v1 stays indepen
     `${cliSources}\n${indexSource}`,
     /ato\.api\/v2|CLI_API_V2_VERSION|PUBLIC_ERROR_TABLE_V2|PublicErrorCodeV2|AnyPublicErrorCode|V2_ONLY_COMMAND_SPECS|localPhase[12]ProductCliImplemented/u,
   );
-  assert.match(executionPortSource, /ato\.execution\/v1/u);
+  assert.match(executionPortSource, /ato\.execution\/v2/u);
   assert.doesNotMatch(executionPortSource, /ato\.api\/v[12]/u);
 });
 
@@ -223,10 +225,6 @@ test("the Domain Core production owner has no module, I/O, clock, random, proces
     source,
     /node:|sqlite|persistence|dispatcher|ports?\/|adapters?\/|codex|openai|\bgit\b|\bcli\b|\bmcp\b|scheduler|observability|harness/iu,
   );
-
-  const packageJson = JSON.parse(readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-  assert.equal(packageJson.dependencies, undefined);
-  assert.deepEqual(packageJson.devDependencies, { typescript: "5.9.3" });
 });
 
 test("equal explicit inputs produce equal frozen outputs without mutating caller-owned values", () => {

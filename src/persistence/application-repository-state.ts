@@ -32,6 +32,7 @@ import { runReadSnapshot } from "./database.ts";
 import type { SqliteDatabase } from "./database.ts";
 import { persistenceFailure } from "./errors.ts";
 import { applicationStateSha256 } from "./application-repository-digest.ts";
+import { codexTerminalReceiptSha256 } from "./codex-receipt-digest.ts";
 import { applicationAuditKind } from "./application-repository-model.ts";
 import type {
   ApplicationLifecycleAuthorization,
@@ -64,6 +65,8 @@ import {
   readExecutionTerminalStates,
   readManualTurns,
   readManualBackendOperations,
+  readCodexTurns,
+  readCodexBackendOperations,
   readCompletionDecisions,
   readManualCompletionDecisions,
   readDispatcherTriggerRequests,
@@ -2072,6 +2075,8 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
   const executionTerminalStates = readExecutionTerminalStates(database);
   const manualTurns = readManualTurns(database);
   const manualBackendOperations = readManualBackendOperations(database);
+  const codexTurns = readCodexTurns(database);
+  const codexBackendOperations = readCodexBackendOperations(database);
   const completionDecisions = readCompletionDecisions(database);
   const manualCompletionDecisions = readManualCompletionDecisions(database);
   const dispatcherTriggerRequests = readDispatcherTriggerRequests(database);
@@ -2635,6 +2640,7 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
   const receiptById = new Map(executionReceipts.map((receipt) => [receipt.verifiedReceiptId, receipt]));
   const finalizationById = new Map(executionFinalizations.map((finalization) => [finalization.finalizationId, finalization]));
   const manualTurnByBackendId = new Map(manualTurns.map((turn) => [turn.backendExecutionId, turn]));
+  const codexTurnByBackendId = new Map(codexTurns.map((turn) => [turn.backendExecutionId, turn]));
   if (
     executionRequestById.size !== executionOperationRequests.length ||
     executionDecisionById.size !== executionAuthorizationDecisions.length ||
@@ -2642,8 +2648,13 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     intentById.size !== executionIntents.length ||
     authorizationBindingByDecision.size !== executionIntentAuthorizationBindings.length ||
     receiptById.size !== executionReceipts.length ||
-    finalizationById.size !== executionFinalizations.length || manualTurnByBackendId.size !== manualTurns.length
+    finalizationById.size !== executionFinalizations.length || manualTurnByBackendId.size !== manualTurns.length ||
+    codexTurnByBackendId.size !== codexTurns.length
   ) throw persistenceFailure("CORRUPT_ROW", "Phase 2 execution identity inventory is not unique");
+  const manualExecutionIds = new Set(manualTurns.map((turn) => turn.executionId));
+  if (codexTurns.some((turn) => manualExecutionIds.has(turn.executionId))) {
+    throw persistenceFailure("CORRUPT_ROW", "One execution attempt cannot own both Manual and Codex turns");
+  }
   for (const request of executionOperationRequests) {
     const execution = executionById.get(request.targetExecutionId);
     const decision = executionDecisionByRequest.get(request.requestId);
@@ -2721,6 +2732,34 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
       (!hasSuccessorSource && (intent.sourceExecutionRevision !== null || intent.sourceAttemptNumber !== null ||
         intent.sourceFencingToken !== null || intent.sourceObservationNumber !== null))
     ) throw persistenceFailure("CORRUPT_ROW", "Execution intent semantic, authorization, or revision binding is inconsistent");
+    if (intent.backendKind === "codex-sdk") {
+      if (intent.workspaceId === null || intent.workspaceGeneration === null || intent.workspaceRevision === null ||
+        intent.workspaceRootKey === null || intent.ownershipBindingSha256 === null ||
+        intent.workspaceHeadObjectId === null) {
+        throw persistenceFailure("CORRUPT_ROW", "Codex intent workspace tuple is incomplete");
+      }
+      const workspaceRevision = intent.workspaceRevision;
+      const workspace = workspaceGenerations.find((candidate) =>
+        candidate.workspaceId === intent.workspaceId && candidate.generation === intent.workspaceGeneration
+      );
+      const workspaceReceipt = workspaceReceipts.find((candidate) => {
+        const finalization = workspaceFinalizations.find((record) =>
+          record.intentId === candidate.intentId && record.verifiedReceiptId === candidate.verifiedReceiptId &&
+          record.outcome === "succeeded" && record.resultingGenerationStatus === "ready" &&
+          record.resultingGenerationRevision === workspaceRevision
+        );
+        return candidate.workspaceId === intent.workspaceId && candidate.generation === intent.workspaceGeneration &&
+          candidate.outcome === "succeeded" && candidate.externalState === "complete" &&
+          candidate.headObjectId === intent.workspaceHeadObjectId &&
+          candidate.ownershipBindingSha256 === intent.ownershipBindingSha256 && finalization !== undefined;
+      });
+      if (
+        workspace === undefined || workspaceReceipt === undefined || workspace.revision < workspaceRevision ||
+        workspace.projectId !== intent.projectId || workspace.taskId !== intent.taskId ||
+        workspace.executionId !== intent.executionId || workspace.attemptNumber !== intent.attemptNumber ||
+        workspace.fencingToken !== intent.fencingToken || workspace.workspaceRootKey !== intent.workspaceRootKey
+      ) throw persistenceFailure("CORRUPT_ROW", "Codex intent workspace evidence is absent or stale");
+    }
     operationIds.add(intent.operationId);
     operationIdempotency.add(intent.idempotencyKey);
     const bindings = executionIntentAuthorizationBindings
@@ -2854,6 +2893,104 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
         turn.predecessorThreadId !== sourceTurn.threadId
       ))
     ) throw persistenceFailure("CORRUPT_ROW", "Manual backend operation is not bound to its core intent and turn");
+  }
+  for (const turn of codexTurns) {
+    const intent = intentById.get(turn.originIntentId);
+    const execution = executionById.get(turn.executionId);
+    const task = taskById.get(turn.taskId);
+    const project = projects.find((candidate) => candidate.projectId === turn.projectId);
+    const effectAuthorization = authorizationBindingByDecision.get(turn.originAuthorizationDecisionId);
+    const predecessor = turn.predecessorBackendExecutionId === null
+      ? undefined : codexTurnByBackendId.get(turn.predecessorBackendExecutionId);
+    const workspace = workspaceGenerations.find((candidate) =>
+      candidate.workspaceId === turn.workspaceId && candidate.generation === turn.workspaceGeneration
+    );
+    const terminalOperations = codexBackendOperations.filter((candidate) =>
+      candidate.backendExecutionId === turn.backendExecutionId
+    );
+    const terminalOperation = terminalOperations[0];
+    if (
+      intent === undefined || intent.backendKind !== "codex-sdk" ||
+      intent.intentId !== turn.originIntentId || intent.operationId !== turn.originOperationId ||
+      intent.idempotencyKey !== turn.startIdempotencyKey || intent.adapterId.length === 0 ||
+      effectAuthorization?.intentId !== intent.intentId ||
+      effectAuthorization.phase !== "act" || effectAuthorization.decisionId !== turn.originAuthorizationDecisionId ||
+      execution === undefined || execution.taskId !== turn.taskId || execution.revision < turn.executionRevision ||
+      execution.attemptNumber !== turn.attemptNumber || execution.fencingToken !== turn.fencingToken ||
+      task === undefined || task.projectId !== turn.projectId || task.revision < turn.taskRevision ||
+      project === undefined || project.resourceRevision < turn.projectResourceRevision ||
+      project.configRevision < turn.projectConfigRevision || turn.updatedAt < turn.createdAt ||
+      intent.projectId !== turn.projectId || intent.projectResourceRevision !== turn.projectResourceRevision ||
+      intent.projectConfigRevision !== turn.projectConfigRevision || intent.taskId !== turn.taskId ||
+      intent.taskRevision !== turn.taskRevision || intent.inputReference !== turn.inputReference ||
+      intent.executionId !== turn.executionId || intent.executionRevision !== turn.executionRevision ||
+      intent.attemptNumber !== turn.attemptNumber || intent.fencingToken !== turn.fencingToken ||
+      intent.policyBindingReference !== turn.policyBindingReference || intent.workspaceContractId !== turn.workspaceContractId ||
+      intent.workspaceId !== turn.workspaceId || intent.workspaceGeneration !== turn.workspaceGeneration ||
+      intent.workspaceRevision !== turn.workspaceRevision || intent.workspaceRootKey !== turn.workspaceRootKey ||
+      intent.ownershipBindingSha256 !== turn.ownershipBindingSha256 ||
+      intent.workspaceHeadObjectId !== turn.workspaceHeadObjectId || workspace === undefined ||
+      workspace.revision < turn.workspaceRevision || workspace.projectId !== turn.projectId ||
+      workspace.taskId !== turn.taskId || workspace.executionId !== turn.executionId ||
+      workspace.attemptNumber !== turn.attemptNumber || workspace.fencingToken !== turn.fencingToken ||
+      workspace.workspaceRootKey !== turn.workspaceRootKey ||
+      (turn.threadId === null && turn.lifecycle !== "unknown") ||
+      (turn.predecessorBackendExecutionId === null) !== (turn.predecessorThreadId === null) ||
+      !["start", "resume", "retry"].includes(intent.operationKind) ||
+      (intent.operationKind === "start") !== (turn.predecessorBackendExecutionId === null) ||
+      (turn.predecessorBackendExecutionId !== null && (
+        predecessor === undefined || predecessor.threadId === null ||
+        predecessor.threadId !== turn.predecessorThreadId || predecessor.executionId !== intent.sourceExecutionId ||
+        predecessor.threadId !== turn.threadId || execution.supersedesExecutionId !== predecessor.executionId ||
+        execution.attemptNumber !== predecessor.attemptNumber + 1 ||
+        execution.fencingToken !== predecessor.fencingToken + 1
+      )) ||
+      terminalOperations.length > 1 ||
+      (["turn_succeeded", "failed"].includes(turn.lifecycle)) !== (terminalOperation !== undefined)
+    ) throw persistenceFailure("CORRUPT_ROW", "Codex turn semantic, workspace, or terminal binding is inconsistent");
+  }
+  for (const operation of codexBackendOperations) {
+    const intent = intentById.get(operation.intentId);
+    const turn = codexTurnByBackendId.get(operation.backendExecutionId);
+    const source = operation.sourceBackendExecutionId === null
+      ? undefined : codexTurnByBackendId.get(operation.sourceBackendExecutionId);
+    const effectAuthorization = authorizationBindingByDecision.get(operation.authorizationDecisionId);
+    const effectDecision = executionDecisionById.get(operation.authorizationDecisionId);
+    const effectRequest = effectDecision === undefined ? undefined : executionRequestById.get(effectDecision.requestId);
+    const receiptSha256 = intent === undefined || turn === undefined || effectRequest === undefined
+      ? null
+      : codexTerminalReceiptSha256(Object.freeze({
+        receiptId: operation.receiptId,
+        correlationId: effectRequest.correlationId,
+        adapterId: intent.adapterId,
+        adapterVersion: intent.adapterVersion,
+        observedExecutionId: intent.executionId,
+        operationId: intent.operationId,
+        intentId: intent.intentId,
+        idempotencyKey: intent.idempotencyKey,
+        operation: intent.operationKind === "start" ? "start" as const : "resume" as const,
+        turn,
+      }));
+    if (
+      intent === undefined || intent.backendKind !== "codex-sdk" || turn === undefined || turn.threadId === null ||
+      operation.intentId !== turn.originIntentId || operation.backendOperationId !== turn.originOperationId ||
+      operation.idempotencyKey !== turn.startIdempotencyKey ||
+      operation.authorizationDecisionId !== turn.originAuthorizationDecisionId ||
+      effectAuthorization?.intentId !== intent.intentId || effectAuthorization.phase !== "act" ||
+      operation.operationKind !== intent.operationKind || operation.expectedFencingToken !== intent.fencingToken ||
+      operation.expectedFencingToken !== turn.fencingToken || operation.threadId !== turn.threadId ||
+      operation.postRevision !== turn.revision || operation.resultLifecycle !== turn.lifecycle ||
+      operation.terminalSignal !== turn.terminalSignal || operation.createdAt < effectAuthorization.createdAt ||
+      effectRequest === undefined || receiptSha256 === null || operation.receiptSha256 !== receiptSha256 ||
+      (operation.sourceBackendExecutionId === null) !== (operation.sourceThreadId === null) ||
+      (operation.operationKind === "start") !== (operation.sourceBackendExecutionId === null) ||
+      (operation.sourceBackendExecutionId !== null && (
+        source === undefined || source.threadId !== operation.sourceThreadId || source.threadId !== operation.threadId ||
+        source.executionId !== intent.sourceExecutionId ||
+        turn.predecessorBackendExecutionId !== source.backendExecutionId ||
+        turn.predecessorThreadId !== source.threadId
+      )) || (operation.operationKind === "retry" && source?.lifecycle !== "failed")
+    ) throw persistenceFailure("CORRUPT_ROW", "Codex backend operation is not bound to its core intent and turn");
   }
   const manualConfirmationIds = new Set(executionIntents
     .map((intent) => intent.confirmationId)
@@ -3165,7 +3302,8 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     executionOperationRequests, executionAuthorizationDecisions, executionOperationAudit,
     executionIntents, executionIntentAuthorizationBindings, executionObservations,
     executionReceipts, executionFinalizations, executionTerminalStates,
-    manualTurns, manualBackendOperations, completionDecisions, manualCompletionDecisions,
+    manualTurns, manualBackendOperations, codexTurns, codexBackendOperations,
+    completionDecisions, manualCompletionDecisions,
     dispatcherTriggerRequests, dispatcherAuthorizationDecisions, dispatcherRuns, dispatcherAudit,
     dispatcherReconciliationItems, dispatcherReconciliationSummaries,
     dispatcherMemberships, dispatcherMembers,

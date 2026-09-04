@@ -30,7 +30,9 @@ import { PersistenceError } from "./persistence/errors.ts";
 import type { PersistenceStore } from "./persistence/store.ts";
 import { canonicalJson, sha256 } from "./persistence/values.ts";
 import {
+  CODEX_EXECUTION_ENDPOINT_VERSION,
   EXECUTION_CONTRACT_ID,
+  MANUAL_EXECUTION_ENDPOINT_VERSION,
   MANUAL_OUTCOME_CONTROL_ID,
   parseExecutionReceipt,
   validateManualOutcomeControlResult,
@@ -209,6 +211,39 @@ export interface ReliableExecutionService {
   reconcile(command: ExecutionLoopInspectCommand): ReliableExecutionResult;
 }
 
+/** Package-private composition input for the non-product Codex harness. */
+export interface CodexExecutionWorkspaceContext {
+  readonly workspaceContractId: "ato.workspace/v2";
+  readonly workspaceId: string;
+  readonly workspaceGeneration: number;
+  readonly workspaceRevision: number;
+  readonly workspaceRootKey: string;
+  readonly ownershipBindingSha256: string;
+  readonly workspaceHeadObjectId: string;
+}
+
+export type CodexExecutionStartCommand = Readonly<ExecutionLoopStartCommand & {
+  readonly workspace: CodexExecutionWorkspaceContext;
+}>;
+export type CodexExecutionInspectCommand = Readonly<ExecutionLoopInspectCommand & {
+  readonly workspace: CodexExecutionWorkspaceContext;
+}>;
+export type CodexExecutionCancelCommand = Readonly<ExecutionLoopCancelCommand & {
+  readonly workspace: CodexExecutionWorkspaceContext;
+}>;
+
+/**
+ * Deliberately not re-exported by the supported package root. Continuation
+ * allocation remains an injected Phase-3 orchestration concern because a new
+ * fenced attempt must own a ready workspace before its SDK effect.
+ */
+export interface InjectedCodexReliableExecutionService {
+  start(command: CodexExecutionStartCommand): Promise<ReliableExecutionResult>;
+  inspect(command: CodexExecutionInspectCommand): Promise<ReliableExecutionResult>;
+  requestCancel(command: CodexExecutionCancelCommand): Promise<ReliableExecutionResult>;
+  reconcile(command: CodexExecutionInspectCommand): Promise<ReliableExecutionResult>;
+}
+
 export interface ReliableExecutionTestHooks {
   afterStage?(stage: string): void;
 }
@@ -326,6 +361,45 @@ function parseOperationCommand(value: unknown): OperationCommand | null {
       ? Object.freeze(record) as unknown as ManualOutcomeCommand : null;
   }
   return null;
+}
+
+type CodexOperationCommand = CodexExecutionStartCommand | CodexExecutionInspectCommand | CodexExecutionCancelCommand;
+
+function parseCodexWorkspaceContext(value: unknown): CodexExecutionWorkspaceContext | null {
+  const record = exactRecord(value, [
+    "ownershipBindingSha256", "workspaceContractId", "workspaceGeneration", "workspaceHeadObjectId",
+    "workspaceId", "workspaceRevision", "workspaceRootKey",
+  ]);
+  if (
+    record === null || record.workspaceContractId !== "ato.workspace/v2" ||
+    !operationalIdentifier(record.workspaceId) || !positive(record.workspaceGeneration) ||
+    !positive(record.workspaceRevision) || !operationalIdentifier(record.workspaceRootKey) ||
+    typeof record.ownershipBindingSha256 !== "string" || !/^[0-9A-F]{64}$/u.test(record.ownershipBindingSha256) ||
+    typeof record.workspaceHeadObjectId !== "string" || !/^[0-9a-f]{40}$/u.test(record.workspaceHeadObjectId)
+  ) return null;
+  return Object.freeze(record as unknown as CodexExecutionWorkspaceContext);
+}
+
+function parseCodexOperationCommand(value: unknown): CodexOperationCommand | null {
+  const kind = commandKind(value);
+  const additional = kind === "execution.start" ? [] : kind === "execution.inspect"
+    ? ["backendExecutionId", "lastObservationNumber", "threadId"]
+    : kind === "execution.cancel"
+      ? ["backendExecutionId", "expectedLifecycle", "lastObservationNumber", "reasonCode", "threadId"]
+      : null;
+  if (additional === null) return null;
+  const record = exactRecord(value, [...BASE_KEYS, ...additional, "workspace"]);
+  const workspace = record === null ? null : parseCodexWorkspaceContext(record.workspace);
+  if (record === null || workspace === null || !/^task-sha256:[0-9a-f]{64}$/u.test(String(record.inputReference))) {
+    return null;
+  }
+  const { workspace: _workspace, ...plain } = record;
+  const command = parseOperationCommand(Object.freeze(plain));
+  if (command === null || command.kind !== kind || command.kind === "manual.turn.report" ||
+    command.kind === "execution.resume" || command.kind === "execution.retry") return null;
+  if (command.kind === "execution.cancel" &&
+    !["active", "turn_succeeded", "failed"].includes(command.expectedLifecycle)) return null;
+  return Object.freeze({ ...command, workspace }) as CodexOperationCommand;
 }
 
 function parseCompletionCommand(value: unknown): ManualCompletionCommand | null {
@@ -647,7 +721,64 @@ function persistStageAuthorization(
   });
 }
 
-function intentTupleMatches(state: ApplicationState, intent: ExecutionOperationIntent, command: OperationCommand): boolean {
+function workspaceContextMatchesIntent(
+  intent: ExecutionOperationIntent,
+  workspace: CodexExecutionWorkspaceContext | null,
+): boolean {
+  if (workspace === null) {
+    return intent.backendKind === "manual-local" && intent.workspaceMode === "none" &&
+      intent.workspaceContractId === null && intent.workspaceId === null && intent.workspaceGeneration === null &&
+      intent.workspaceRevision === null && intent.workspaceRootKey === null &&
+      intent.ownershipBindingSha256 === null && intent.workspaceHeadObjectId === null;
+  }
+  return intent.backendKind === "codex-sdk" && intent.workspaceMode === "owned" &&
+    intent.workspaceContractId === workspace.workspaceContractId && intent.workspaceId === workspace.workspaceId &&
+    intent.workspaceGeneration === workspace.workspaceGeneration && intent.workspaceRevision === workspace.workspaceRevision &&
+    intent.workspaceRootKey === workspace.workspaceRootKey &&
+    intent.ownershipBindingSha256 === workspace.ownershipBindingSha256 &&
+    intent.workspaceHeadObjectId === workspace.workspaceHeadObjectId;
+}
+
+function currentCodexWorkspaceMatches(
+  state: ApplicationState,
+  command: OperationCommand,
+  workspace: CodexExecutionWorkspaceContext,
+): boolean {
+  const historicalObservation = command.kind === "execution.inspect" || command.kind === "execution.cancel";
+  const generation = state.workspaceGenerations.find((candidate) =>
+    candidate.workspaceId === workspace.workspaceId && candidate.generation === workspace.workspaceGeneration
+  );
+  const receipt = state.workspaceReceipts.find((candidate) => {
+    const finalization = state.workspaceFinalizations.find((record) =>
+      record.intentId === candidate.intentId && record.verifiedReceiptId === candidate.verifiedReceiptId &&
+      record.outcome === "succeeded" && record.resultingGenerationStatus === "ready" &&
+      record.resultingGenerationRevision === workspace.workspaceRevision
+    );
+    return candidate.workspaceId === workspace.workspaceId && candidate.generation === workspace.workspaceGeneration &&
+      candidate.outcome === "succeeded" && candidate.externalState === "complete" &&
+      candidate.headObjectId === workspace.workspaceHeadObjectId &&
+      candidate.ownershipBindingSha256 === workspace.ownershipBindingSha256 && finalization !== undefined;
+  });
+  return generation !== undefined && generation.status === "ready" && generation.revision === workspace.workspaceRevision &&
+    generation.contractId === workspace.workspaceContractId && generation.projectId === command.projectId &&
+    generation.projectResourceRevision === command.expectedProjectResourceRevision &&
+    generation.projectConfigRevision === command.expectedProjectConfigRevision && generation.taskId === command.taskId &&
+    (historicalObservation
+      ? generation.taskRevision <= command.expectedTaskRevision
+      : generation.taskRevision === command.expectedTaskRevision) && generation.executionId === command.executionId &&
+    (historicalObservation
+      ? generation.executionRevision <= command.expectedExecutionRevision
+      : generation.executionRevision === command.expectedExecutionRevision) &&
+    generation.attemptNumber === command.expectedAttemptNumber && generation.fencingToken === command.expectedFencingToken &&
+    generation.workspaceRootKey === workspace.workspaceRootKey && receipt !== undefined;
+}
+
+function intentTupleMatches(
+  state: ApplicationState,
+  intent: ExecutionOperationIntent,
+  command: OperationCommand,
+  workspace: CodexExecutionWorkspaceContext | null = null,
+): boolean {
   const expectedTaskRevision = command.kind === "execution.resume" || command.kind === "execution.retry"
     ? command.expectedTaskRevision + 1 : command.expectedTaskRevision;
   const successor = intent.sourceExecutionId !== null;
@@ -668,7 +799,7 @@ function intentTupleMatches(state: ApplicationState, intent: ExecutionOperationI
     intent.taskRevision !== expectedTaskRevision || intent.inputReference !== command.inputReference ||
     !executionTupleMatches ||
     intent.contractId !== EXECUTION_CONTRACT_ID || intent.policyBindingReference !== command.policyBindingReference ||
-    intent.workspaceMode !== "none" || intent.requestedDeadline !== command.requestedDeadline
+    !workspaceContextMatchesIntent(intent, workspace) || intent.requestedDeadline !== command.requestedDeadline
   ) return false;
   if (command.kind === "execution.start") return intent.backendExecutionId === null && intent.threadId === null;
   if (command.kind === "execution.inspect") {
@@ -709,7 +840,10 @@ function viewForIntent(state: ApplicationState, intent: ExecutionOperationIntent
   const receipt = state.executionReceipts.find((candidate) => candidate.intentId === intent.intentId) ?? null;
   const finalization = state.executionFinalizations.find((candidate) => candidate.intentId === intent.intentId) ?? null;
   const terminal = state.executionTerminalStates.find((candidate) => candidate.executionId === intent.executionId) ?? null;
-  const turn = state.manualTurns.find((candidate) => candidate.executionId === intent.executionId) ?? null;
+  const turn = intent.backendKind === "manual-local"
+    ? state.manualTurns.find((candidate) => candidate.executionId === intent.executionId) ?? null
+    : state.codexTurns.find((candidate) => candidate.originIntentId === intent.intentId) ??
+      state.codexTurns.find((candidate) => candidate.executionId === intent.executionId) ?? null;
   const finalizedAmbiguity = finalization?.outcome === "waiting" &&
     task.waiting?.reason === "ambiguous_external_state" && task.waiting.executionId === intent.executionId;
   const lifecycle: ReliableExecutionView["lifecycle"] = terminal?.status ??
@@ -764,6 +898,32 @@ function manualTurnMatches(state: ApplicationState, command: Exclude<OperationCo
     turn.executionId === command.executionId && turn.executionRevision <= command.expectedExecutionRevision &&
     turn.attemptNumber === command.expectedAttemptNumber && turn.fencingToken === command.expectedFencingToken &&
     turn.policyBindingReference === command.policyBindingReference && turn.workspaceMode === "none";
+}
+
+function codexTurnMatches(
+  state: ApplicationState,
+  command: ExecutionLoopInspectCommand | ExecutionLoopCancelCommand,
+  workspace: CodexExecutionWorkspaceContext,
+): boolean {
+  const turn = state.codexTurns.find((candidate) => candidate.backendExecutionId === command.backendExecutionId);
+  const revisionMatches = turn === undefined || (command.kind === "execution.inspect"
+    ? command.lastObservationNumber <= turn.revision
+    : command.lastObservationNumber === turn.revision);
+  const lifecycleMatches = command.kind !== "execution.cancel" || turn === undefined ||
+    command.expectedLifecycle === turn.lifecycle;
+  return turn !== undefined && turn.threadId !== null && turn.threadId === command.threadId &&
+    revisionMatches && lifecycleMatches && turn.projectId === command.projectId &&
+    turn.projectResourceRevision === command.expectedProjectResourceRevision &&
+    turn.projectConfigRevision === command.expectedProjectConfigRevision && turn.taskId === command.taskId &&
+    turn.taskRevision <= command.expectedTaskRevision && turn.inputReference === command.inputReference &&
+    turn.executionId === command.executionId && turn.executionRevision <= command.expectedExecutionRevision &&
+    turn.attemptNumber === command.expectedAttemptNumber && turn.fencingToken === command.expectedFencingToken &&
+    turn.policyBindingReference === command.policyBindingReference &&
+    turn.workspaceContractId === workspace.workspaceContractId && turn.workspaceId === workspace.workspaceId &&
+    turn.workspaceGeneration === workspace.workspaceGeneration && turn.workspaceRevision === workspace.workspaceRevision &&
+    turn.workspaceRootKey === workspace.workspaceRootKey &&
+    turn.ownershipBindingSha256 === workspace.ownershipBindingSha256 &&
+    turn.workspaceHeadObjectId === workspace.workspaceHeadObjectId;
 }
 
 function dependentWaiting(state: ApplicationState, taskId: string): readonly Readonly<{ taskId: string; waiting: WaitingMetadataInput }>[] {
@@ -1144,10 +1304,18 @@ function prepareSuccessorOperation(
         sourceFencingToken: command.expectedFencingToken,
         sourceObservationNumber: command.lastObservationNumber,
         contractId: EXECUTION_CONTRACT_ID,
+        backendKind: backend.backendKind,
         adapterId: backend.adapterId,
         adapterVersion: backend.adapterVersion,
         policyBindingReference: command.policyBindingReference,
         workspaceMode: "none",
+        workspaceContractId: null,
+        workspaceId: null,
+        workspaceGeneration: null,
+        workspaceRevision: null,
+        workspaceRootKey: null,
+        ownershipBindingSha256: null,
+        workspaceHeadObjectId: null,
         backendExecutionId: command.backendExecutionId,
         threadId: command.threadId,
         previousReceiptId: command.previousTurnReceiptId,
@@ -1197,10 +1365,14 @@ function prepareOperation(
   backend: ExecutionBackend,
   confirmationId: string | null,
   options: BindExecutionOptions = Object.freeze({}),
+  workspace: CodexExecutionWorkspaceContext | null = null,
 ): PreparedOperation | ReliableExecutionFailure {
   try {
     return withApplicationTransaction(store, (transaction) => {
       const state = transaction.read();
+      if ((backend.backendKind === "manual-local") !== (workspace === null)) {
+        return failed("INVALID_INPUT", "Execution backend and workspace mode do not match", identity);
+      }
       const bound = bindExecution(
         state,
         command,
@@ -1211,11 +1383,20 @@ function prepareOperation(
       if (command.requestedDeadline <= identity.now) return failed("INVALID_INPUT", "Execution deadline is not in the future", identity);
       if (command.kind === "execution.start") {
         if (bound.task.state !== "running") return failed("TASK_NOT_ELIGIBLE", "Start requires a running claimed Task", identity);
-        if (state.manualTurns.some((turn) => turn.executionId === command.executionId)) {
-          return failed("IDEMPOTENCY_CONFLICT", "Execution already has a Manual turn", identity);
+        const existingTurn = state.manualTurns.some((turn) => turn.executionId === command.executionId) ||
+          state.codexTurns.some((turn) => turn.executionId === command.executionId);
+        if (existingTurn) {
+          return failed("IDEMPOTENCY_CONFLICT", "Execution already has a backend turn", identity);
         }
-      } else if (!manualTurnMatches(state, command)) {
-        return failed("STALE_REVISION", "Manual turn tuple is stale", identity);
+      } else if (backend.backendKind === "manual-local") {
+        if (!manualTurnMatches(state, command)) return failed("STALE_REVISION", "Manual turn tuple is stale", identity);
+      } else if (workspace === null ||
+        (command.kind !== "execution.inspect" && command.kind !== "execution.cancel") ||
+        !codexTurnMatches(state, command, workspace)) {
+        return failed("STALE_REVISION", "Codex turn tuple is stale", identity);
+      }
+      if (workspace !== null && !currentCodexWorkspaceMatches(state, command, workspace)) {
+        return failed("STALE_REVISION", "Codex owned workspace tuple is stale", identity);
       }
       if ((command.kind === "execution.resume" || command.kind === "execution.retry") && bound.task.state !== "waiting") {
         return failed("TASK_NOT_ELIGIBLE", "Continuation requires a waiting Task", identity);
@@ -1292,10 +1473,18 @@ function prepareOperation(
         sourceFencingToken: null,
         sourceObservationNumber: null,
         contractId: EXECUTION_CONTRACT_ID,
+        backendKind: backend.backendKind,
         adapterId: backend.adapterId,
         adapterVersion: backend.adapterVersion,
         policyBindingReference: command.policyBindingReference,
-        workspaceMode: "none",
+        workspaceMode: workspace === null ? "none" : "owned",
+        workspaceContractId: workspace?.workspaceContractId ?? null,
+        workspaceId: workspace?.workspaceId ?? null,
+        workspaceGeneration: workspace?.workspaceGeneration ?? null,
+        workspaceRevision: workspace?.workspaceRevision ?? null,
+        workspaceRootKey: workspace?.workspaceRootKey ?? null,
+        ownershipBindingSha256: workspace?.ownershipBindingSha256 ?? null,
+        workspaceHeadObjectId: workspace?.workspaceHeadObjectId ?? null,
         backendExecutionId: command.kind === "execution.start" ? null : command.backendExecutionId,
         threadId: command.kind === "execution.start" ? null : command.threadId,
         previousReceiptId: command.kind === "execution.resume" || command.kind === "execution.retry"
@@ -1417,7 +1606,7 @@ function semanticForIntent(
     sequence.lastAttemptNumber !== intent.attemptNumber || sequence.currentFencingToken !== intent.fencingToken) {
     return failed(execution.fencingToken !== intent.fencingToken ? "STALE_FENCE" : "STALE_REVISION", "Execution semantic tuple changed");
   }
-  return Object.freeze({
+  const common = Object.freeze({
     projectId: intent.projectId,
     projectResourceRevision: intent.projectResourceRevision,
     projectConfigRevision: intent.projectConfigRevision,
@@ -1429,7 +1618,59 @@ function semanticForIntent(
     attemptNumber: intent.attemptNumber,
     fencingToken: intent.fencingToken,
     policyBindingReference: intent.policyBindingReference,
-    workspaceMode: "none",
+  });
+  if (intent.backendKind === "manual-local" && intent.workspaceMode === "none" &&
+    intent.workspaceContractId === null && intent.workspaceId === null && intent.workspaceGeneration === null &&
+    intent.workspaceRevision === null && intent.workspaceRootKey === null &&
+    intent.ownershipBindingSha256 === null && intent.workspaceHeadObjectId === null) {
+    return Object.freeze({ ...common, backendKind: "manual-local" as const, workspaceMode: "none" as const });
+  }
+  if (
+    intent.backendKind !== "codex-sdk" || intent.workspaceMode !== "owned" ||
+    intent.workspaceContractId !== "ato.workspace/v2" || intent.workspaceId === null ||
+    intent.workspaceGeneration === null || intent.workspaceRevision === null || intent.workspaceRootKey === null ||
+    intent.ownershipBindingSha256 === null || intent.workspaceHeadObjectId === null
+  ) return failed("ADAPTER_FAILURE", "Execution context has an invalid backend/workspace discriminator");
+  const workspace = state.workspaceGenerations.find((candidate) =>
+    candidate.workspaceId === intent.workspaceId && candidate.generation === intent.workspaceGeneration
+  );
+  const workspaceReceipt = state.workspaceReceipts.find((candidate) => {
+    const finalization = state.workspaceFinalizations.find((record) =>
+      record.intentId === candidate.intentId && record.verifiedReceiptId === candidate.verifiedReceiptId &&
+      record.outcome === "succeeded" && record.resultingGenerationStatus === "ready" &&
+      record.resultingGenerationRevision === intent.workspaceRevision
+    );
+    return candidate.workspaceId === intent.workspaceId && candidate.generation === intent.workspaceGeneration &&
+      candidate.outcome === "succeeded" && candidate.externalState === "complete" &&
+      candidate.headObjectId === intent.workspaceHeadObjectId &&
+      candidate.ownershipBindingSha256 === intent.ownershipBindingSha256 && finalization !== undefined;
+  });
+  const historicalWorkspaceBinding = intent.operationKind === "inspect" || intent.operationKind === "request_cancel";
+  if (
+    workspace === undefined || workspace.status !== "ready" || workspace.revision !== intent.workspaceRevision ||
+    workspace.contractId !== intent.workspaceContractId || workspace.projectId !== intent.projectId ||
+    workspace.projectResourceRevision !== intent.projectResourceRevision ||
+    workspace.projectConfigRevision !== intent.projectConfigRevision || workspace.taskId !== intent.taskId ||
+    (historicalWorkspaceBinding
+      ? workspace.taskRevision > intent.taskRevision
+      : workspace.taskRevision !== intent.taskRevision) || workspace.executionId !== intent.executionId ||
+    (historicalWorkspaceBinding
+      ? workspace.executionRevision > intent.executionRevision
+      : workspace.executionRevision !== intent.executionRevision) || workspace.attemptNumber !== intent.attemptNumber ||
+    workspace.fencingToken !== intent.fencingToken || workspace.workspaceRootKey !== intent.workspaceRootKey ||
+    workspaceReceipt === undefined
+  ) return failed("STALE_REVISION", "Codex owned workspace tuple changed");
+  return Object.freeze({
+    ...common,
+    backendKind: "codex-sdk" as const,
+    workspaceMode: "owned" as const,
+    workspaceContractId: intent.workspaceContractId,
+    workspaceId: intent.workspaceId,
+    workspaceGeneration: intent.workspaceGeneration,
+    workspaceRevision: intent.workspaceRevision,
+    workspaceRootKey: intent.workspaceRootKey,
+    ownershipBindingSha256: intent.ownershipBindingSha256,
+    workspaceHeadObjectId: intent.workspaceHeadObjectId,
   });
 }
 
@@ -1568,6 +1809,57 @@ function authoritativeManualObservationMatches(
   return true;
 }
 
+function authoritativeCodexObservationMatches(
+  state: ApplicationState,
+  intent: ExecutionOperationIntent,
+  receipt: ExecutionInspectReceipt,
+): boolean {
+  const turn = state.codexTurns.find((candidate) => candidate.backendExecutionId === receipt.backendExecutionId);
+  const terminalCancelNoEffect = intent.operationKind === "request_cancel" &&
+    (intent.expectedLifecycle === "turn_succeeded" || intent.expectedLifecycle === "failed") &&
+    turn?.lifecycle === intent.expectedLifecycle;
+  const revisionMatches = intent.operationKind === "inspect" || terminalCancelNoEffect
+    ? turn !== undefined && turn.taskRevision <= intent.taskRevision &&
+      turn.executionRevision <= intent.executionRevision
+    : turn !== undefined && turn.taskRevision === intent.taskRevision &&
+      turn.executionRevision === intent.executionRevision;
+  if (
+    turn === undefined || turn.threadId === null || turn.threadId !== receipt.threadId ||
+    turn.executionId !== intent.executionId || turn.projectId !== intent.projectId ||
+    turn.projectResourceRevision !== intent.projectResourceRevision ||
+    turn.projectConfigRevision !== intent.projectConfigRevision || turn.taskId !== intent.taskId ||
+    !revisionMatches || turn.inputReference !== intent.inputReference || turn.attemptNumber !== intent.attemptNumber ||
+    turn.fencingToken !== intent.fencingToken || turn.policyBindingReference !== intent.policyBindingReference ||
+    turn.workspaceContractId !== intent.workspaceContractId || turn.workspaceId !== intent.workspaceId ||
+    turn.workspaceGeneration !== intent.workspaceGeneration || turn.workspaceRevision !== intent.workspaceRevision ||
+    turn.workspaceRootKey !== intent.workspaceRootKey ||
+    turn.ownershipBindingSha256 !== intent.ownershipBindingSha256 ||
+    turn.workspaceHeadObjectId !== intent.workspaceHeadObjectId || turn.revision !== receipt.observationNumber ||
+    turn.lifecycle !== receipt.lifecycle || turn.code !== receipt.code ||
+    turn.evidenceReference !== receipt.evidenceReference || turn.evidenceReference !== receipt.resultReference
+  ) return false;
+  if (intent.operationKind !== "inspect" && !terminalCancelNoEffect) {
+    const operation = state.codexBackendOperations.find((candidate) => candidate.intentId === intent.intentId);
+    if (
+      operation === undefined || operation.authorizationDecisionId !== intent.currentAuthorizationDecisionId ||
+      operation.backendExecutionId !== turn.backendExecutionId || operation.threadId !== turn.threadId ||
+      operation.expectedFencingToken !== intent.fencingToken || operation.postRevision !== turn.revision ||
+      operation.resultLifecycle !== turn.lifecycle || operation.terminalSignal !== turn.terminalSignal
+    ) return false;
+  }
+  return turn.lifecycle === "turn_succeeded" || turn.lifecycle === "failed";
+}
+
+function authoritativeObservationMatches(
+  state: ApplicationState,
+  intent: ExecutionOperationIntent,
+  receipt: ExecutionInspectReceipt,
+): boolean {
+  return intent.backendKind === "manual-local"
+    ? authoritativeManualObservationMatches(state, intent, receipt)
+    : authoritativeCodexObservationMatches(state, intent, receipt);
+}
+
 function independentlyInspect(
   store: PersistenceStore,
   intent: ExecutionOperationIntent,
@@ -1598,12 +1890,60 @@ function independentlyInspect(
     receipt === null || receipt.operation !== "inspect" || !receiptIntegrityMatches(receipt) ||
     receipt.contractId !== EXECUTION_CONTRACT_ID || receipt.adapterId !== backend.adapterId ||
     receipt.adapterVersion !== backend.adapterVersion || receipt.correlationId !== authorization.correlationId ||
+    receipt.backendKind !== intent.backendKind || receipt.observedEndpointVersion !==
+      (intent.backendKind === "manual-local" ? MANUAL_EXECUTION_ENDPOINT_VERSION : CODEX_EXECUTION_ENDPOINT_VERSION) ||
     receipt.queryId !== authorization.requestId || receipt.authorizationDecisionId !== authorization.decisionId ||
     receipt.observedExecutionId !== intent.executionId || receipt.backendExecutionId !== backendExecutionId ||
     receipt.threadId !== threadId || receipt.observationNumber < intent.lastObservationNumber
   ) return Object.freeze({ ok: false, error: null, ambiguous: true });
   const authoritativeState = readApplicationStateForOwner(store);
-  if (!authoritativeManualObservationMatches(authoritativeState, intent, receipt)) {
+  if (!authoritativeObservationMatches(authoritativeState, intent, receipt)) {
+    return Object.freeze({ ok: false, error: null, ambiguous: true });
+  }
+  return Object.freeze({ ok: true, receipt, authorization });
+}
+
+async function independentlyInspectAsync(
+  store: PersistenceStore,
+  intent: ExecutionOperationIntent,
+  context: TrustedContext,
+  backend: ExecutionBackend,
+  identityOverride: Readonly<{ backendExecutionId: string; threadId: string }> | null = null,
+  options: BindExecutionOptions = Object.freeze({}),
+): Promise<InspectionResult> {
+  const state = readApplicationStateForOwner(store);
+  const turn = state.codexTurns.find((candidate) => candidate.originIntentId === intent.intentId) ??
+    state.codexTurns.find((candidate) => candidate.executionId === intent.executionId);
+  const backendExecutionId = identityOverride?.backendExecutionId ?? turn?.backendExecutionId ?? intent.backendExecutionId;
+  const threadId = identityOverride?.threadId ?? turn?.threadId ?? intent.threadId;
+  if (backendExecutionId === null || threadId === null || backendExecutionId === undefined || threadId === undefined) {
+    return Object.freeze({ ok: false, error: null, ambiguous: true });
+  }
+  const authorization = authorizeInspection(store, intent.intentId, context, options);
+  if ("ok" in authorization) return Object.freeze({ ok: false, error: null, ambiguous: true });
+  const request = buildInspectRequest(intent, authorization, backendExecutionId, threadId);
+  let raw: unknown;
+  try {
+    raw = await backend.inspect(request);
+  } catch {
+    return Object.freeze({ ok: false, error: null, ambiguous: true });
+  }
+  const result = validateExecutionPortResult(raw);
+  if (result === null) return Object.freeze({ ok: false, error: null, ambiguous: true });
+  if (!result.ok) return Object.freeze({ ok: false, error: result.error, ambiguous: result.error.ambiguous });
+  const receipt = parseExecutionReceipt(result.receipt);
+  if (
+    receipt === null || receipt.operation !== "inspect" || !receiptIntegrityMatches(receipt) ||
+    receipt.contractId !== EXECUTION_CONTRACT_ID || receipt.adapterId !== backend.adapterId ||
+    receipt.adapterVersion !== backend.adapterVersion || receipt.backendKind !== "codex-sdk" ||
+    receipt.observedEndpointVersion !== CODEX_EXECUTION_ENDPOINT_VERSION ||
+    receipt.correlationId !== authorization.correlationId || receipt.queryId !== authorization.requestId ||
+    receipt.authorizationDecisionId !== authorization.decisionId || receipt.observedExecutionId !== intent.executionId ||
+    receipt.backendExecutionId !== backendExecutionId || receipt.threadId !== threadId ||
+    receipt.observationNumber < intent.lastObservationNumber
+  ) return Object.freeze({ ok: false, error: null, ambiguous: true });
+  const authoritativeState = readApplicationStateForOwner(store);
+  if (!authoritativeCodexObservationMatches(authoritativeState, intent, receipt)) {
     return Object.freeze({ ok: false, error: null, ambiguous: true });
   }
   return Object.freeze({ ok: true, receipt, authorization });
@@ -1929,7 +2269,10 @@ function finalizeAdapterFailure(
     let postTaskRevision = task.revision;
     const transition = executionWaitTransition(
       state, task, intent, intent.state === "ambiguous" ? "unknown" : "adapter_failure", code,
-      state.manualTurns.find((candidate) => candidate.executionId === intent.executionId)?.threadId ?? intent.threadId,
+      (intent.backendKind === "manual-local"
+        ? state.manualTurns.find((candidate) => candidate.executionId === intent.executionId)?.threadId
+        : state.codexTurns.find((candidate) => candidate.originIntentId === intent.intentId)?.threadId ??
+          state.codexTurns.find((candidate) => candidate.executionId === intent.executionId)?.threadId) ?? intent.threadId,
     );
     if (task.state === "running" && transition === null) throw new TypeError("Adapter failure waiting transition was rejected");
     if (transition !== null) {
@@ -1998,7 +2341,7 @@ function invokeEffect(
   try {
     const base = baseMutationRequest(intent, correlationId, semantic);
     if (intent.operationKind === "start") {
-      const request: ExecutionStartRequest = Object.freeze({ ...base, operation: "start", action: "execution.start" });
+      const request: ExecutionStartRequest = Object.freeze({ ...base, operation: "start", action: "execution.start", input: null });
       raw = backend.start(request);
     } else if (intent.operationKind === "resume" || intent.operationKind === "retry") {
       if (intent.backendExecutionId === null || intent.threadId === null || intent.continuationReference === null ||
@@ -2012,6 +2355,7 @@ function invokeEffect(
         continuationReference: intent.continuationReference,
         previousTurnReceiptId: intent.previousReceiptId,
         expectedThreadId: intent.threadId,
+        input: null,
       });
       raw = backend.resume(request);
     } else if (intent.operationKind === "request_cancel") {
@@ -2079,6 +2423,8 @@ function invokeEffect(
   if (
     receipt === null || !portReceiptIntegrityMatches(receipt) || receipt.correlationId !== correlationId ||
     receipt.adapterId !== intent.adapterId || receipt.adapterVersion !== intent.adapterVersion ||
+    receipt.backendKind !== intent.backendKind || receipt.observedEndpointVersion !==
+      (intent.backendKind === "manual-local" ? MANUAL_EXECUTION_ENDPOINT_VERSION : CODEX_EXECUTION_ENDPOINT_VERSION) ||
     receipt.observedExecutionId !== intent.executionId ||
     (receipt.operation !== "inspect" && (
       receipt.operationId !== intent.operationId || receipt.intentId !== intent.intentId ||
@@ -2108,13 +2454,125 @@ function invokeEffect(
   return Object.freeze({ error: null, ambiguous: true, identity: null });
 }
 
+function boundedCodexTaskInput(state: ApplicationState, intent: ExecutionOperationIntent): string | null {
+  const task = state.domain.tasks.find((candidate) => candidate.id === intent.taskId);
+  if (task === undefined || task.revision !== intent.taskRevision || task.body.length === 0 ||
+    new TextEncoder().encode(task.body).byteLength > 1_048_576) return null;
+  return `task-sha256:${sha256(task.body).toLocaleLowerCase("en-US")}` === intent.inputReference ? task.body : null;
+}
+
+function codexInputFailure(correlationId: string): ExecutionAdapterError {
+  return Object.freeze({
+    code: "task_input_binding_invalid",
+    category: "invalid_request" as const,
+    retryable: false,
+    ambiguous: false,
+    message: "Task input did not match its durable bounded digest",
+    correlationId,
+    externalReference: null,
+    retryAfter: null,
+  });
+}
+
+async function invokeCodexEffect(
+  store: PersistenceStore,
+  intent: ExecutionOperationIntent,
+  semantic: ExecutionSemanticIdentity,
+  correlationId: string,
+  backend: ExecutionBackend,
+): Promise<EffectAttempt> {
+  let raw: unknown;
+  try {
+    const base = baseMutationRequest(intent, correlationId, semantic);
+    if (intent.operationKind === "start" || intent.operationKind === "resume" || intent.operationKind === "retry") {
+      const state = readApplicationStateForOwner(store);
+      const input = boundedCodexTaskInput(state, intent);
+      if (input === null) {
+        return Object.freeze({ error: codexInputFailure(correlationId), ambiguous: false, identity: null });
+      }
+      if (intent.operationKind === "start") {
+        const request: ExecutionStartRequest = Object.freeze({
+          ...base, operation: "start", action: "execution.start", input,
+        });
+        raw = await backend.start(request);
+      } else {
+        if (intent.backendExecutionId === null || intent.threadId === null || intent.continuationReference === null ||
+          intent.previousReceiptId === null) return Object.freeze({ error: null, ambiguous: true, identity: null });
+        const request: ExecutionResumeRequest = Object.freeze({
+          ...base,
+          operation: "resume",
+          action: intent.operationKind === "resume" ? "execution.resume" : "execution.retry",
+          backendExecutionId: intent.backendExecutionId,
+          threadId: intent.threadId,
+          continuationReference: intent.continuationReference,
+          previousTurnReceiptId: intent.previousReceiptId,
+          expectedThreadId: intent.threadId,
+          input,
+        });
+        raw = await backend.resume(request);
+      }
+    } else if (intent.operationKind === "request_cancel") {
+      if (intent.backendExecutionId === null || intent.threadId === null || intent.expectedLifecycle === null ||
+        intent.reasonCode === null) return Object.freeze({ error: null, ambiguous: true, identity: null });
+      const request: ExecutionCancelRequest = Object.freeze({
+        ...base,
+        operation: "request_cancel",
+        action: "execution.cancel",
+        backendExecutionId: intent.backendExecutionId,
+        threadId: intent.threadId,
+        expectedLifecycle: intent.expectedLifecycle,
+        reasonCode: intent.reasonCode,
+      });
+      raw = await backend.requestCancel(request);
+    } else {
+      return Object.freeze({ error: null, ambiguous: false, identity: null });
+    }
+  } catch {
+    return Object.freeze({ error: null, ambiguous: true, identity: null });
+  }
+  const result = validateExecutionPortResult(raw);
+  if (result === null) return Object.freeze({ error: null, ambiguous: true, identity: null });
+  if (!result.ok) return Object.freeze({ error: result.error, ambiguous: result.error.ambiguous, identity: null });
+  const receipt = parseExecutionReceipt(result.receipt);
+  if (
+    receipt === null || !portReceiptIntegrityMatches(receipt) || receipt.correlationId !== correlationId ||
+    receipt.adapterId !== intent.adapterId || receipt.adapterVersion !== intent.adapterVersion ||
+    receipt.backendKind !== "codex-sdk" || receipt.observedEndpointVersion !== CODEX_EXECUTION_ENDPOINT_VERSION ||
+    receipt.observedExecutionId !== intent.executionId || receipt.operation === "inspect" ||
+    receipt.operationId !== intent.operationId || receipt.intentId !== intent.intentId ||
+    receipt.idempotencyKey !== intent.idempotencyKey
+  ) return Object.freeze({ error: null, ambiguous: true, identity: null });
+  return Object.freeze({
+    error: null,
+    ambiguous: false,
+    identity: receipt.threadId === null ? null : Object.freeze({
+      backendExecutionId: receipt.backendExecutionId,
+      threadId: receipt.threadId,
+    }),
+  });
+}
+
 function effectReflected(
   state: ApplicationState,
   intent: ExecutionOperationIntent,
-  _receipt: ExecutionInspectReceipt,
+  receipt: ExecutionInspectReceipt,
 ): boolean {
   if (intent.operationKind === "inspect") return true;
-  return state.manualBackendOperations.some((candidate) => candidate.intentId === intent.intentId);
+  if (intent.backendKind === "manual-local") {
+    return state.manualBackendOperations.some((candidate) => candidate.intentId === intent.intentId);
+  }
+  if (state.codexBackendOperations.some((candidate) => candidate.intentId === intent.intentId)) return true;
+  return intent.operationKind === "request_cancel" &&
+    (intent.expectedLifecycle === "turn_succeeded" || intent.expectedLifecycle === "failed") &&
+    receipt.lifecycle === intent.expectedLifecycle;
+}
+
+function backendEffectAbsent(state: ApplicationState, intent: ExecutionOperationIntent): boolean {
+  return intent.backendKind === "manual-local"
+    ? !state.manualTurns.some((candidate) => candidate.executionId === intent.executionId) &&
+      !state.manualBackendOperations.some((candidate) => candidate.intentId === intent.intentId)
+    : !state.codexTurns.some((candidate) => candidate.executionId === intent.executionId) &&
+      !state.codexBackendOperations.some((candidate) => candidate.intentId === intent.intentId);
 }
 
 function refreshProcessContext(
@@ -2187,10 +2645,8 @@ function finalizeProvenNoEffect(
     }
     const semantic = semanticForIntent(state, intent, context, options);
     if ("ok" in semantic) return semantic;
-    if (intent.operationKind !== "start" ||
-      state.manualTurns.some((candidate) => candidate.executionId === intent.executionId) ||
-      state.manualBackendOperations.some((candidate) => candidate.intentId === intent.intentId)) {
-      throw new TypeError("No-effect finalization lacks exact Manual absence proof");
+    if (intent.operationKind !== "start" || !backendEffectAbsent(state, intent)) {
+      throw new TypeError("No-effect finalization lacks exact backend absence proof");
     }
     const execution = state.executions.find((candidate) => candidate.executionId === intent.executionId);
     const task = state.domain.tasks.find((candidate) => candidate.id === intent.taskId);
@@ -2270,9 +2726,7 @@ function processIntent(
     const reconciliationOwner = options.allowDifferentOwner === true && executionAtEntry.ownerId !== context.ownerId;
     const reconciliationOnly = reconciliationLease || reconciliationOwner;
     if (intent.state === "pending" && reconciliationOnly) {
-      const startAbsent = intent.operationKind === "start" &&
-        !state.manualTurns.some((candidate) => candidate.executionId === intent?.executionId) &&
-        !state.manualBackendOperations.some((candidate) => candidate.intentId === intent?.intentId);
+      const startAbsent = intent.operationKind === "start" && backendEffectAbsent(state, intent);
       if (startAbsent) return finalizeProvenNoEffect(store, intent.intentId, context, options);
       const markedForReconciliation = markReconciliationExecuting(store, intent.intentId, context, options);
       if ("ok" in markedForReconciliation) return markedForReconciliation;
@@ -2321,9 +2775,7 @@ function processIntent(
         return result;
       }
       if (reconciliationOnly) {
-        const startIsProvenAbsent = effectIntent.operationKind === "start" &&
-          !state.manualTurns.some((candidate) => candidate.executionId === effectIntent.executionId) &&
-          !state.manualBackendOperations.some((candidate) => candidate.intentId === effectIntent.intentId);
+        const startIsProvenAbsent = effectIntent.operationKind === "start" && backendEffectAbsent(state, effectIntent);
         if (startIsProvenAbsent) return finalizeProvenNoEffect(store, effectIntent.intentId, context, options);
         if (priorInspection.ok) {
           intent = persistObservation(
@@ -2452,6 +2904,214 @@ function processIntent(
   }
 }
 
+async function processCodexIntent(
+  store: PersistenceStore,
+  intentId: string,
+  ingress: ReliableExecutionIngress,
+  backend: ExecutionBackend,
+  hooks: ReliableExecutionTestHooks,
+  options: BindExecutionOptions = Object.freeze({}),
+): Promise<ReliableExecutionResult> {
+  try {
+    let state = readApplicationStateForOwner(store);
+    let intent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
+    if (intent === undefined || intent.backendKind !== "codex-sdk") {
+      return failed("RECONCILIATION_REQUIRED", "Codex execution intent is absent");
+    }
+    let refreshed = refreshProcessContext(store, ingress, intent.actorId);
+    if ("ok" in refreshed) return refreshed;
+    let context = refreshed;
+    if (intent.state === "finalized") return successForIntent(state, intent, true);
+    if (intent.state === "observed") {
+      intent = verifyObservation(store, intent.intentId, context.now);
+      hooks.afterStage?.("receipt");
+      hooks.afterStage?.("verified");
+      refreshed = refreshProcessContext(store, ingress, intent.actorId);
+      if ("ok" in refreshed) return refreshed;
+      context = refreshed;
+    }
+    if (intent.state === "verified") {
+      const result = finalizeVerified(store, intent.intentId, context, options);
+      if (result.ok) hooks.afterStage?.("finalized");
+      return result;
+    }
+    if (intent.state === "retry_wait") {
+      if (intent.retryAfter !== null && intent.retryAfter > context.now) return successForIntent(state, intent, true);
+    } else if (intent.state === "ambiguous" || intent.state === "failed") {
+      const result = finalizeAdapterFailure(store, intent.intentId, context, options);
+      if (result.ok) hooks.afterStage?.("failure-finalized");
+      return result;
+    }
+    const entryState = intent.state;
+    const executionAtEntry = state.executions.find((candidate) => candidate.executionId === intent?.executionId);
+    if (executionAtEntry === undefined) return failed("EXECUTION_NOT_FOUND", "Codex intent target is absent");
+    const reconciliationLease = options.allowExpiredLease === true && executionAtEntry.leaseExpiresAt <= context.now;
+    const reconciliationOwner = options.allowDifferentOwner === true && executionAtEntry.ownerId !== context.ownerId;
+    const reconciliationOnly = reconciliationLease || reconciliationOwner;
+    if (intent.state === "pending" && reconciliationOnly) {
+      if (intent.operationKind === "start" && backendEffectAbsent(state, intent)) {
+        return finalizeProvenNoEffect(store, intent.intentId, context, options);
+      }
+      const markedForReconciliation = markReconciliationExecuting(store, intent.intentId, context, options);
+      if ("ok" in markedForReconciliation) return markedForReconciliation;
+      intent = markedForReconciliation;
+      hooks.afterStage?.("reconciliation-executing");
+    } else if (intent.state === "pending" || intent.state === "retry_wait") {
+      const marked = markExecuting(store, intent.intentId, context);
+      if ("ok" in marked) return marked;
+      intent = marked;
+      hooks.afterStage?.("executing");
+      refreshed = refreshProcessContext(store, ingress, intent.actorId);
+      if ("ok" in refreshed) return refreshed;
+      context = refreshed;
+    }
+    if (intent.state !== "executing") return failed("RECONCILIATION_REQUIRED", "Codex intent state cannot progress");
+    state = readApplicationStateForOwner(store);
+    let persistedIntent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
+    if (persistedIntent === undefined) return failed("RECONCILIATION_REQUIRED", "Executing Codex intent disappeared");
+    intent = persistedIntent;
+    let effectIntent = persistedIntent;
+    let semantic = semanticForIntent(state, effectIntent, context, options);
+    if ("ok" in semantic) return semantic;
+    const recoveryRequired = entryState === "executing" ||
+      (entryState === "retry_wait" && effectIntent.lastErrorAmbiguous !== false) || reconciliationOnly;
+    if (recoveryRequired) {
+      const priorInspection = await independentlyInspectAsync(store, effectIntent, context, backend, null, options);
+      hooks.afterStage?.("recovery-inspected");
+      if (priorInspection.ok && effectReflected(state, effectIntent, priorInspection.receipt)) {
+        intent = persistObservation(store, effectIntent.intentId, priorInspection.receipt,
+          priorInspection.authorization, context, options);
+        hooks.afterStage?.("observed");
+        intent = verifyObservation(store, intent.intentId, context.now);
+        hooks.afterStage?.("receipt");
+        hooks.afterStage?.("verified");
+        refreshed = refreshProcessContext(store, ingress, intent.actorId);
+        if ("ok" in refreshed) return refreshed;
+        context = refreshed;
+        const result = finalizeVerified(store, intent.intentId, context, options);
+        if (result.ok) hooks.afterStage?.("finalized");
+        return result;
+      }
+      if (reconciliationOnly) {
+        if (effectIntent.operationKind === "start" && backendEffectAbsent(state, effectIntent)) {
+          return finalizeProvenNoEffect(store, effectIntent.intentId, context, options);
+        }
+        if (priorInspection.ok) {
+          intent = persistObservation(store, effectIntent.intentId, priorInspection.receipt,
+            priorInspection.authorization, context, options);
+          hooks.afterStage?.("observed");
+          intent = verifyObservation(store, intent.intentId, context.now);
+          hooks.afterStage?.("receipt");
+          hooks.afterStage?.("verified");
+          refreshed = refreshProcessContext(store, ingress, intent.actorId);
+          if ("ok" in refreshed) return refreshed;
+          context = refreshed;
+          const result = finalizeVerified(store, intent.intentId, context, options);
+          if (result.ok) hooks.afterStage?.("finalized");
+          return result;
+        }
+        intent = markAdapterFailure(store, effectIntent.intentId, priorInspection.error, true, context.now);
+        hooks.afterStage?.("adapter-failure-recorded");
+        refreshed = refreshProcessContext(store, ingress, intent.actorId);
+        if ("ok" in refreshed) return refreshed;
+        context = refreshed;
+        const result = finalizeAdapterFailure(store, intent.intentId, context, options);
+        if (result.ok) hooks.afterStage?.("failure-finalized");
+        return result;
+      }
+      if (!priorInspection.ok && entryState !== "executing") {
+        intent = markAdapterFailure(store, effectIntent.intentId, priorInspection.error,
+          priorInspection.ambiguous || priorInspection.error === null, context.now);
+        hooks.afterStage?.("adapter-failure-recorded");
+        if (intent.state === "retry_wait") return successForIntent(readApplicationStateForOwner(store), intent, false);
+        refreshed = refreshProcessContext(store, ingress, intent.actorId);
+        if ("ok" in refreshed) return refreshed;
+        context = refreshed;
+        const result = finalizeAdapterFailure(store, intent.intentId, context, options);
+        if (result.ok) hooks.afterStage?.("failure-finalized");
+        return result;
+      }
+    }
+    refreshed = refreshProcessContext(store, ingress, effectIntent.actorId);
+    if ("ok" in refreshed) return refreshed;
+    context = refreshed;
+    const rebound = markExecuting(store, effectIntent.intentId, context);
+    if ("ok" in rebound) return rebound;
+    effectIntent = rebound;
+    state = readApplicationStateForOwner(store);
+    persistedIntent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
+    if (persistedIntent === undefined ||
+      persistedIntent.currentAuthorizationDecisionId !== effectIntent.currentAuthorizationDecisionId) {
+      return failed("RECONCILIATION_REQUIRED", "Codex Act authorization readback is stale");
+    }
+    semantic = semanticForIntent(state, effectIntent, context, options);
+    if ("ok" in semantic) return semantic;
+    let effect = Object.freeze({ error: null, ambiguous: false, identity: null }) as EffectAttempt;
+    if (effectIntent.operationKind !== "inspect") {
+      const decision = state.executionAuthorizationDecisions.find(
+        (candidate) => candidate.decisionId === effectIntent.currentAuthorizationDecisionId,
+      );
+      const request = decision === undefined ? undefined : state.executionOperationRequests.find(
+        (candidate) => candidate.requestId === decision.requestId,
+      );
+      if (request === undefined) throw new TypeError("Current Codex Act authorization request is absent");
+      effect = await invokeCodexEffect(store, effectIntent, semantic, request.correlationId, backend);
+      hooks.afterStage?.("adapter-effect");
+    }
+    refreshed = refreshProcessContext(store, ingress, effectIntent.actorId);
+    if ("ok" in refreshed) return refreshed;
+    context = refreshed;
+    const currentState = readApplicationStateForOwner(store);
+    const currentIntent = currentState.executionIntents.find((candidate) => candidate.intentId === effectIntent.intentId);
+    if (currentIntent === undefined) return failed("RECONCILIATION_REQUIRED", "Post-effect Codex intent is absent");
+    const currentSemantic = semanticForIntent(currentState, currentIntent, context, options);
+    if ("ok" in currentSemantic) return currentSemantic;
+    const inspection = await independentlyInspectAsync(store, currentIntent, context, backend, effect.identity, options);
+    hooks.afterStage?.("independent-inspect");
+    if (!inspection.ok) {
+      const error = inspection.error ?? effect.error;
+      const ambiguous = effect.ambiguous || (error === null && inspection.ambiguous);
+      intent = markAdapterFailure(store, currentIntent.intentId, error, ambiguous, context.now);
+      hooks.afterStage?.("adapter-failure-recorded");
+      if (intent.state === "retry_wait") return successForIntent(readApplicationStateForOwner(store), intent, false);
+      refreshed = refreshProcessContext(store, ingress, intent.actorId);
+      if ("ok" in refreshed) return refreshed;
+      context = refreshed;
+      const result = finalizeAdapterFailure(store, intent.intentId, context, options);
+      if (result.ok) hooks.afterStage?.("failure-finalized");
+      return result;
+    }
+    const postEffectState = readApplicationStateForOwner(store);
+    if (!effectReflected(postEffectState, currentIntent, inspection.receipt)) {
+      intent = markAdapterFailure(store, currentIntent.intentId, effect.error,
+        effect.ambiguous || effect.error === null, context.now);
+      hooks.afterStage?.("adapter-failure-recorded");
+      if (intent.state === "retry_wait") return successForIntent(readApplicationStateForOwner(store), intent, false);
+      refreshed = refreshProcessContext(store, ingress, intent.actorId);
+      if ("ok" in refreshed) return refreshed;
+      context = refreshed;
+      const result = finalizeAdapterFailure(store, intent.intentId, context, options);
+      if (result.ok) hooks.afterStage?.("failure-finalized");
+      return result;
+    }
+    intent = persistObservation(store, currentIntent.intentId, inspection.receipt,
+      inspection.authorization, context, options);
+    hooks.afterStage?.("observed");
+    intent = verifyObservation(store, intent.intentId, context.now);
+    hooks.afterStage?.("receipt");
+    hooks.afterStage?.("verified");
+    refreshed = refreshProcessContext(store, ingress, intent.actorId);
+    if ("ok" in refreshed) return refreshed;
+    context = refreshed;
+    const result = finalizeVerified(store, intent.intentId, context, options);
+    if (result.ok) hooks.afterStage?.("finalized");
+    return result;
+  } catch (error) {
+    if (error instanceof PersistenceError) return failed("PERSISTENCE_FAILURE", "Codex execution persistence failed closed");
+    return failed("PERSISTENCE_FAILURE", "Codex execution integrity check failed closed");
+  }
+}
+
 function confirmationId(
   ingress: ReliableExecutionIngress,
   identity: OperationIdentity,
@@ -2539,6 +3199,69 @@ function runOperation(
   if ("ok" in prepared) return prepared;
   hooks.afterStage?.("prepared");
   return processIntent(store, prepared.intent.intentId, ingress, backend, control, hooks, options);
+}
+
+function plainCodexCommand(command: CodexOperationCommand): OperationCommand {
+  const { workspace: _workspace, ...plain } = command;
+  return Object.freeze(plain) as OperationCommand;
+}
+
+async function runCodexOperation(
+  store: PersistenceStore,
+  value: unknown,
+  expectedKind: CodexOperationCommand["kind"],
+  ingress: ReliableExecutionIngress,
+  backend: ExecutionBackend,
+  hooks: ReliableExecutionTestHooks,
+  options: BindExecutionOptions = Object.freeze({}),
+): Promise<ReliableExecutionResult> {
+  const parsed = parseCodexOperationCommand(value);
+  if (parsed === null || parsed.kind !== expectedKind) return failed("INVALID_INPUT", "Codex execution command is invalid");
+  const command = plainCodexCommand(parsed);
+  let state: ApplicationState;
+  try {
+    state = readApplicationStateForOwner(store);
+  } catch {
+    return failed("PERSISTENCE_FAILURE", "Codex execution state could not be read");
+  }
+  const replay = state.executionIntents.find((candidate) => candidate.idempotencyKey === command.idempotencyKey);
+  if (replay !== undefined) {
+    if (replay.backendKind !== "codex-sdk" || !intentTupleMatches(state, replay, command, parsed.workspace)) {
+      return failed("IDEMPOTENCY_CONFLICT", "Codex idempotency identity is bound to another operation tuple");
+    }
+    const context = trustedContext(ingress);
+    if (context === null) return failed("INVALID_INPUT", "Trusted Codex ingress is invalid");
+    const runtimeFailure = runtimeActorFailure(store, state, context, replay.actorId);
+    if (runtimeFailure !== null) return runtimeFailure;
+    return processCodexIntent(store, replay.intentId, ingress, backend, hooks, options);
+  }
+  const context = trustedContext(ingress);
+  if (context === null) return failed("INVALID_INPUT", "Trusted Codex ingress is invalid");
+  const runtimeFailure = runtimeActorFailure(store, state, context);
+  if (runtimeFailure !== null) return runtimeFailure;
+  const identity = operationIdentity(context, ingress);
+  if (identity === null) return failed("INVALID_INPUT", "Trusted Codex identities are invalid");
+  const bound = bindExecution(state, command, context,
+    command.kind === "execution.inspect" ? options : Object.freeze({}));
+  if ("ok" in bound) return Object.freeze({ ...bound, requestId: identity.requestId, correlationId: identity.correlationId });
+  const projectFailure = revalidateBoundProject(bound.project, store);
+  if (projectFailure !== null) return projectFailure;
+  if (!currentCodexWorkspaceMatches(state, command, parsed.workspace)) {
+    return failed("STALE_REVISION", "Codex owned workspace tuple is not current", identity);
+  }
+  if (command.kind === "execution.start") {
+    const task = state.domain.tasks.find((candidate) => candidate.id === command.taskId);
+    if (task === undefined || task.body.length === 0 || new TextEncoder().encode(task.body).byteLength > 1_048_576 ||
+      `task-sha256:${sha256(task.body).toLocaleLowerCase("en-US")}` !== command.inputReference) {
+      return failed("INVALID_INPUT", "Codex Task input does not match its bounded digest", identity);
+    }
+  }
+  const prepared = prepareOperation(
+    store, command, identity, backend, null, options, parsed.workspace,
+  );
+  if ("ok" in prepared) return prepared;
+  hooks.afterStage?.("prepared");
+  return processCodexIntent(store, prepared.intent.intentId, ingress, backend, hooks, options);
 }
 
 function completionResult(
@@ -2767,6 +3490,7 @@ function createReliableExecutionServiceInternal(
   hooks: ReliableExecutionTestHooks,
 ): ReliableExecutionService {
   if (backend.contractId !== EXECUTION_CONTRACT_ID || control.outcomeContractId !== MANUAL_OUTCOME_CONTROL_ID ||
+    backend.backendKind !== "manual-local" ||
     !operationalIdentifier(backend.adapterId) || !operationalIdentifier(backend.adapterVersion)) {
     throw new TypeError("Reliable execution adapter contract identity is invalid");
   }
@@ -2873,4 +3597,63 @@ export function createReliableExecutionServiceWithHooks(
   hooks: ReliableExecutionTestHooks,
 ): ReliableExecutionService {
   return createReliableExecutionServiceInternal(store, ingress, backend, control, hooks);
+}
+
+/** Package-private: intentionally absent from src/index.ts and all product factories. */
+export function createInjectedCodexReliableExecutionService(
+  store: PersistenceStore,
+  ingress: ReliableExecutionIngress,
+  backend: ExecutionBackend,
+  hooks: ReliableExecutionTestHooks = Object.freeze({}),
+): InjectedCodexReliableExecutionService {
+  if (backend.contractId !== EXECUTION_CONTRACT_ID || backend.backendKind !== "codex-sdk" ||
+    !operationalIdentifier(backend.adapterId) || !operationalIdentifier(backend.adapterVersion)) {
+    throw new TypeError("Injected Codex execution adapter contract identity is invalid");
+  }
+  const reconcile = async (value: CodexExecutionInspectCommand): Promise<ReliableExecutionResult> => {
+    const parsed = parseCodexOperationCommand(value);
+    if (parsed === null || parsed.kind !== "execution.inspect") {
+      return failed("INVALID_INPUT", "Codex reconciliation command is invalid");
+    }
+    const command = plainCodexCommand(parsed) as ExecutionLoopInspectCommand;
+    const context = trustedContext(ingress);
+    if (context === null) return failed("INVALID_INPUT", "Trusted Codex reconciliation ingress is invalid");
+    let state: ApplicationState;
+    try { state = readApplicationStateForOwner(store); } catch {
+      return failed("PERSISTENCE_FAILURE", "Codex reconciliation state could not be read");
+    }
+    const runtimeFailure = runtimeActorFailure(store, state, context);
+    if (runtimeFailure !== null) return runtimeFailure;
+    const reconciliationOptions = Object.freeze({ allowExpiredLease: true, allowDifferentOwner: true });
+    const bound = bindExecution(state, command, context, reconciliationOptions);
+    if ("ok" in bound) return bound;
+    const projectFailure = revalidateBoundProject(bound.project, store);
+    if (projectFailure !== null) return projectFailure;
+    const unfinished = state.executionIntents.find((candidate) =>
+      candidate.executionId === command.executionId && candidate.backendKind === "codex-sdk" &&
+      candidate.state !== "finalized"
+    );
+    if (unfinished === undefined) {
+      return runCodexOperation(store, parsed, "execution.inspect", ingress, backend, hooks, reconciliationOptions);
+    }
+    if (
+      unfinished.actorId !== context.actor.actorId || unfinished.projectId !== command.projectId ||
+      unfinished.taskId !== command.taskId || unfinished.taskRevision !== command.expectedTaskRevision ||
+      unfinished.inputReference !== command.inputReference ||
+      unfinished.executionRevision !== command.expectedExecutionRevision ||
+      unfinished.attemptNumber !== command.expectedAttemptNumber || unfinished.fencingToken !== command.expectedFencingToken ||
+      unfinished.policyBindingReference !== command.policyBindingReference ||
+      !workspaceContextMatchesIntent(unfinished, parsed.workspace)
+    ) return failed("STALE_REVISION", "Codex reconciliation command does not match the unfinished intent");
+    return processCodexIntent(store, unfinished.intentId, ingress, backend, hooks, reconciliationOptions);
+  };
+  return Object.freeze({
+    start: (command: CodexExecutionStartCommand) =>
+      runCodexOperation(store, command, "execution.start", ingress, backend, hooks),
+    inspect: (command: CodexExecutionInspectCommand) =>
+      runCodexOperation(store, command, "execution.inspect", ingress, backend, hooks),
+    requestCancel: (command: CodexExecutionCancelCommand) =>
+      runCodexOperation(store, command, "execution.cancel", ingress, backend, hooks),
+    reconcile,
+  });
 }

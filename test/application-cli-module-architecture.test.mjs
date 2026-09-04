@@ -382,8 +382,8 @@ test("CLI modules have the exact DAG, facade, tables, and sole effect owner", ()
   assert.match(readSource("src/cli-api-parser.ts"), /CLI_UNSUPPORTED_VERSION/u);
 });
 
-test("CLI and Phase 3 Node built-ins equal exact per-file maps and repo-utils rejects family-wide exceptions", () => {
-  assert.equal(EXPECTED_PRODUCTION_SOURCE_FILES.length, 53);
+test("CLI, Phase 3, and Codex Node built-ins equal exact per-file maps and repo-utils rejects family-wide exceptions", () => {
+  assert.equal(EXPECTED_PRODUCTION_SOURCE_FILES.length, 57);
   assert.deepEqual(EXPECTED_CLI_NODE_BUILTINS, EXPECTED_CLI_BUILTINS);
   for (const [relative, expected] of Object.entries(EXPECTED_CLI_BUILTINS)) {
     assert.deepEqual(nodeBuiltins(relative), expected, `${relative} Node built-ins drifted`);
