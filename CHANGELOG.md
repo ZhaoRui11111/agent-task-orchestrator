@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Added the fresh-only library-level scheduler closure without adding a default
+  product or CLI scheduler operation route. The package exports the pure exact
+  `ato.scheduler/v1` port and one typed injected application owner; register and
+  remove use durable intent/observation/verified-receipt/finalization and
+  reconciliation, inspect uses a separate read-only decision/query/observation
+  path, and scheduled delivery extends the existing dispatcher with sanitized
+  observations, current-config and `dispatch.run` checks, one unique
+  `(schedule_id, config_revision, scheduled_for)` tuple, canonical-run
+  attachment, and duplicate tolerance. Authorization vocabulary version 7 adds
+  exactly three scheduler actions, application-state digest version 3 covers
+  the new schema-version-1 records, and the offline probe fixes
+  `adapterImplemented=false`, `externalE2E=not_run`, and `supportClaim=false`.
+  Only an unexported no-effect Fake exercises the port; no concrete scheduler
+  adapter, platform registration, real scheduled task, daemon, release, or
+  support claim was added.
+
 - Replaced the unreleased closed `ato.execution/v1` shape with the sole current
   fresh-only `ato.execution/v2`. The retained `manual-local` adapter now uses
   `local-manual/v2`; the new discriminated owned-workspace branch is implemented
@@ -197,5 +213,7 @@ These entries do not announce a release or supported platform. Current
 executable material is limited to the development package, feasibility harness,
 Domain/Application/Persistence owners, the local explicit-Manual product, and
 the separately injected Phase 3 policy/gate/local-Git/workspace library named
-above. Scheduler/SchedulerBackend, MCP, Codex, external Task-content execution,
-general network integration, release, and deployment remain unimplemented.
+above. The scheduler port/application and scheduled-dispatch ingress are
+library-only; concrete SchedulerBackend/platform effects, product wiring, MCP,
+external Task-content execution, general network integration, release, and
+deployment remain unimplemented.

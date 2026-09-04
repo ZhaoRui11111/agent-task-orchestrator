@@ -31,8 +31,8 @@ explicit-Manual control/recovery subset documented below. It exposes no
 scheduler, scheduled trigger, daemon, MCP, Codex or Phase 3 adapter route,
 workspace/policy/gate/integration operation command, network service, secret
 operation, release, deployment, repair, cleanup, or arbitrary shell/filesystem
-operation. The independently exported injected Phase 3 library does not extend
-this command tree.
+operation. The independently exported injected Phase 3 and scheduler libraries
+do not extend this command tree.
 
 ## Invocation and global grammar
 
@@ -126,7 +126,7 @@ There is no alias for a command or option. In particular there is no Task
   JavaScript UTF-16 code units.
   Project root is an absolute traversal-free path of at most 1,024 UTF-8 bytes
   before persistence identity checks.
-- `ACTION` is one exact member of the current finite forty-seven-action vocabulary owned by the
+- `ACTION` is one exact member of the current finite fifty-action vocabulary owned by the
   [authorization contract](authorization-contract.md#exact-action-vocabulary).
   There is no extension field or caller-defined action. Runtime scope rejects
   Project fields; Project scope requires all three Project fields.
@@ -296,11 +296,12 @@ in an `ato.api/v1` failure envelope before runtime-root selection, trusted
 ingress, doctor, runtime creation/loading, persistence, authorization, or Domain
 evaluation. Unknown majors and commands never fall back, coerce, or guess
 another major. `authorization issue` and `authorization evaluate` accept exactly
-the current finite forty-seven actions. The independently exported exact
+the current finite fifty actions. The independently exported exact
 `ato.project-policy/v1`, `ato.completion/v1`, `ato.integration/v1`, and
 `ato.workspace/v2` ports, their local adapters, and the injected Phase 3
 product-library facade add no command ID, public result, or error to this closed
-tree.
+tree. The independently exported exact `ato.scheduler/v1` port and injected
+scheduler application owner likewise add no scheduler operation route.
 
 The nine product-facade IDs are exhaustive:
 

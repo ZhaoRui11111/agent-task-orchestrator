@@ -2,7 +2,9 @@
 
 **Status:** Accepted
 
-This is an accepted design requirement for future work, not a statement that a dispatcher, daemon, worker, or scheduled trigger exists today.
+The explicit-Manual dispatcher and library-level scheduled-delivery ingress now
+implement this decision. No concrete scheduler adapter, platform registration,
+daemon/service, real scheduled task, or support claim exists today.
 
 ## Context
 
@@ -10,13 +12,15 @@ Dispatch must tolerate duplicate triggers, missed triggers, worker death, host r
 
 ## Decision
 
-Use a reconciliation-driven dispatcher whose durable state, not process lifetime, determines recoverable work. Scheduler triggers wake reconciliation rather than directly owning task execution, and dispatcher lifecycle handling must compose with durable claims and receipts. The live scheduler and reliability owners define exact duplicate, missed-trigger, worker-death, retry, and recovery semantics.
+Use a reconciliation-driven dispatcher whose durable state, not process lifetime, determines recoverable work. Scheduler triggers wake reconciliation rather than directly owning task execution, and dispatcher lifecycle handling must compose with durable claims and receipts. The scheduler library records each delivery, authorizes `dispatch.run`, creates one canonical run for each exact scheduled tuple, and attaches duplicates; the live scheduler and reliability owners define duplicate, missed-trigger, worker-death, retry, and recovery semantics.
 
 ## Consequences
 
 - Starting another dispatcher or receiving another trigger must be an expected condition handled through the durable protocol.
 - Process supervision can improve availability but cannot substitute for durable ownership and reconciliation.
-- Trigger cadence, process topology, and platform support remain implementation and evidence questions.
+- Trigger cadence, process topology, a concrete platform adapter, real scheduler
+  registration, and platform support remain implementation and evidence
+  questions.
 
 ## Alternatives
 
@@ -30,4 +34,4 @@ The [scheduler contract](../reference/scheduler-contract.md) solely owns trigger
 
 ## Required validation
 
-Dispatcher recovery, scheduler contract, concurrency, failpoint, and operating-system evidence is governed by the [validation policy](../reference/validation-policy.md). Acceptance of this ADR is not evidence that any scheduling path runs.
+Dispatcher recovery, scheduler contract, concurrency, failpoint, and operating-system evidence is governed by the [validation policy](../reference/validation-policy.md). Library/Fake evidence proves the durable ingress boundary only; it is not evidence that a real platform scheduler runs.

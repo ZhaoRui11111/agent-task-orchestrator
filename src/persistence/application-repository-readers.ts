@@ -16,6 +16,12 @@ import {
   WORKSPACE_RECEIPT_CODES,
 } from "../workspace-port.ts";
 import type { WorkspaceFailureCategory, WorkspaceReceiptCode } from "../workspace-port.ts";
+import {
+  SCHEDULER_EXTERNAL_STATES,
+  SCHEDULER_FAILURE_CATEGORIES,
+  SCHEDULER_RECEIPT_CODES,
+} from "../scheduler-port.ts";
+import type { SchedulerExternalState, SchedulerFailureCategory, SchedulerReceiptCode } from "../scheduler-port.ts";
 import { sqliteNullableText, sqliteText } from "./database.ts";
 import type { SqliteDatabase } from "./database.ts";
 import { persistenceFailure } from "./errors.ts";
@@ -106,6 +112,21 @@ import type {
   WorkspaceFinalizationRecord,
   WorkspaceOperationOutcome,
   WorkspaceEventRecord,
+  SchedulerRegistrationStatus,
+  SchedulerIntentState,
+  SchedulerConfigurationRecord,
+  SchedulerRegistrationRecord,
+  SchedulerOperationRequestRecord,
+  SchedulerAuthorizationDecisionRecord,
+  SchedulerOperationIntentRecord,
+  SchedulerObservationRecord,
+  SchedulerVerifiedReceiptRecord,
+  SchedulerFinalizationRecord,
+  SchedulerEventRecord,
+  SchedulerDeliveryDisposition,
+  SchedulerDeliveryAttachmentRole,
+  SchedulerDeliveryObservationRecord,
+  SchedulerScheduledTupleRecord,
 } from "./application-repository-model.ts";
 import { canonicalJson, exactRecord, isCanonicalUtcTimestamp, isNonemptyString } from "./values.ts";
 
@@ -244,6 +265,13 @@ function nonnegative(value: unknown, label: string): number {
   const parsed = integer(value, label);
   if (parsed < 0) throw persistenceFailure("CORRUPT_ROW", `${label} must be nonnegative`);
   return parsed;
+}
+
+function nullableBoolean(value: unknown, label: string): boolean | null {
+  if (value === null) return null;
+  const parsed = integer(value, label);
+  if (parsed !== 0 && parsed !== 1) throw persistenceFailure("CORRUPT_ROW", `${label} is not a SQLite boolean`);
+  return parsed === 1;
 }
 
 export function readProjects(database: SqliteDatabase): readonly RegisteredProject[] {
@@ -2288,6 +2316,289 @@ export function readAudit(database: SqliteDatabase): readonly DecodedApplication
   }));
 }
 
+
+const SCHEDULER_REGISTRATION_STATUSES: ReadonlySet<SchedulerRegistrationStatus> = new Set([
+  "pending_register", "active", "pending_remove", "removed", "ambiguous",
+]);
+const SCHEDULER_INTENT_STATES: ReadonlySet<SchedulerIntentState> = new Set([
+  "pending", "executing", "observed", "verified", "finalized", "ambiguous", "failed",
+]);
+const SCHEDULER_EXTERNAL_STATE_SET: ReadonlySet<SchedulerExternalState> = new Set(SCHEDULER_EXTERNAL_STATES);
+const SCHEDULER_RECEIPT_CODE_SET: ReadonlySet<SchedulerReceiptCode> = new Set(SCHEDULER_RECEIPT_CODES);
+const SCHEDULER_OBSERVATION_CODES: ReadonlySet<SchedulerReceiptCode | SchedulerFailureCategory> = new Set([
+  ...SCHEDULER_RECEIPT_CODES,
+  ...SCHEDULER_FAILURE_CATEGORIES,
+]);
+const SCHEDULER_DELIVERY_DISPOSITIONS: ReadonlySet<SchedulerDeliveryDisposition> = new Set([
+  "accepted", "authorization_denied", "rejected_stale_config", "malformed",
+]);
+const SCHEDULER_DELIVERY_ATTACHMENT_ROLES: ReadonlySet<SchedulerDeliveryAttachmentRole> = new Set([
+  "canonical", "duplicate", "none",
+]);
+
+export function readSchedulerConfigurations(database: SqliteDatabase): readonly SchedulerConfigurationRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT schedule_id, config_revision, scope_kind, project_id, project_resource_revision,
+      project_config_revision, schedule_expression, time_zone, dispatcher_target, config_sha256,
+      created_by_operation_id, created_at
+    FROM scheduler_configurations ORDER BY schedule_id, config_revision`,
+  ).all().map((row) => Object.freeze({
+    scheduleId: sqliteText(row.schedule_id, "scheduler_configurations.schedule_id"),
+    configRevision: positive(row.config_revision, "scheduler_configurations.config_revision"),
+    scopeKind: enumText(row.scope_kind, "scheduler_configurations.scope_kind", SCOPE_KINDS),
+    projectId: sqliteNullableText(row.project_id, "scheduler_configurations.project_id"),
+    projectResourceRevision: nullablePositive(row.project_resource_revision, "scheduler_configurations.project_resource_revision"),
+    projectConfigRevision: nullablePositive(row.project_config_revision, "scheduler_configurations.project_config_revision"),
+    scheduleExpression: sqliteText(row.schedule_expression, "scheduler_configurations.schedule_expression"),
+    timeZone: sqliteText(row.time_zone, "scheduler_configurations.time_zone"),
+    dispatcherTarget: sqliteText(row.dispatcher_target, "scheduler_configurations.dispatcher_target"),
+    configSha256: uppercaseSha256(row.config_sha256, "scheduler_configurations.config_sha256"),
+    createdByOperationId: sqliteText(row.created_by_operation_id, "scheduler_configurations.created_by_operation_id"),
+    createdAt: timestamp(row.created_at, "scheduler_configurations.created_at"),
+  })));
+}
+
+export function readSchedulerRegistrations(database: SqliteDatabase): readonly SchedulerRegistrationRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT schedule_id, config_revision, revision, status, external_registration_id,
+      enabled, next_trigger_at, last_intent_id, updated_at
+    FROM scheduler_registrations ORDER BY schedule_id, config_revision`,
+  ).all().map((row) => Object.freeze({
+    scheduleId: sqliteText(row.schedule_id, "scheduler_registrations.schedule_id"),
+    configRevision: positive(row.config_revision, "scheduler_registrations.config_revision"),
+    revision: positive(row.revision, "scheduler_registrations.revision"),
+    status: enumText(row.status, "scheduler_registrations.status", SCHEDULER_REGISTRATION_STATUSES),
+    externalRegistrationId: sqliteNullableText(row.external_registration_id, "scheduler_registrations.external_registration_id"),
+    enabled: nullableBoolean(row.enabled, "scheduler_registrations.enabled"),
+    nextTriggerAt: row.next_trigger_at === null ? null : timestamp(row.next_trigger_at, "scheduler_registrations.next_trigger_at"),
+    lastIntentId: sqliteText(row.last_intent_id, "scheduler_registrations.last_intent_id"),
+    updatedAt: timestamp(row.updated_at, "scheduler_registrations.updated_at"),
+  })));
+}
+
+export function readSchedulerOperationRequests(database: SqliteDatabase): readonly SchedulerOperationRequestRecord[] {
+  const operations = new Set<SchedulerOperationRequestRecord["operation"]>(["register", "inspect", "remove"]);
+  return Object.freeze(database.prepare(
+    `SELECT request_id, operation_id, idempotency_key, command_sha256, operation, actor_id, correlation_id,
+      schedule_id, config_revision, external_registration_id, scope_kind, project_id, project_resource_revision,
+      project_config_revision, result, created_at
+    FROM scheduler_operation_requests ORDER BY request_id`,
+  ).all().map((row) => Object.freeze({
+    requestId: sqliteText(row.request_id, "scheduler_operation_requests.request_id"),
+    operationId: sqliteText(row.operation_id, "scheduler_operation_requests.operation_id"),
+    idempotencyKey: sqliteNullableText(row.idempotency_key, "scheduler_operation_requests.idempotency_key"),
+    commandSha256: uppercaseSha256(row.command_sha256, "scheduler_operation_requests.command_sha256"),
+    operation: enumText(row.operation, "scheduler_operation_requests.operation", operations),
+    actorId: sqliteText(row.actor_id, "scheduler_operation_requests.actor_id"),
+    correlationId: sqliteText(row.correlation_id, "scheduler_operation_requests.correlation_id"),
+    scheduleId: sqliteText(row.schedule_id, "scheduler_operation_requests.schedule_id"),
+    configRevision: positive(row.config_revision, "scheduler_operation_requests.config_revision"),
+    externalRegistrationId: sqliteNullableText(row.external_registration_id, "scheduler_operation_requests.external_registration_id"),
+    scopeKind: enumText(row.scope_kind, "scheduler_operation_requests.scope_kind", SCOPE_KINDS),
+    projectId: sqliteNullableText(row.project_id, "scheduler_operation_requests.project_id"),
+    projectResourceRevision: nullablePositive(row.project_resource_revision, "scheduler_operation_requests.project_resource_revision"),
+    projectConfigRevision: nullablePositive(row.project_config_revision, "scheduler_operation_requests.project_config_revision"),
+    result: enumText(row.result, "scheduler_operation_requests.result", DECISION_RESULTS),
+    createdAt: timestamp(row.created_at, "scheduler_operation_requests.created_at"),
+  })));
+}
+
+export function readSchedulerAuthorizationDecisions(database: SqliteDatabase): readonly SchedulerAuthorizationDecisionRecord[] {
+  const stages = new Set<SchedulerAuthorizationDecisionRecord["stage"]>(["prepare", "act", "inspect"]);
+  const schedulerActions = new Set<SchedulerAuthorizationDecisionRecord["action"]>([
+    "scheduler.register", "scheduler.inspect", "scheduler.remove",
+  ]);
+  return Object.freeze(database.prepare(
+    `SELECT decision_id, request_id, stage, actor_id, action, result, reason, policy_result,
+      grant_id, grant_revision, project_id, project_resource_revision, project_config_revision, created_at
+    FROM scheduler_authorization_decisions ORDER BY decision_id`,
+  ).all().map((row) => Object.freeze({
+    decisionId: sqliteText(row.decision_id, "scheduler_authorization_decisions.decision_id"),
+    requestId: sqliteText(row.request_id, "scheduler_authorization_decisions.request_id"),
+    stage: enumText(row.stage, "scheduler_authorization_decisions.stage", stages),
+    actorId: sqliteText(row.actor_id, "scheduler_authorization_decisions.actor_id"),
+    action: enumText(row.action, "scheduler_authorization_decisions.action", schedulerActions),
+    result: enumText(row.result, "scheduler_authorization_decisions.result", DECISION_RESULTS),
+    reason: enumText(row.reason, "scheduler_authorization_decisions.reason", AUTHORIZATION_REASONS),
+    policy: enumText(row.policy_result, "scheduler_authorization_decisions.policy_result", POLICY_RESULTS),
+    grantId: sqliteNullableText(row.grant_id, "scheduler_authorization_decisions.grant_id"),
+    grantRevision: nullablePositive(row.grant_revision, "scheduler_authorization_decisions.grant_revision"),
+    projectId: sqliteNullableText(row.project_id, "scheduler_authorization_decisions.project_id"),
+    projectResourceRevision: nullablePositive(row.project_resource_revision, "scheduler_authorization_decisions.project_resource_revision"),
+    projectConfigRevision: nullablePositive(row.project_config_revision, "scheduler_authorization_decisions.project_config_revision"),
+    createdAt: timestamp(row.created_at, "scheduler_authorization_decisions.created_at"),
+  })));
+}
+
+export function readSchedulerIntents(database: SqliteDatabase): readonly SchedulerOperationIntentRecord[] {
+  const operations = new Set<SchedulerOperationIntentRecord["operation"]>(["register", "remove"]);
+  return Object.freeze(database.prepare(
+    `SELECT intent_id, request_id, operation_id, operation, state, contract_id, adapter_id,
+      adapter_version, schedule_id, config_revision, expected_registration_revision,
+      operation_deadline, revision, created_at, updated_at
+    FROM scheduler_operation_intents ORDER BY intent_id`,
+  ).all().map((row) => {
+    const contractId = sqliteText(row.contract_id, "scheduler_operation_intents.contract_id");
+    if (contractId !== "ato.scheduler/v1") throw persistenceFailure("CORRUPT_ROW", "Scheduler intent contract is unsupported");
+    return Object.freeze({
+      intentId: sqliteText(row.intent_id, "scheduler_operation_intents.intent_id"),
+      requestId: sqliteText(row.request_id, "scheduler_operation_intents.request_id"),
+      operationId: sqliteText(row.operation_id, "scheduler_operation_intents.operation_id"),
+      operation: enumText(row.operation, "scheduler_operation_intents.operation", operations),
+      state: enumText(row.state, "scheduler_operation_intents.state", SCHEDULER_INTENT_STATES),
+      contractId,
+      adapterId: sqliteText(row.adapter_id, "scheduler_operation_intents.adapter_id"),
+      adapterVersion: sqliteText(row.adapter_version, "scheduler_operation_intents.adapter_version"),
+      scheduleId: sqliteText(row.schedule_id, "scheduler_operation_intents.schedule_id"),
+      configRevision: positive(row.config_revision, "scheduler_operation_intents.config_revision"),
+      expectedRegistrationRevision: nonnegative(row.expected_registration_revision, "scheduler_operation_intents.expected_registration_revision"),
+      operationDeadline: timestamp(row.operation_deadline, "scheduler_operation_intents.operation_deadline"),
+      revision: positive(row.revision, "scheduler_operation_intents.revision"),
+      createdAt: timestamp(row.created_at, "scheduler_operation_intents.created_at"),
+      updatedAt: timestamp(row.updated_at, "scheduler_operation_intents.updated_at"),
+    });
+  }));
+}
+
+export function readSchedulerObservations(database: SqliteDatabase): readonly SchedulerObservationRecord[] {
+  const outcomes = new Set<SchedulerObservationRecord["outcome"]>(["succeeded", "refused", "ambiguous"]);
+  return Object.freeze(database.prepare(
+    `SELECT observation_id, request_id, intent_id, observation_number, external_state,
+      external_registration_id, enabled, next_trigger_at, outcome, code, receipt_id,
+      receipt_sha256, evidence_reference, observed_at
+    FROM scheduler_observations
+    ORDER BY CASE WHEN intent_id IS NULL THEN request_id ELSE intent_id END, observation_number, observation_id`,
+  ).all().map((row) => Object.freeze({
+    observationId: sqliteText(row.observation_id, "scheduler_observations.observation_id"),
+    requestId: sqliteText(row.request_id, "scheduler_observations.request_id"),
+    intentId: sqliteNullableText(row.intent_id, "scheduler_observations.intent_id"),
+    observationNumber: positive(row.observation_number, "scheduler_observations.observation_number"),
+    externalState: enumText(row.external_state, "scheduler_observations.external_state", SCHEDULER_EXTERNAL_STATE_SET),
+    externalRegistrationId: sqliteNullableText(row.external_registration_id, "scheduler_observations.external_registration_id"),
+    enabled: nullableBoolean(row.enabled, "scheduler_observations.enabled"),
+    nextTriggerAt: row.next_trigger_at === null ? null : timestamp(row.next_trigger_at, "scheduler_observations.next_trigger_at"),
+    outcome: enumText(row.outcome, "scheduler_observations.outcome", outcomes),
+    code: enumText(row.code, "scheduler_observations.code", SCHEDULER_OBSERVATION_CODES),
+    receiptId: sqliteNullableText(row.receipt_id, "scheduler_observations.receipt_id"),
+    receiptSha256: uppercaseSha256(row.receipt_sha256, "scheduler_observations.receipt_sha256"),
+    evidenceReference: sqliteNullableText(row.evidence_reference, "scheduler_observations.evidence_reference"),
+    observedAt: timestamp(row.observed_at, "scheduler_observations.observed_at"),
+  })));
+}
+
+export function readSchedulerReceipts(database: SqliteDatabase): readonly SchedulerVerifiedReceiptRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT verified_receipt_id, intent_id, observation_id, receipt_id, receipt_sha256,
+      external_state, external_registration_id, enabled, next_trigger_at, code, verified_at
+    FROM scheduler_verified_receipts ORDER BY verified_receipt_id`,
+  ).all().map((row) => Object.freeze({
+    verifiedReceiptId: sqliteText(row.verified_receipt_id, "scheduler_verified_receipts.verified_receipt_id"),
+    intentId: sqliteText(row.intent_id, "scheduler_verified_receipts.intent_id"),
+    observationId: sqliteText(row.observation_id, "scheduler_verified_receipts.observation_id"),
+    receiptId: sqliteText(row.receipt_id, "scheduler_verified_receipts.receipt_id"),
+    receiptSha256: uppercaseSha256(row.receipt_sha256, "scheduler_verified_receipts.receipt_sha256"),
+    externalState: enumText(row.external_state, "scheduler_verified_receipts.external_state", SCHEDULER_EXTERNAL_STATE_SET),
+    externalRegistrationId: sqliteNullableText(row.external_registration_id, "scheduler_verified_receipts.external_registration_id"),
+    enabled: nullableBoolean(row.enabled, "scheduler_verified_receipts.enabled"),
+    nextTriggerAt: row.next_trigger_at === null ? null : timestamp(row.next_trigger_at, "scheduler_verified_receipts.next_trigger_at"),
+    code: enumText(row.code, "scheduler_verified_receipts.code", SCHEDULER_RECEIPT_CODE_SET),
+    verifiedAt: timestamp(row.verified_at, "scheduler_verified_receipts.verified_at"),
+  })));
+}
+
+export function readSchedulerFinalizations(database: SqliteDatabase): readonly SchedulerFinalizationRecord[] {
+  const outcomes = new Set<SchedulerFinalizationRecord["outcome"]>(["registered", "removed", "refused", "ambiguous", "failed"]);
+  return Object.freeze(database.prepare(
+    `SELECT finalization_id, intent_id, verified_receipt_id, authorization_decision_id,
+      outcome, code, resulting_registration_status, resulting_registration_revision, finalized_at
+    FROM scheduler_finalizations ORDER BY finalization_id`,
+  ).all().map((row) => Object.freeze({
+    finalizationId: sqliteText(row.finalization_id, "scheduler_finalizations.finalization_id"),
+    intentId: sqliteText(row.intent_id, "scheduler_finalizations.intent_id"),
+    verifiedReceiptId: sqliteNullableText(row.verified_receipt_id, "scheduler_finalizations.verified_receipt_id"),
+    authorizationDecisionId: sqliteText(row.authorization_decision_id, "scheduler_finalizations.authorization_decision_id"),
+    outcome: enumText(row.outcome, "scheduler_finalizations.outcome", outcomes),
+    code: sqliteText(row.code, "scheduler_finalizations.code"),
+    resultingRegistrationStatus: enumText(row.resulting_registration_status, "scheduler_finalizations.resulting_registration_status", SCHEDULER_REGISTRATION_STATUSES),
+    resultingRegistrationRevision: positive(row.resulting_registration_revision, "scheduler_finalizations.resulting_registration_revision"),
+    finalizedAt: timestamp(row.finalized_at, "scheduler_finalizations.finalized_at"),
+  })));
+}
+
+export function readSchedulerEvents(database: SqliteDatabase): readonly SchedulerEventRecord[] {
+  const kinds = new Set<SchedulerEventRecord["eventKind"]>([
+    "scheduler.operation.prepared", "scheduler.operation.denied", "scheduler.operation.executing",
+    "scheduler.operation.observed", "scheduler.operation.verified", "scheduler.operation.finalized",
+    "scheduler.operation.reconciled", "scheduler.inspected",
+  ]);
+  const outcomes = new Set<SchedulerEventRecord["outcome"]>(["accepted", "denied", "refused", "ambiguous", "failed"]);
+  return Object.freeze(database.prepare(
+    `SELECT event_id, operation_id, request_id, intent_id, event_kind, outcome, reason_code,
+      actor_id, correlation_id, schedule_id, config_revision, observation_number,
+      evidence_reference, created_at
+    FROM scheduler_events ORDER BY event_id`,
+  ).all().map((row) => Object.freeze({
+    eventId: sqliteText(row.event_id, "scheduler_events.event_id"),
+    operationId: sqliteText(row.operation_id, "scheduler_events.operation_id"),
+    requestId: sqliteText(row.request_id, "scheduler_events.request_id"),
+    intentId: sqliteNullableText(row.intent_id, "scheduler_events.intent_id"),
+    eventKind: enumText(row.event_kind, "scheduler_events.event_kind", kinds),
+    outcome: enumText(row.outcome, "scheduler_events.outcome", outcomes),
+    reasonCode: sqliteText(row.reason_code, "scheduler_events.reason_code"),
+    actorId: sqliteText(row.actor_id, "scheduler_events.actor_id"),
+    correlationId: sqliteText(row.correlation_id, "scheduler_events.correlation_id"),
+    scheduleId: sqliteText(row.schedule_id, "scheduler_events.schedule_id"),
+    configRevision: positive(row.config_revision, "scheduler_events.config_revision"),
+    observationNumber: nullablePositive(row.observation_number, "scheduler_events.observation_number"),
+    evidenceReference: sqliteNullableText(row.evidence_reference, "scheduler_events.evidence_reference"),
+    createdAt: timestamp(row.created_at, "scheduler_events.created_at"),
+  })));
+}
+
+export function readSchedulerDeliveryObservations(database: SqliteDatabase): readonly SchedulerDeliveryObservationRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT observation_id, request_id, decision_id, adapter_id, adapter_version, dispatcher_target, contract_id,
+      trigger_id_sha256, claimed_deduplication_sha256, schedule_id, config_revision,
+      scheduled_for, delivered_at, received_at, disposition, attachment_role, run_id
+    FROM scheduler_delivery_observations ORDER BY observation_id`,
+  ).all().map((row) => {
+    const contractId = sqliteText(row.contract_id, "scheduler_delivery_observations.contract_id");
+    if (contractId !== "ato.scheduler/v1") throw persistenceFailure("CORRUPT_ROW", "Scheduler delivery contract is unsupported");
+    return Object.freeze({
+      observationId: sqliteText(row.observation_id, "scheduler_delivery_observations.observation_id"),
+      requestId: sqliteNullableText(row.request_id, "scheduler_delivery_observations.request_id"),
+      decisionId: sqliteNullableText(row.decision_id, "scheduler_delivery_observations.decision_id"),
+      adapterId: sqliteText(row.adapter_id, "scheduler_delivery_observations.adapter_id"),
+      adapterVersion: sqliteText(row.adapter_version, "scheduler_delivery_observations.adapter_version"),
+      dispatcherTarget: sqliteText(row.dispatcher_target, "scheduler_delivery_observations.dispatcher_target"),
+      contractId,
+      triggerIdSha256: row.trigger_id_sha256 === null ? null : uppercaseSha256(row.trigger_id_sha256, "scheduler_delivery_observations.trigger_id_sha256"),
+      claimedDeduplicationSha256: row.claimed_deduplication_sha256 === null ? null : uppercaseSha256(row.claimed_deduplication_sha256, "scheduler_delivery_observations.claimed_deduplication_sha256"),
+      scheduleId: sqliteNullableText(row.schedule_id, "scheduler_delivery_observations.schedule_id"),
+      configRevision: nullablePositive(row.config_revision, "scheduler_delivery_observations.config_revision"),
+      scheduledFor: row.scheduled_for === null ? null : timestamp(row.scheduled_for, "scheduler_delivery_observations.scheduled_for"),
+      deliveredAt: row.delivered_at === null ? null : timestamp(row.delivered_at, "scheduler_delivery_observations.delivered_at"),
+      receivedAt: timestamp(row.received_at, "scheduler_delivery_observations.received_at"),
+      disposition: enumText(row.disposition, "scheduler_delivery_observations.disposition", SCHEDULER_DELIVERY_DISPOSITIONS),
+      attachmentRole: enumText(row.attachment_role, "scheduler_delivery_observations.attachment_role", SCHEDULER_DELIVERY_ATTACHMENT_ROLES),
+      runId: sqliteNullableText(row.run_id, "scheduler_delivery_observations.run_id"),
+    });
+  }));
+}
+
+export function readSchedulerScheduledTuples(database: SqliteDatabase): readonly SchedulerScheduledTupleRecord[] {
+  return Object.freeze(database.prepare(
+    `SELECT schedule_id, config_revision, scheduled_for, canonical_observation_id, run_id, created_at
+    FROM scheduler_scheduled_tuples ORDER BY schedule_id, config_revision, scheduled_for`,
+  ).all().map((row) => Object.freeze({
+    scheduleId: sqliteText(row.schedule_id, "scheduler_scheduled_tuples.schedule_id"),
+    configRevision: positive(row.config_revision, "scheduler_scheduled_tuples.config_revision"),
+    scheduledFor: timestamp(row.scheduled_for, "scheduler_scheduled_tuples.scheduled_for"),
+    canonicalObservationId: sqliteText(row.canonical_observation_id, "scheduler_scheduled_tuples.canonical_observation_id"),
+    runId: sqliteText(row.run_id, "scheduler_scheduled_tuples.run_id"),
+    createdAt: timestamp(row.created_at, "scheduler_scheduled_tuples.created_at"),
+  })));
+}
 
 export interface GrantRelationRecord {
   readonly grantId: string;

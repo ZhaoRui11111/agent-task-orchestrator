@@ -9,6 +9,7 @@ import {
   DISPATCHER_AUTHORIZATION_ACTIONS,
   MANUAL_AUTHORIZATION_ACTIONS,
   PHASE3_AUTHORIZATION_ACTIONS,
+  SCHEDULER_AUTHORIZATION_ACTIONS,
   WORKSPACE_STAGE_AUTHORIZATION_ACTIONS,
   createApplicationService,
   currentSchemaVersion,
@@ -436,16 +437,28 @@ test("fresh bootstrap advances through each confirmed capability vocabulary exac
     assert.equal(state.grants.some(
       (grant) => grant.actorId === "owner" && grant.action === "completion.accept" && grant.revokedAt === null,
     ), true);
-    assert.equal(service.upgrade({
+    const schedulerUpgraded = service.upgrade({
       kind: "authorization.capability.upgrade",
       expiresAt: "2026-09-27T12:00:00.000Z",
+    });
+    assert.equal(schedulerUpgraded.ok, true);
+    assert.equal(schedulerUpgraded.value.epochRevision, 6);
+    assert.equal(schedulerUpgraded.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
+    state = readApplicationStateForOwner(store);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 7);
+    assert.equal(SCHEDULER_AUTHORIZATION_ACTIONS.every((action) => state.grants.some(
+      (grant) => grant.actorId === "owner" && grant.action === action && grant.revokedAt === null,
+    )), true);
+    assert.equal(service.upgrade({
+      kind: "authorization.capability.upgrade",
+      expiresAt: "2026-09-28T12:00:00.000Z",
     }).error.code, "CAPABILITY_UPGRADE_NOT_ELIGIBLE");
 
     await store.close();
     store = await openPersistence(fixture.layout, { applicationVersion: "fresh-upgrades-restart" });
     state = readApplicationStateForOwner(store);
     assert.equal(state.identity.actorId, "owner");
-    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 6);
+    assert.equal(state.epochs.at(-1)?.vocabularyVersion, 7);
     assert.equal(state.grants.some(
       (grant) => grant.actorId === "owner" && grant.action === "execution.claim" && grant.revokedAt === null,
     ), true);

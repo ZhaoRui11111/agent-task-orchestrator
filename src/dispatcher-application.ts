@@ -44,10 +44,17 @@ import {
   type ExecutionOperationIntent,
   type ExecutionOperationRequestRecord,
   type RegisteredProject,
+  type SchedulerConfigurationRecord,
 } from "./persistence/application-repository.ts";
 import { PersistenceError } from "./persistence/errors.ts";
 import type { PersistenceStore } from "./persistence/store.ts";
 import { canonicalJson, isCanonicalUtcTimestamp, sha256 } from "./persistence/values.ts";
+import { schedulerDeliveryIdentitySha256 } from "./persistence/scheduler-receipt-digest.ts";
+import {
+  SCHEDULER_CONTRACT_ID,
+  parseSchedulerDispatchTrigger,
+  type SchedulerDispatchTrigger,
+} from "./scheduler-port.ts";
 
 export const DISPATCHER_ERROR_CODES = Object.freeze([
   "INVALID_INPUT",
@@ -193,6 +200,7 @@ export interface DispatcherMemberView {
 
 export interface DispatcherApplicationService {
   start(command: DispatcherStartCommand): DispatcherResult<DispatcherRunView>;
+  deliverScheduled(trigger: SchedulerDispatchTrigger): DispatcherResult<DispatcherRunView>;
   inspect(runId: string): DispatcherResult<DispatcherRunView>;
   beginReconciliation(command: DispatcherBeginReconciliationCommand): DispatcherResult<DispatcherRunView>;
   reconciliationInventory(runId: string): DispatcherResult<readonly DispatcherReconciliationResource[]>;
@@ -207,6 +215,11 @@ export interface DispatcherApplicationService {
 export interface DispatcherApplicationOptions {
   readonly adapterId: string;
   readonly adapterVersion: string;
+  readonly schedulerIngress?: Readonly<{
+    readonly adapterId: string;
+    readonly adapterVersion: string;
+    readonly dispatcherTarget: string;
+  }>;
   readonly executionLeaseSeconds?: number;
   readonly operationDeadlineSeconds?: number;
 }
@@ -390,6 +403,41 @@ function dispatchEvaluation(state: ApplicationState, trusted: TrustedContext): A
     confirmed: true,
     grants: state.grants,
   });
+}
+function conservativeDeniedDispatchEvaluation(): AuthorizationEvaluation {
+  return Object.freeze({
+    allowed: false,
+    reason: "grant_missing" as const,
+    policy: "allow" as const,
+    grantId: null,
+    grantRevision: null,
+  });
+}
+function allowedDispatchEvaluationIsCurrent(
+  preflight: ApplicationState,
+  current: ApplicationState,
+  evaluation: AuthorizationEvaluation,
+): boolean {
+  if (!evaluation.allowed || evaluation.grantId === null || evaluation.grantRevision === null) return false;
+  const before = preflight.grants.find((grant) =>
+    grant.grantId === evaluation.grantId && grant.revision === evaluation.grantRevision);
+  const after = current.grants.find((grant) => grant.grantId === evaluation.grantId);
+  return before !== undefined && after !== undefined && canonicalJson(before) === canonicalJson(after);
+}
+function schedulerConfigurationIsCurrent(
+  state: ApplicationState,
+  configuration: SchedulerConfigurationRecord,
+  projectRootReceipt: ProjectRootIdentity | null | undefined,
+): boolean {
+  if (configuration.scopeKind === "runtime") return projectRootReceipt === null;
+  const project = configuration.projectId === null
+    ? undefined
+    : state.projects.find((candidate) => candidate.projectId === configuration.projectId);
+  return project !== undefined && projectRootReceipt !== undefined && projectRootReceipt !== null &&
+    sameProjectIdentity(project, projectRootReceipt) &&
+    project.resourceRevision === configuration.projectResourceRevision &&
+    project.configRevision === configuration.projectConfigRevision &&
+    state.domain.projects.find((candidate) => candidate.id === project.projectId)?.enabled === true;
 }
 function projectEvaluation(
   state: ApplicationState,
@@ -818,6 +866,19 @@ function createDispatcherApplicationServiceInternal(
   if (!operationalIdentifier(options.adapterId) || !operationalIdentifier(options.adapterVersion)) {
     throw new TypeError("Dispatcher adapter identity is invalid");
   }
+  const schedulerIngressRecord = options.schedulerIngress === undefined
+    ? null
+    : exactRecord(options.schedulerIngress, ["adapterId", "adapterVersion", "dispatcherTarget"]);
+  if (options.schedulerIngress !== undefined && (
+    schedulerIngressRecord === null || !operationalIdentifier(schedulerIngressRecord.adapterId) ||
+    !operationalIdentifier(schedulerIngressRecord.adapterVersion) ||
+    !operationalIdentifier(schedulerIngressRecord.dispatcherTarget)
+  )) throw new TypeError("Scheduled dispatcher ingress binding is invalid");
+  const schedulerIngress = schedulerIngressRecord === null ? null : Object.freeze({
+    adapterId: schedulerIngressRecord.adapterId as string,
+    adapterVersion: schedulerIngressRecord.adapterVersion as string,
+    dispatcherTarget: schedulerIngressRecord.dispatcherTarget as string,
+  });
   const executionLeaseSeconds = options.executionLeaseSeconds ?? 300;
   const operationDeadlineSeconds = options.operationDeadlineSeconds ?? 86400;
   if (!exactPositiveRange(executionLeaseSeconds, 30, 3600) ||
@@ -919,6 +980,223 @@ function createDispatcherApplicationServiceInternal(
         return succeeded(runView(transaction.read(), readbackRun(transaction, runId!)), requestId!, correlationId!);
       });
       hooks.afterStage?.("trigger-committed");
+      return result;
+    } catch (error) {
+      return mapPersistence(error);
+    }
+  };
+
+  const deliverScheduled = (value: SchedulerDispatchTrigger): DispatcherResult<DispatcherRunView> => {
+    if (schedulerIngress === null) {
+      return failed("INVALID_INPUT", "Scheduled dispatcher ingress is not configured");
+    }
+    const trigger = parseSchedulerDispatchTrigger(value);
+    const trusted = context(ingress);
+    if (trusted === null) return failed("INVALID_INPUT", "Trusted dispatcher ingress is invalid");
+    if (trigger === null) {
+      const allocated = ids(ingress, ["observation"]);
+      if (allocated === null) return failed("INVALID_INPUT", "Trusted scheduler observation identity is invalid");
+      try {
+        withApplicationTransaction(store, (transaction) => {
+          const runtime = persistedRuntimeFailure(transaction.read(), trusted);
+          if (runtime !== null) throw new PersistenceError("REVISION_CONFLICT", "Trusted runtime changed before scheduler observation");
+          transaction.insertSchedulerDeliveryObservation(Object.freeze({
+            observationId: allocated[0]!,
+            requestId: null,
+            decisionId: null,
+            adapterId: schedulerIngress.adapterId,
+            adapterVersion: schedulerIngress.adapterVersion,
+            dispatcherTarget: schedulerIngress.dispatcherTarget,
+            contractId: SCHEDULER_CONTRACT_ID,
+            triggerIdSha256: null,
+            claimedDeduplicationSha256: null,
+            scheduleId: null,
+            configRevision: null,
+            scheduledFor: null,
+            deliveredAt: null,
+            receivedAt: trusted.now,
+            disposition: "malformed" as const,
+            attachmentRole: "none" as const,
+            runId: null,
+          }));
+        });
+        hooks.afterStage?.("scheduled-delivery-malformed-observed");
+        return failed("INVALID_INPUT", "Scheduled dispatcher delivery is invalid");
+      } catch (error) {
+        return mapPersistence(error);
+      }
+    }
+    let preflight: ApplicationState;
+    try { preflight = readApplicationStateForOwner(store); } catch (error) { return mapPersistence(error); }
+    const runtime = runtimeFailure(preflight, trusted, store);
+    if (runtime !== null) return runtime;
+    const preflightEvaluation = dispatchEvaluation(preflight, trusted);
+    const allocated = ids(ingress, ["observation", "request", "correlation", "decision", "audit", "run"]);
+    if (allocated === null) return failed("INVALID_INPUT", "Trusted scheduled dispatcher identities are invalid");
+    const [observationId, requestId, correlationId, decisionId, auditId, runId] = allocated as readonly string[];
+    const identity = Object.freeze({ requestId: requestId!, correlationId: correlationId! });
+    const idempotencyIdentity = stableId("dispatch-scheduled-observation", observationId!);
+    try {
+      hooks.afterStage?.("scheduled-delivery-preflight");
+      const preflightConfiguration = preflight.schedulerConfigurations.find((candidate) =>
+        candidate.scheduleId === trigger.scheduleId && candidate.configRevision === trigger.configRevision);
+      let projectRootReceipt: ProjectRootIdentity | null | undefined;
+      if (preflightConfiguration?.scopeKind === "runtime") {
+        projectRootReceipt = null;
+      } else if (preflightConfiguration?.projectId !== null && preflightConfiguration?.projectId !== undefined) {
+        const preflightProject = preflight.projects.find((candidate) =>
+          candidate.projectId === preflightConfiguration.projectId);
+        if (preflightProject !== undefined) {
+          try {
+            projectRootReceipt = revalidateProjectRoot(preflightProject, store.layout.root);
+          } catch {
+            projectRootReceipt = undefined;
+          }
+        }
+      }
+      const result = withApplicationTransaction(store, (transaction) => {
+        const current = transaction.read();
+        const currentRuntime = persistedRuntimeFailure(current, trusted);
+        if (currentRuntime !== null) return Object.freeze({ ...currentRuntime, ...identity });
+        const evaluation = preflightEvaluation.allowed &&
+            !allowedDispatchEvaluationIsCurrent(preflight, current, preflightEvaluation)
+          ? conservativeDeniedDispatchEvaluation()
+          : preflightEvaluation;
+        transaction.insertDispatcherTriggerRequest(Object.freeze({
+          requestId: requestId!,
+          observationId: observationId!,
+          idempotencyKey: idempotencyIdentity,
+          correlationId: correlationId!,
+          actorId: trusted.actor.actorId,
+          action: "dispatch.run" as const,
+          workerOwnerId: trusted.ownerId,
+          requestedLeaseSeconds: executionLeaseSeconds,
+          result: evaluation.allowed ? "allow" as const : "deny" as const,
+          createdAt: trusted.now,
+        }));
+        transaction.insertDispatcherAuthorizationDecision(Object.freeze({
+          decisionId: decisionId!,
+          requestId: requestId!,
+          actorId: trusted.actor.actorId,
+          action: "dispatch.run" as const,
+          result: evaluation.allowed ? "allow" as const : "deny" as const,
+          reason: evaluation.reason,
+          policy: evaluation.policy,
+          grantId: evaluation.grantId,
+          grantRevision: evaluation.grantRevision,
+          createdAt: trusted.now,
+        }));
+        const deliveryBase = Object.freeze({
+          observationId: observationId!,
+          requestId: requestId!,
+          decisionId: decisionId!,
+          adapterId: schedulerIngress.adapterId,
+          adapterVersion: schedulerIngress.adapterVersion,
+          dispatcherTarget: schedulerIngress.dispatcherTarget,
+          contractId: SCHEDULER_CONTRACT_ID,
+          triggerIdSha256: schedulerDeliveryIdentitySha256("trigger", trigger.triggerId),
+          claimedDeduplicationSha256: schedulerDeliveryIdentitySha256(
+            "claimed_deduplication", trigger.claimedDeduplication,
+          ),
+          scheduleId: trigger.scheduleId,
+          configRevision: trigger.configRevision,
+          scheduledFor: trigger.scheduledFor,
+          deliveredAt: trigger.observedAt,
+          receivedAt: trusted.now,
+        });
+        if (!evaluation.allowed) {
+          transaction.insertDispatcherAudit(dispatcherAudit(
+            auditId!, requestId!, decisionId!, null, "dispatch.denied", false,
+            trusted.actor.actorId, correlationId!, evaluation.reason, trusted.now,
+          ));
+          transaction.insertSchedulerDeliveryObservation(Object.freeze({
+            ...deliveryBase,
+            disposition: "authorization_denied" as const,
+            attachmentRole: "none" as const,
+            runId: null,
+          }));
+          return failed("AUTHORIZATION_DENIED", "Current explicit dispatch.run grant did not allow the scheduled trigger", identity);
+        }
+        const configuration = current.schedulerConfigurations.find((candidate) =>
+          candidate.scheduleId === trigger.scheduleId && candidate.configRevision === trigger.configRevision);
+        const registration = current.schedulerRegistrations.find((candidate) =>
+          candidate.scheduleId === trigger.scheduleId && candidate.configRevision === trigger.configRevision);
+        const latestConfigRevision = Math.max(0, ...current.schedulerConfigurations
+          .filter((candidate) => candidate.scheduleId === trigger.scheduleId)
+          .map((candidate) => candidate.configRevision));
+        const configurationRequest = configuration === undefined ? undefined : current.schedulerOperationRequests.find((candidate) =>
+          candidate.operationId === configuration.createdByOperationId && candidate.operation === "register");
+        const configurationIntent = configurationRequest === undefined ? undefined : current.schedulerIntents.find((candidate) =>
+          candidate.requestId === configurationRequest.requestId && candidate.operation === "register");
+        if (
+          configuration === undefined || registration === undefined || latestConfigRevision !== trigger.configRevision ||
+          registration.status !== "active" || registration.enabled !== true ||
+          !schedulerConfigurationIsCurrent(current, configuration, projectRootReceipt) ||
+          configuration.dispatcherTarget !== schedulerIngress.dispatcherTarget ||
+          configurationIntent?.adapterId !== schedulerIngress.adapterId ||
+          configurationIntent.adapterVersion !== schedulerIngress.adapterVersion ||
+          trigger.scheduledFor > trigger.observedAt || trigger.observedAt > trusted.now
+        ) {
+          transaction.insertSchedulerDeliveryObservation(Object.freeze({
+            ...deliveryBase,
+            disposition: "rejected_stale_config" as const,
+            attachmentRole: "none" as const,
+            runId: null,
+          }));
+          return failed("STALE_REVISION", "Scheduled dispatcher configuration is not current and active", identity);
+        }
+        const tuple = current.schedulerScheduledTuples.find((candidate) =>
+          candidate.scheduleId === trigger.scheduleId && candidate.configRevision === trigger.configRevision &&
+          candidate.scheduledFor === trigger.scheduledFor);
+        if (tuple !== undefined) {
+          const run = current.dispatcherRuns.find((candidate) => candidate.runId === tuple.runId);
+          if (run === undefined) throw new PersistenceError("CORRUPT_ROW", "Scheduled tuple run is absent");
+          transaction.insertSchedulerDeliveryObservation(Object.freeze({
+            ...deliveryBase,
+            disposition: "accepted" as const,
+            attachmentRole: "duplicate" as const,
+            runId: run.runId,
+          }));
+          return succeeded(runView(transaction.read(), run), requestId!, correlationId!, true);
+        }
+        const run: DispatcherRunRecord = Object.freeze({
+          runId: runId!,
+          observationId: observationId!,
+          requestId: requestId!,
+          decisionId: decisionId!,
+          actorId: trusted.actor.actorId,
+          ownerId: trusted.ownerId,
+          ownerRevision: 1,
+          runRevision: 1,
+          requestedLeaseSeconds: executionLeaseSeconds,
+          heartbeatAt: trusted.now,
+          leaseExpiresAt: leaseExpiry(trusted.now, executionLeaseSeconds),
+          status: "starting" as const,
+          createdAt: trusted.now,
+          updatedAt: trusted.now,
+        });
+        transaction.insertDispatcherRun(run);
+        transaction.insertDispatcherAudit(dispatcherAudit(
+          auditId!, requestId!, decisionId!, runId!, "dispatch.started", true,
+          trusted.actor.actorId, correlationId!, "started", trusted.now,
+        ));
+        transaction.insertSchedulerDeliveryObservation(Object.freeze({
+          ...deliveryBase,
+          disposition: "accepted" as const,
+          attachmentRole: "canonical" as const,
+          runId: run.runId,
+        }));
+        transaction.insertSchedulerScheduledTuple(Object.freeze({
+          scheduleId: trigger.scheduleId,
+          configRevision: trigger.configRevision,
+          scheduledFor: trigger.scheduledFor,
+          canonicalObservationId: observationId!,
+          runId: run.runId,
+          createdAt: trusted.now,
+        }));
+        return succeeded(runView(transaction.read(), readbackRun(transaction, run.runId)), requestId!, correlationId!);
+      });
+      hooks.afterStage?.("scheduled-delivery-committed");
       return result;
     } catch (error) {
       return mapPersistence(error);
@@ -1523,6 +1801,7 @@ function createDispatcherApplicationServiceInternal(
 
   return Object.freeze({
     start,
+    deliverScheduled,
     inspect,
     beginReconciliation,
     reconciliationInventory: reconciliationInventoryFor,

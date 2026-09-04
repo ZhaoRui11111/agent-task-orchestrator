@@ -203,7 +203,7 @@ function runPhase2CliBoundary(entryPath, label, runtimeRoot, projectRoot, cwd, e
     "task", "mark-ready", "--project-id", "parity-project", "--expected-project-resource-revision", "1",
     "--task-id", "parity-task", "--expected-task-revision", "1",
   ]).body.ok, `${label} CLI task readiness drifted`);
-  for (const expected of [23, 29, 30]) {
+  for (const expected of [23, 29, 30, 35, 47, 50]) {
     const upgraded = invokeJson([
       "authorization", "upgrade", "--expires-at", expiry, "--confirm", "UPGRADE LOCAL CAPABILITIES",
     ]);
@@ -451,6 +451,10 @@ const expectedEntries = [
   "package/dist/persistence/runtime.d.ts.map",
   "package/dist/persistence/runtime.js",
   "package/dist/persistence/runtime.js.map",
+  "package/dist/persistence/scheduler-receipt-digest.d.ts",
+  "package/dist/persistence/scheduler-receipt-digest.d.ts.map",
+  "package/dist/persistence/scheduler-receipt-digest.js",
+  "package/dist/persistence/scheduler-receipt-digest.js.map",
   "package/dist/persistence/store.d.ts",
   "package/dist/persistence/store.d.ts.map",
   "package/dist/persistence/store.js",
@@ -471,6 +475,14 @@ const expectedEntries = [
   "package/dist/project-registry.d.ts.map",
   "package/dist/project-registry.js",
   "package/dist/project-registry.js.map",
+  "package/dist/scheduler-application.d.ts",
+  "package/dist/scheduler-application.d.ts.map",
+  "package/dist/scheduler-application.js",
+  "package/dist/scheduler-application.js.map",
+  "package/dist/scheduler-port.d.ts",
+  "package/dist/scheduler-port.d.ts.map",
+  "package/dist/scheduler-port.js",
+  "package/dist/scheduler-port.js.map",
   "package/dist/workspace-git-adapter.d.ts",
   "package/dist/workspace-git-adapter.d.ts.map",
   "package/dist/workspace-git-adapter.js",
@@ -487,7 +499,7 @@ const expectedEntries = [
   "package/package.json",
 ].sort();
 
-invariant(expectedEntries.length === 228, `packed expected inventory count drifted: ${expectedEntries.length}`);
+invariant(expectedEntries.length === 240, `packed expected inventory count drifted: ${expectedEntries.length}`);
 
 const packageManagerVersion = pnpm(["--version"], repoRoot).stdout.trim();
 invariant(packageManagerVersion === "11.19.0", `pnpm version drifted: ${packageManagerVersion}`);
@@ -620,6 +632,8 @@ export async function resolve(specifier, context, nextResolve) {
     path.join(consumer, "index.ts"),
     `import {
   AUTHORIZATION_ACTIONS,
+  SCHEDULER_CONTRACT_ID,
+  SCHEDULER_STAGE_AUTHORIZATION_ACTIONS,
   WORKSPACE_CONTRACT_ID,
   WINDOWS_GIT_WORKSPACE_ADAPTER_ID,
   WINDOWS_GIT_WORKSPACE_ADAPTER_VERSION,
@@ -628,12 +642,16 @@ export async function resolve(specifier, context, nextResolve) {
   createManualExecutionBackend,
   createProductRuntime,
   createReliableExecutionService,
+  createSchedulerApplicationService,
   createWorkspaceApplicationService,
   createWindowsGitWorkspaceBackend,
   currentSchemaVersion,
   inspectProjectRoot,
   parseWorkspaceBackendRequest,
   parseWorkspaceBackendResult,
+  parseSchedulerBackendRequest,
+  parseSchedulerBackendResult,
+  parseSchedulerDispatchTrigger,
   type ApplicationIngress,
   type ExecutionClaimCommand,
   type ExecutionIngress,
@@ -643,6 +661,9 @@ export async function resolve(specifier, context, nextResolve) {
   type BackupManifest,
   type OpenPersistenceOptions,
   type ProductRuntime,
+  type SchedulerApplicationService,
+  type SchedulerBackend,
+  type SchedulerBackendRequest,
   type WorkspaceBackend,
   type WorkspaceBackendRequest,
   type WindowsGitWorkspaceAdapterConfiguration,
@@ -665,6 +686,8 @@ void backupManifest;
 void restoreReceipt;
 void currentSchemaVersion();
 void AUTHORIZATION_ACTIONS;
+void SCHEDULER_CONTRACT_ID;
+void SCHEDULER_STAGE_AUTHORIZATION_ACTIONS;
 void WORKSPACE_CONTRACT_ID;
 void WINDOWS_GIT_WORKSPACE_ADAPTER_ID;
 void WINDOWS_GIT_WORKSPACE_ADAPTER_VERSION;
@@ -673,11 +696,15 @@ void createExecutionApplicationService;
 void createManualExecutionBackend;
 void createProductRuntime;
 void createReliableExecutionService;
+void createSchedulerApplicationService;
 void createWorkspaceApplicationService;
 void createWindowsGitWorkspaceBackend;
 void inspectProjectRoot;
 void parseWorkspaceBackendRequest;
 void parseWorkspaceBackendResult;
+void parseSchedulerBackendRequest;
+void parseSchedulerBackendResult;
+void parseSchedulerDispatchTrigger;
 const ingress = null as unknown as ApplicationIngress;
 void ingress;
 const executionIngress = null as unknown as ExecutionIngress;
@@ -688,6 +715,9 @@ const reliableIngress = null as unknown as ReliableExecutionIngress;
 const backend = null as unknown as ExecutionBackend;
 const outcomeControl = null as unknown as ManualOutcomeControl;
 const productRuntime = null as unknown as ProductRuntime;
+const schedulerApplication = null as unknown as SchedulerApplicationService;
+const schedulerBackend = null as unknown as SchedulerBackend;
+const schedulerRequest = null as unknown as SchedulerBackendRequest;
 const workspaceBackend = null as unknown as WorkspaceBackend;
 const workspaceRequest = null as unknown as WorkspaceBackendRequest;
 const windowsGitConfiguration = null as unknown as WindowsGitWorkspaceAdapterConfiguration;
@@ -696,6 +726,9 @@ void reliableIngress;
 void backend;
 void outcomeControl;
 void productRuntime;
+void schedulerApplication;
+void schedulerBackend;
+void schedulerRequest;
 void workspaceBackend;
 void workspaceRequest;
 void windowsGitConfiguration;
@@ -750,6 +783,11 @@ void windowsGitBackend;
           /CodexExecution|CodexSdk|PinnedCodex|createCodex|createInjectedCodex|createPinnedCodex|CodexWorkspace|VerifiedCodex|CODEX_EXECUTION_ADAPTER_ID/u.test(name));
         if (forbiddenCodexExports.length !== 0) {
           throw new Error("package root exposes the package-private Codex execution composition");
+        }
+        const forbiddenSchedulerExports = Object.keys(m).filter((name) =>
+          /FakeScheduler|SCHEDULER_.*ADAPTER|create.*SchedulerBackend/u.test(name));
+        if (forbiddenSchedulerExports.length !== 0) {
+          throw new Error("package root exposes a concrete or test-only scheduler backend");
         }
         const layout = m.prepareRuntimeLayout({
           runtimeRoot: process.env.ATO_SMOKE_RUNTIME,
@@ -823,10 +861,17 @@ void windowsGitBackend;
         trustedMilliseconds = Date.parse(issuedAt) + 5000;
         const completionIntegrationUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
         if (!completionIntegrationUpgrade.ok || completionIntegrationUpgrade.value.epochRevision !== 5 ||
-            completionIntegrationUpgrade.value.capabilityCount !== m.AUTHORIZATION_ACTIONS.length) {
+            completionIntegrationUpgrade.value.capabilityCount !== m.PHASE3_AUTHORIZATION_ACTIONS.length) {
           throw new Error("package completion/integration capability upgrade was rejected");
         }
         trustedMilliseconds = Date.parse(issuedAt) + 6000;
+        const schedulerUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
+        if (!schedulerUpgrade.ok || schedulerUpgrade.value.epochRevision !== 6 ||
+            schedulerUpgrade.value.capabilityCount !== m.SCHEDULER_STAGE_AUTHORIZATION_ACTIONS.length ||
+            schedulerUpgrade.value.capabilityCount !== m.AUTHORIZATION_ACTIONS.length) {
+          throw new Error("package scheduler capability upgrade was rejected");
+        }
+        trustedMilliseconds = Date.parse(issuedAt) + 7000;
         let manualBackend = m.createManualExecutionBackend(store, { ingress: trusted });
         let product = m.createProductRuntime(store, trusted, manualBackend, manualBackend);
         const dispatched = product.dispatchRun({
@@ -861,7 +906,7 @@ void windowsGitBackend;
           throw new Error("package product inspection did not bind the dispatched execution");
         }
         const executionId = inspected.value.executionId;
-        trustedMilliseconds = Date.parse(issuedAt) + 7000;
+        trustedMilliseconds = Date.parse(issuedAt) + 8000;
         const reportCommand = {
           kind: "manual.outcome-report",
           ...publicCommon(executionId, "package-report"),
@@ -882,7 +927,7 @@ void windowsGitBackend;
         product = m.createProductRuntime(store, trusted, manualBackend, manualBackend);
         const reportReplay = product.recordManualOutcome(reportCommand);
         if (!reportReplay.ok || !reportReplay.value.replayed) throw new Error("package Manual restart replay was not stable");
-        trustedMilliseconds = Date.parse(issuedAt) + 8000;
+        trustedMilliseconds = Date.parse(issuedAt) + 9000;
         const completed = product.acceptManualCompletion({
           kind: "execution.accept-manual-completion",
           ...publicCommon(executionId, "package-completion"),
@@ -904,6 +949,12 @@ void windowsGitBackend;
           claim: inspected.value.fencingToken === 1 && inspected.value.taskRevision === 3,
           manual: inspected.value.lifecycle === "queued" && reported.value.lifecycle === "turn_succeeded" && completed.value.lifecycle === "completed",
           dispatcherExport: typeof m.createManualDispatcher === "function",
+          schedulerExport: m.SCHEDULER_CONTRACT_ID === "ato.scheduler/v1" &&
+            m.SCHEDULER_STAGE_AUTHORIZATION_ACTIONS.length === 50 &&
+            typeof m.createSchedulerApplicationService === "function" &&
+            typeof m.parseSchedulerBackendRequest === "function" &&
+            typeof m.parseSchedulerBackendResult === "function" &&
+            typeof m.parseSchedulerDispatchTrigger === "function",
           workspaceExport: m.WORKSPACE_CONTRACT_ID === "ato.workspace/v2" &&
             typeof m.createWorkspaceApplicationService === "function" &&
             typeof m.parseWorkspaceBackendRequest === "function" &&
@@ -940,6 +991,7 @@ void windowsGitBackend;
       imported.claim === true &&
       imported.manual === true &&
       imported.dispatcherExport === true &&
+      imported.schedulerExport === true &&
       imported.workspaceExport === true &&
       imported.schema === 1 &&
       imported.backup === true,

@@ -18,6 +18,7 @@ import {
   readApplicationStateForOwner,
   withApplicationTransaction,
   type NewGrantRecord,
+  type ApplicationState,
   type RegisteredProject,
 } from "./persistence/application-repository.ts";
 import type {
@@ -56,6 +57,7 @@ import {
   CLAIM_CAPABILITY_ACTION_SET_SHA256,
   DISPATCHER_CAPABILITY_ACTION_SET_SHA256,
   MANUAL_CAPABILITY_ACTION_SET_SHA256,
+  PHASE3_CAPABILITY_ACTION_SET_SHA256,
   WORKSPACE_CAPABILITY_ACTION_SET_SHA256,
   assessCapabilityUpgrade,
   assessRenewal,
@@ -83,6 +85,17 @@ import {
   projectRegistrationMutation,
   sameProjectIds,
 } from "./application-domain.ts";
+
+function authorizationMutationTimeIsCurrent(state: ApplicationState, now: string): boolean {
+  const schedulerFloor = state.schedulerAuthorizationDecisions
+    .reduce<string | null>((latest, decision) => latest === null || decision.createdAt > latest
+      ? decision.createdAt : latest, null);
+  return schedulerFloor === null || now >= schedulerFloor;
+}
+
+function changesAuthorizationGrants(command: ApplicationCommand): boolean {
+  return command.kind === "authorization.grant.issue" || command.kind === "authorization.grant.revoke";
+}
 
 function createApplicationServiceInternal(
   store: PersistenceStore,
@@ -193,6 +206,9 @@ function createApplicationServiceInternal(
     const runtimeIdentity = checkedRuntimeRoot(store.layout.root, identity);
     if ("ok" in runtimeIdentity) return runtimeIdentity;
     const preflightState = readApplicationStateForOwner(store);
+    if (!authorizationMutationTimeIsCurrent(preflightState, identity.now)) {
+      return failed("STALE_REVISION", "Trusted capability-upgrade time precedes durable scheduler authorization evidence", identity);
+    }
     const preflightAssessment = assessCapabilityUpgrade(preflightState, identity, runtimeIdentity);
     if (typeof preflightAssessment === "string") {
       return preflightAssessment === "not_initialized"
@@ -224,6 +240,9 @@ function createApplicationServiceInternal(
     hooks.beforeTransaction?.();
     return withApplicationTransaction(store, (transaction) => {
       const state = transaction.read();
+      if (!authorizationMutationTimeIsCurrent(state, identity.now)) {
+        return failed("STALE_REVISION", "Trusted capability-upgrade time precedes durable scheduler authorization evidence", identity);
+      }
       if (
         applicationStateSha256(state) !== preflightStateSha256 ||
         (state.epochs.at(-1)?.epochRevision ?? 0) !== preflightEpochRevision
@@ -262,7 +281,9 @@ function createApplicationServiceInternal(
               ? DISPATCHER_CAPABILITY_ACTION_SET_SHA256
               : assessment.targetVocabularyVersion === 5
                 ? WORKSPACE_CAPABILITY_ACTION_SET_SHA256
-                : CURRENT_CAPABILITY_ACTION_SET_SHA256,
+                : assessment.targetVocabularyVersion === 6
+                  ? PHASE3_CAPABILITY_ACTION_SET_SHA256
+                  : CURRENT_CAPABILITY_ACTION_SET_SHA256,
         requestId: identity.requestId,
         createdAt: identity.now,
         expiresAt: command.expiresAt,
@@ -338,6 +359,9 @@ function createApplicationServiceInternal(
     const runtimeIdentity = checkedRuntimeRoot(store.layout.root, identity);
     if ("ok" in runtimeIdentity) return runtimeIdentity;
     const preflightState = readApplicationStateForOwner(store);
+    if (!authorizationMutationTimeIsCurrent(preflightState, identity.now)) {
+      return failed("STALE_REVISION", "Trusted capability-renewal time precedes durable scheduler authorization evidence", identity);
+    }
     const preflightAssessment = assessRenewal(preflightState, identity, runtimeIdentity);
     if (preflightAssessment === "not_initialized") {
       return failed("BOOTSTRAP_REQUIRED", "Trusted authorization bootstrap has not been completed", identity);
@@ -370,6 +394,9 @@ function createApplicationServiceInternal(
     hooks.beforeTransaction?.();
     return withApplicationTransaction(store, (transaction) => {
       const state = transaction.read();
+      if (!authorizationMutationTimeIsCurrent(state, identity.now)) {
+        return failed("STALE_REVISION", "Trusted capability-renewal time precedes durable scheduler authorization evidence", identity);
+      }
       if (
         applicationStateSha256(state) !== preflightStateSha256 ||
         (state.identity !== null) !== preflightIdentityPresent ||
@@ -411,7 +438,9 @@ function createApplicationServiceInternal(
                 ? DISPATCHER_CAPABILITY_ACTION_SET_SHA256
                 : assessment.vocabularyVersion === 5
                   ? WORKSPACE_CAPABILITY_ACTION_SET_SHA256
-                  : CURRENT_CAPABILITY_ACTION_SET_SHA256,
+                  : assessment.vocabularyVersion === 6
+                    ? PHASE3_CAPABILITY_ACTION_SET_SHA256
+                    : CURRENT_CAPABILITY_ACTION_SET_SHA256,
         requestId: identity.requestId,
         createdAt: identity.now,
         expiresAt: command.expiresAt,
@@ -491,6 +520,9 @@ function createApplicationServiceInternal(
       const refreshedIdentity = refreshOperationTime(identity, ingress);
       if (refreshedIdentity === null) return failed("INVALID_INPUT", "Trusted operation time could not be refreshed", identity);
       identity = refreshedIdentity;
+    }
+    if (changesAuthorizationGrants(command) && !authorizationMutationTimeIsCurrent(preflightState, identity.now)) {
+      return failed("STALE_REVISION", "Trusted grant-mutation time precedes durable scheduler authorization evidence", identity);
     }
 
     let issuedGrantId: string | null = null;
@@ -580,6 +612,9 @@ function createApplicationServiceInternal(
     return withApplicationTransaction(store, (transaction) => {
       const state = transaction.read();
       if (state.bootstrap === null) return failed("BOOTSTRAP_REQUIRED", "Trusted authorization bootstrap has not been completed", identity);
+      if (changesAuthorizationGrants(command) && !authorizationMutationTimeIsCurrent(state, identity.now)) {
+        return failed("STALE_REVISION", "Trusted grant-mutation time precedes durable scheduler authorization evidence", identity);
+      }
       if (!sameRootIdentity(state.bootstrap, currentRuntimeIdentity)) {
         return failed("AUTHORIZATION_DENIED", "Authorization bootstrap is bound to another runtime-root identity", identity, { reason: "scope_mismatch" });
       }

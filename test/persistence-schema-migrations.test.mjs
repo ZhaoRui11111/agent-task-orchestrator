@@ -24,7 +24,7 @@ import {
   expectPersistenceError,
 } from "./persistence-test-helpers.mjs";
 
-const BASELINE_CHECKSUM = "E17C6ACFF0891C3B8FD6F1DADBF3616DDFCF4391F7F5D7427FE0F2F8CCFFED0D";
+const BASELINE_CHECKSUM = "D7CDF784C090773CC846D484A8208A0D78FB8F640D8BA37A5827122AB70A4C3A";
 
 const CURRENT_TABLES = Object.freeze([
   "application_audit",
@@ -84,6 +84,17 @@ const CURRENT_TABLES = Object.freeze([
   "project_policy_receipts",
   "project_registry",
   "projects",
+  "scheduler_authorization_decisions",
+  "scheduler_configurations",
+  "scheduler_delivery_observations",
+  "scheduler_events",
+  "scheduler_finalizations",
+  "scheduler_observations",
+  "scheduler_operation_intents",
+  "scheduler_operation_requests",
+  "scheduler_registrations",
+  "scheduler_scheduled_tuples",
+  "scheduler_verified_receipts",
   "schema_metadata",
   "task_dependencies",
   "task_execution_sequences",
@@ -111,6 +122,8 @@ const CURRENT_INDEXES = Object.freeze([
   "execution_intents_recovery",
   "integration_reservations_one_current_target",
   "manual_backend_operations_turn_order",
+  "scheduler_delivery_run_index",
+  "scheduler_intents_state_index",
   "task_dependencies_dependency_index",
   "tasks_parent_id_index",
   "tasks_project_id_index",
@@ -236,6 +249,28 @@ const CURRENT_TRIGGERS = Object.freeze([
   "project_policy_receipts_no_delete",
   "project_policy_receipts_no_update",
   "project_registry_no_delete",
+  "scheduler_authorization_decisions_no_delete",
+  "scheduler_authorization_decisions_no_update",
+  "scheduler_configurations_no_delete",
+  "scheduler_configurations_no_update",
+  "scheduler_delivery_observations_no_delete",
+  "scheduler_delivery_observations_no_update",
+  "scheduler_events_no_delete",
+  "scheduler_events_no_update",
+  "scheduler_finalizations_no_delete",
+  "scheduler_finalizations_no_update",
+  "scheduler_observations_no_delete",
+  "scheduler_observations_no_update",
+  "scheduler_operation_intents_no_delete",
+  "scheduler_operation_intents_update_guard",
+  "scheduler_operation_requests_no_delete",
+  "scheduler_operation_requests_no_update",
+  "scheduler_registrations_no_delete",
+  "scheduler_registrations_update_guard",
+  "scheduler_scheduled_tuples_no_delete",
+  "scheduler_scheduled_tuples_no_update",
+  "scheduler_verified_receipts_no_delete",
+  "scheduler_verified_receipts_no_update",
   "task_execution_sequences_increment_only",
   "task_execution_sequences_no_delete",
   "workspace_authorization_decisions_no_delete",
@@ -372,7 +407,7 @@ test("fresh initialization atomically creates the exact current schema", async (
       });
       assert.match(
         database.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='application_lifecycle_authorizations'").get().sql,
-        /state_digest_version\s*=\s*2/u,
+        /state_digest_version\s*=\s*3/u,
       );
       const executionIntentGuard = database.prepare(
         "SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='execution_operation_intents_transition_guard'",

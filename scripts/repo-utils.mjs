@@ -68,11 +68,14 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/persistence/migrations.ts",
   "src/persistence/repository.ts",
   "src/persistence/runtime.ts",
+  "src/persistence/scheduler-receipt-digest.ts",
   "src/persistence/store.ts",
   "src/persistence/values.ts",
   "src/product-runtime.ts",
   "src/project-policy-port.ts",
   "src/project-registry.ts",
+  "src/scheduler-application.ts",
+  "src/scheduler-port.ts",
   "src/workspace-application.ts",
   "src/workspace-git-adapter.ts",
   "src/workspace-port.ts",
@@ -165,8 +168,9 @@ export const EXPECTED_PACKAGE_SCRIPTS = Object.freeze({
   "package:smoke": "node scripts/package-smoke.mjs",
   "spike:sqlite": "node scripts/sqlite-feasibility.mjs --json",
   "spike:codex": "node scripts/codex-contract.mjs --json",
+  "spike:scheduler": "node scripts/scheduler-contract.mjs --json",
   "verify:offline":
-    "pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm docs:check && pnpm dependency:check && pnpm package:smoke && pnpm spike:sqlite && pnpm spike:codex",
+    "pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm docs:check && pnpm dependency:check && pnpm package:smoke && pnpm spike:sqlite && pnpm spike:codex && pnpm spike:scheduler",
 });
 
 export const EXPECTED_NPMRC_LINES = Object.freeze([

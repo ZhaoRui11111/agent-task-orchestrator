@@ -38,13 +38,25 @@ workspace backend. It performs adapters outside writer transactions and alone
 coordinates current policy, authorization, observation, verification, fencing,
 completion, reservation release, and cleanup state.
 
+The package also exports the fresh-only pure `ato.scheduler/v1` contract and a
+typed injected scheduler application owner. Authorization vocabulary version 7
+adds exactly `scheduler.register`, `scheduler.inspect`, and `scheduler.remove`;
+application-state digest version 3 covers their durable configuration,
+registration, operation, delivery-observation, and scheduled-tuple records.
+Register/remove use intent-before-effect and restart reconciliation, inspect is
+a separate read-only path, and scheduled delivery uses current `dispatch.run`
+authority plus the existing dispatcher to create one canonical run per exact
+`(schedule_id, config_revision, scheduled_for)` tuple. Tests use only an
+unexported no-effect Fake.
+
 These Phase 3 components are library-only and must be explicitly constructed
 with trusted configuration. The default product runtime and CLI construct none
 of them, add no Phase 3 command or public error, and retain the three independent
 backup/restore JSON schema-version-1 formats unchanged. Local Git and filesystem
 effects are validated only in disposable repository fixtures; no product
-platform support is claimed. The repository still has no MCP server,
-SchedulerBackend or scheduled trigger, product-wired Codex route or Codex
+platform support is claimed. The repository still has no MCP server, concrete
+SchedulerBackend, real scheduled task, product-wired scheduler or Codex route,
+or Codex
 credential/destination authority, daemon/service, release, deployment, or
 general network integration.
 
@@ -174,6 +186,27 @@ upgrade it. The default CLI stays at the exact 33 commands and 37 public errors,
 and no support, release, remote-network, or automatic cleanup claim follows
 from this library implementation.
 
+## Durable scheduler ingress library
+
+The exact `ato.scheduler/v1` port accepts only closed register, inspect, remove,
+and inbound `dispatch_trigger` shapes. Register and remove each require their
+own current scheduler grant and fresh named high-risk confirmation, persist the
+semantic intent before backend access, and treat response loss as ambiguity
+until independent inspection proves state. Inspect obtains a fresh
+`scheduler.inspect` decision and records bounded read evidence without a
+mutation intent or registration-state write. Every injected backend call runs
+outside SQLite writer transactions.
+
+For a schema-valid inbound delivery, authorization is evaluated before schedule
+state is disclosed. Denied, stale-config, and malformed observations create no
+tuple or run. The first allowed current-config observation owns the unique
+scheduled tuple and one canonical dispatcher run; later allowed duplicates
+attach to that run and cannot restart it. Scheduling is only a wake-up hint:
+the dispatcher still reconciles, seals membership, claims, fences, and resolves
+work through its existing owners. There is no concrete adapter, cadence parser,
+platform registration, daemon, default product/API/CLI operation route, real
+scheduler E2E, or support claim.
+
 ## Reconcile-first Manual dispatcher
 
 Fresh schema creation, bootstrap, and vocabulary-version-3 renewal do not create
@@ -193,9 +226,10 @@ before the real local Manual effect is invoked through the reliable loop.
 Restart and takeover continue from those durable rows; a terminal run summary
 is withheld until every sealed member and every claimed intent is complete.
 
-The package root and sole current `ato.api/v1` product surface expose this one Manual
-trigger and durable run resume. They add no scheduler cadence or
-SchedulerBackend, daemon, MCP, selectable Codex/Git/workspace behavior,
+The package root exposes both the Manual dispatcher and its injected scheduled
+ingress, while the sole current `ato.api/v1` product surface exposes only the
+Manual trigger and durable run resume. The product adds no scheduler operation
+or cadence route, concrete SchedulerBackend, daemon, MCP, selectable Codex/Git/workspace behavior,
 completion gates,
 release, or platform-support claim. The dispatcher—not CLI code—owns candidate
 selection, reconciliation, fan-out, and summary completeness. Its ordering and
@@ -243,10 +277,11 @@ unsupported major fail before runtime construction or protected mutation; no
 compatibility fallback exists. Use `--format json` for the versioned single-line
 machine surface. The exhaustive 33-command tree, `COMMON` execution tuple,
 closed projections, and 37-code public error/exit table are in the
-[CLI/API contract](docs/reference/cli-contract.md). The tree can perform five
-sequential confirmed upgrades through vocabulary version 6 and manage grants
-for all 47 actions, but it exposes no workspace, policy, gate, integration, or
-cleanup operation command. This development package is not a release or
+[CLI/API contract](docs/reference/cli-contract.md). The tree can perform six
+sequential confirmed upgrades through vocabulary version 7 and manage grants
+for all 50 actions, including scheduler labels, but it exposes no scheduler,
+workspace, policy, gate, integration, or cleanup operation command. This
+development package is not a release or
 platform-support claim.
 
 ## Maintainer development workflow

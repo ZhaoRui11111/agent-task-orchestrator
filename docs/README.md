@@ -39,6 +39,7 @@ Documentation has explicit roles so that current contracts, plans, and historica
 - [Toolchain feasibility](feasibility/toolchain.md)
 - [Windows SQLite feasibility](feasibility/sqlite-windows.md)
 - [Codex stable public contract feasibility](feasibility/codex-stable-public-contract.md)
+- [Scheduler local contract feasibility](feasibility/scheduler-local-contract.md)
 
 ## Architecture decisions
 
@@ -67,8 +68,11 @@ and bounded durable evidence, but no supported package-root or product factory
 can construct it and no real-account support evidence exists. The Phase 3
 library contains ProjectPolicy, completion gates, integration reservation/local
 Git effects, and attestation-bound workspace cleanup but has no default product
-or CLI wiring. SchedulerBackend, scheduled delivery, MCP, product-wired Codex,
-daemon/service, release, deployment, and any supported-platform claim remain
-unimplemented.
+or CLI wiring. The pure `ato.scheduler/v1` port, injected durable scheduler
+application owner, and scheduled-dispatch ingress are implemented as a separate
+library boundary with only a test Fake. Concrete SchedulerBackend/platform
+effects, a default scheduler operation route, real scheduled tasks, MCP,
+product-wired Codex, daemon/service, release, deployment, and any supported-
+platform claim remain unimplemented.
 
 All links in authoritative documentation must be repository-relative and resolve to committed files.

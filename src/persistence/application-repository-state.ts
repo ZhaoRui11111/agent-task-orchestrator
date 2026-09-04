@@ -1,6 +1,7 @@
 import {
   BASE_AUTHORIZATION_ACTIONS,
   actionsForVocabulary,
+  evaluateAuthorization,
   isHighRiskAction,
 } from "../authorization.ts";
 import type { AuthorizationAction, AuthorizationGrant, AuthorizationScope } from "../authorization.ts";
@@ -19,6 +20,11 @@ import type { IntegrationBackendRequest, IntegrationSubject } from "../integrati
 import { parseProjectPolicyFacts } from "../project-policy-port.ts";
 import type { ProjectPolicyFacts } from "../project-policy-port.ts";
 import {
+  SCHEDULER_FAILURE_CATEGORIES,
+  SCHEDULER_RECEIPT_CODES,
+  schedulerReceiptSemanticsAreValid,
+} from "../scheduler-port.ts";
+import {
   parseWorkspaceCleanupAttestation,
   workspaceFailureSemanticsAreValid,
   workspaceCleanupQuiescenceSha256,
@@ -33,6 +39,7 @@ import type { SqliteDatabase } from "./database.ts";
 import { persistenceFailure } from "./errors.ts";
 import { applicationStateSha256 } from "./application-repository-digest.ts";
 import { codexTerminalReceiptSha256 } from "./codex-receipt-digest.ts";
+import { schedulerConfigurationSha256, schedulerReceiptSha256 } from "./scheduler-receipt-digest.ts";
 import { applicationAuditKind } from "./application-repository-model.ts";
 import type {
   ApplicationLifecycleAuthorization,
@@ -107,8 +114,20 @@ import {
   readWorkspaceFinalizations,
   readWorkspaceEvents,
   readWorkspaceCleanupAttestations,
+  readSchedulerConfigurations,
+  readSchedulerRegistrations,
+  readSchedulerOperationRequests,
+  readSchedulerAuthorizationDecisions,
+  readSchedulerIntents,
+  readSchedulerObservations,
+  readSchedulerReceipts,
+  readSchedulerFinalizations,
+  readSchedulerEvents,
+  readSchedulerDeliveryObservations,
+  readSchedulerScheduledTuples,
   readGrantRelations,
 } from "./application-repository-readers.ts";
+import type { GrantRelationRecord } from "./application-repository-readers.ts";
 import { readDomainSnapshotUntransactional } from "./repository.ts";
 import { canonicalJson, sha256 } from "./values.ts";
 
@@ -2049,6 +2068,656 @@ function validateWorkspaceState(state: ApplicationState): void {
   }
 }
 
+function validateSchedulerState(
+  state: ApplicationState,
+  grantRelations: readonly GrantRelationRecord[],
+): void {
+  const configurationByKey = new Map(state.schedulerConfigurations.map((record) => [
+    `${record.scheduleId}\u0000${record.configRevision}`, record,
+  ]));
+  const registrationByKey = new Map(state.schedulerRegistrations.map((record) => [
+    `${record.scheduleId}\u0000${record.configRevision}`, record,
+  ]));
+  const requestById = new Map(state.schedulerOperationRequests.map((record) => [record.requestId, record]));
+  const requestByOperation = new Map(state.schedulerOperationRequests.map((record) => [record.operationId, record]));
+  const decisionById = new Map(state.schedulerAuthorizationDecisions.map((record) => [record.decisionId, record]));
+  const intentById = new Map(state.schedulerIntents.map((record) => [record.intentId, record]));
+  const intentByRequest = new Map(state.schedulerIntents.map((record) => [record.requestId, record]));
+  const observationById = new Map(state.schedulerObservations.map((record) => [record.observationId, record]));
+  const receiptById = new Map(state.schedulerReceipts.map((record) => [record.verifiedReceiptId, record]));
+  const finalizationByIntent = new Map(state.schedulerFinalizations.map((record) => [record.intentId, record]));
+  const deliveryById = new Map(state.schedulerDeliveryObservations.map((record) => [record.observationId, record]));
+  const tupleByKey = new Map(state.schedulerScheduledTuples.map((record) => [
+    `${record.scheduleId}\u0000${record.configRevision}\u0000${record.scheduledFor}`, record,
+  ]));
+  const projectById = new Map(state.projects.map((record) => [record.projectId, record]));
+  const authorizationRequestById = new Map(state.requests.map((record) => [record.requestId, record]));
+  const grantRelationById = new Map(grantRelations.map((record) => [record.grantId, record]));
+  const schedulerGrantById = new Map(state.grants.map((grant) => [grant.grantId, grant]));
+  const grantIdsByCreatedRequest = new Map<string, string[]>();
+  for (const relation of grantRelations) {
+    const grantIds = grantIdsByCreatedRequest.get(relation.createdRequestId) ?? [];
+    grantIds.push(relation.grantId);
+    grantIdsByCreatedRequest.set(relation.createdRequestId, grantIds);
+  }
+  const equalTimeBoundaries = Object.freeze([
+    Object.freeze({ includeCreations: false, includeRevocations: false }),
+    Object.freeze({ includeCreations: true, includeRevocations: true }),
+    Object.freeze({ includeCreations: true, includeRevocations: false }),
+    Object.freeze({ includeCreations: false, includeRevocations: true }),
+  ]);
+  const grantSnapshotAt = (
+    at: string,
+    includeCreationAt: (relation: GrantRelationRecord) => boolean,
+    includeRevocationAt: (grant: AuthorizationGrant) => boolean,
+  ): readonly AuthorizationGrant[] => state.grants.flatMap((grant) => {
+      const relation = grantRelationById.get(grant.grantId);
+      if (relation === undefined) return [];
+      const createdRequest = authorizationRequestById.get(relation.createdRequestId);
+      const createdByBoundary = createdRequest !== undefined && (
+        createdRequest.createdAt < at ||
+        (createdRequest.createdAt === at && includeCreationAt(relation))
+      );
+      if (!createdByBoundary) return [];
+      const revokedRequest = relation.revokedRequestId === null || relation.revokedRequestId === undefined
+        ? undefined : authorizationRequestById.get(relation.revokedRequestId);
+      const revokedByBoundary = revokedRequest !== undefined && (
+        revokedRequest.createdAt < at ||
+        (revokedRequest.createdAt === at && includeRevocationAt(grant))
+      );
+      if (grant.revokedAt === null || revokedByBoundary) return [grant];
+      return [Object.freeze({ ...grant, revision: grant.revision - 1, revokedAt: null })];
+    });
+  const requiredCreationRequestsFor = (grantId: string): ReadonlySet<string> => {
+    const required = new Set<string>();
+    const visitedGrants = new Set<string>();
+    const pending = [grantId];
+    while (pending.length > 0) {
+      const currentGrantId = pending.pop()!;
+      if (visitedGrants.has(currentGrantId)) continue;
+      visitedGrants.add(currentGrantId);
+      const relation = grantRelationById.get(currentGrantId);
+      if (relation === undefined) continue;
+      required.add(relation.createdRequestId);
+      for (const groupedGrantId of grantIdsByCreatedRequest.get(relation.createdRequestId) ?? []) {
+        const groupedGrant = schedulerGrantById.get(groupedGrantId);
+        if (groupedGrant?.issuerGrantId !== null && groupedGrant?.issuerGrantId !== undefined) {
+          pending.push(groupedGrant.issuerGrantId);
+        }
+        if (groupedGrant?.sourceGrantId !== null && groupedGrant?.sourceGrantId !== undefined) {
+          pending.push(groupedGrant.sourceGrantId);
+        }
+      }
+    }
+    return required;
+  };
+  const grantSnapshotsAt = (
+    at: string,
+    preferredGrantId: string | null,
+  ): readonly (readonly AuthorizationGrant[])[] => [
+    ...equalTimeBoundaries.map((boundary) => grantSnapshotAt(
+      at,
+      () => boundary.includeCreations,
+      () => boundary.includeRevocations,
+    )),
+    ...(preferredGrantId === null
+      ? state.grants
+      : [schedulerGrantById.get(preferredGrantId)].filter((grant): grant is AuthorizationGrant => grant !== undefined)
+    ).flatMap((focus) => {
+      const focusRelation = grantRelationById.get(focus.grantId);
+      const focusCreatedRequest = focusRelation === undefined
+        ? undefined : authorizationRequestById.get(focusRelation.createdRequestId);
+      if (focusRelation === undefined || focusCreatedRequest === undefined || focusCreatedRequest.createdAt > at) return [];
+      const requiredCreationRequests = requiredCreationRequestsFor(focus.grantId);
+      return [false, true].map((includeFocusRevocation) => grantSnapshotAt(
+        at,
+        (relation) => requiredCreationRequests.has(relation.createdRequestId),
+        (grant) => grant.grantId === focus.grantId ? includeFocusRevocation : true,
+      ));
+    }),
+  ];
+  const decisionIsSemanticallyValid = (
+    decision: ApplicationState["schedulerAuthorizationDecisions"][number] | undefined,
+    request: ApplicationState["schedulerOperationRequests"][number],
+    stage: "prepare" | "act" | "inspect",
+  ): boolean => {
+    if (decision === undefined) return false;
+    const action = request.operation === "register"
+      ? "scheduler.register" as const
+      : request.operation === "inspect"
+        ? "scheduler.inspect" as const
+        : "scheduler.remove" as const;
+    const explicitActScopeStale = stage === "act" && request.scopeKind === "project" &&
+      decision.result === "deny" && decision.reason === "scope_revision_stale" &&
+      decision.policy !== "read_not_applicable" && decision.grantId === null && decision.grantRevision === null;
+    const evaluationIsReproducible = !explicitActScopeStale && decision.policy !== "read_not_applicable" &&
+      grantSnapshotsAt(decision.createdAt, decision.grantId).some((grants) => [false, true].some((confirmed) => {
+        const evaluation = evaluateAuthorization(Object.freeze({
+          actorId: request.actorId,
+          action,
+          target: Object.freeze({
+            projectId: request.projectId,
+            resourceRevision: request.projectResourceRevision,
+            configRevision: request.projectConfigRevision,
+          }),
+          now: decision.createdAt,
+          policy: decision.policy,
+          confirmed,
+          grants,
+        }));
+        return evaluation.allowed === (decision.result === "allow") && evaluation.reason === decision.reason &&
+          evaluation.policy === decision.policy && evaluation.grantId === decision.grantId &&
+          evaluation.grantRevision === decision.grantRevision;
+      }));
+    return decision.stage === stage && decision.actorId === request.actorId && decision.action === action &&
+      decision.createdAt >= request.createdAt && decision.projectId === request.projectId &&
+      decision.projectResourceRevision === request.projectResourceRevision &&
+      decision.projectConfigRevision === request.projectConfigRevision &&
+      (decision.grantId === null) === (decision.grantRevision === null) &&
+      (evaluationIsReproducible || explicitActScopeStale);
+  };
+
+  if (
+    configurationByKey.size !== state.schedulerConfigurations.length ||
+    registrationByKey.size !== state.schedulerRegistrations.length ||
+    requestById.size !== state.schedulerOperationRequests.length ||
+    requestByOperation.size !== state.schedulerOperationRequests.length ||
+    decisionById.size !== state.schedulerAuthorizationDecisions.length ||
+    intentById.size !== state.schedulerIntents.length ||
+    intentByRequest.size !== state.schedulerIntents.length ||
+    observationById.size !== state.schedulerObservations.length ||
+    receiptById.size !== state.schedulerReceipts.length ||
+    finalizationByIntent.size !== state.schedulerFinalizations.length ||
+    deliveryById.size !== state.schedulerDeliveryObservations.length ||
+    tupleByKey.size !== state.schedulerScheduledTuples.length
+  ) throw persistenceFailure("CORRUPT_ROW", "Scheduler durable identities are not unique");
+
+  const existingRequestIds = new Set([
+    ...state.requests.map((record) => record.requestId),
+    ...state.executionOperationRequests.map((record) => record.requestId),
+    ...state.dispatcherTriggerRequests.map((record) => record.requestId),
+    ...state.dispatcherMemberDenialRequests.map((record) => record.requestId),
+  ]);
+  const existingDecisionIds = new Set([
+    ...state.decisions.map((record) => record.decisionId),
+    ...state.executionAuthorizationDecisions.map((record) => record.decisionId),
+    ...state.dispatcherAuthorizationDecisions.map((record) => record.decisionId),
+    ...state.dispatcherMemberDenialDecisions.map((record) => record.decisionId),
+  ]);
+  if (
+    state.schedulerOperationRequests.some((record) => existingRequestIds.has(record.requestId)) ||
+    state.schedulerAuthorizationDecisions.some((record) => existingDecisionIds.has(record.decisionId))
+  ) throw persistenceFailure("CORRUPT_ROW", "Scheduler request or decision identity collides with another owner");
+
+  const revisionsBySchedule = new Map<string, number[]>();
+  for (const configuration of state.schedulerConfigurations) {
+    const request = requestByOperation.get(configuration.createdByOperationId);
+    const project = configuration.projectId === null ? undefined : projectById.get(configuration.projectId);
+    const expectedSha256 = schedulerConfigurationSha256(Object.freeze({
+      scheduleId: configuration.scheduleId,
+      configRevision: configuration.configRevision,
+      scopeKind: configuration.scopeKind,
+      projectId: configuration.projectId,
+      projectResourceRevision: configuration.projectResourceRevision,
+      projectConfigRevision: configuration.projectConfigRevision,
+      scheduleExpression: configuration.scheduleExpression,
+      timeZone: configuration.timeZone,
+      dispatcherTarget: configuration.dispatcherTarget,
+    }));
+    if (
+      request === undefined || request.operation !== "register" || request.result !== "allow" ||
+      request.scheduleId !== configuration.scheduleId || request.configRevision !== configuration.configRevision ||
+      request.scopeKind !== configuration.scopeKind || request.projectId !== configuration.projectId ||
+      request.projectResourceRevision !== configuration.projectResourceRevision ||
+      request.projectConfigRevision !== configuration.projectConfigRevision ||
+      request.createdAt !== configuration.createdAt || configuration.configSha256 !== expectedSha256 ||
+      (configuration.scopeKind === "runtime" && (
+        configuration.projectId !== null || configuration.projectResourceRevision !== null ||
+        configuration.projectConfigRevision !== null
+      )) ||
+      (configuration.scopeKind === "project" && (
+        project === undefined || project.resourceRevision < (configuration.projectResourceRevision ?? 0) ||
+        project.configRevision < (configuration.projectConfigRevision ?? 0)
+      )) || !registrationByKey.has(`${configuration.scheduleId}\u0000${configuration.configRevision}`)
+    ) throw persistenceFailure("CORRUPT_ROW", "Scheduler configuration lineage or digest is inconsistent");
+    const revisions = revisionsBySchedule.get(configuration.scheduleId) ?? [];
+    revisions.push(configuration.configRevision);
+    revisionsBySchedule.set(configuration.scheduleId, revisions);
+  }
+  for (const revisions of revisionsBySchedule.values()) {
+    revisions.sort((left, right) => left - right);
+    if (revisions.some((revision, index) => revision !== index + 1)) {
+      throw persistenceFailure("CORRUPT_ROW", "Scheduler configuration revisions are not contiguous");
+    }
+  }
+
+  for (const request of state.schedulerOperationRequests) {
+    const expectedStage = request.operation === "inspect" ? "inspect" : "prepare";
+    const decisions = state.schedulerAuthorizationDecisions.filter((record) =>
+      record.requestId === request.requestId && record.stage === expectedStage);
+    const decision = decisions[0];
+    if (
+      decisions.length !== 1 || decision === undefined ||
+      !decisionIsSemanticallyValid(decision, request, expectedStage) || decision.result !== request.result ||
+      (request.operation === "inspect") !== (request.idempotencyKey === null) ||
+      (request.operation === "register" && request.externalRegistrationId !== null) ||
+      (request.operation === "remove" && request.externalRegistrationId === null) ||
+      (request.result === "deny" && intentByRequest.has(request.requestId))
+    ) throw persistenceFailure("CORRUPT_ROW", "Scheduler request authorization lineage is inconsistent");
+  }
+
+  for (const decision of state.schedulerAuthorizationDecisions) {
+    const request = requestById.get(decision.requestId);
+    if (request === undefined || (decision.stage === "inspect") !== (request.operation === "inspect") ||
+      (decision.stage === "act" && request.operation === "inspect") ||
+      !decisionIsSemanticallyValid(decision, request, decision.stage)) {
+      throw persistenceFailure("CORRUPT_ROW", "Scheduler decision stage is inconsistent");
+    }
+  }
+
+  for (const intent of state.schedulerIntents) {
+    const request = requestById.get(intent.requestId);
+    const configuration = configurationByKey.get(`${intent.scheduleId}\u0000${intent.configRevision}`);
+    const registration = registrationByKey.get(`${intent.scheduleId}\u0000${intent.configRevision}`);
+    const observations = state.schedulerObservations.filter((record) => record.intentId === intent.intentId);
+    const latestObservation = [...observations]
+      .sort((left, right) => left.observationNumber - right.observationNumber)
+      .at(-1);
+    const receipt = state.schedulerReceipts.find((record) => record.intentId === intent.intentId);
+    const finalization = finalizationByIntent.get(intent.intentId);
+    const actDecisions = state.schedulerAuthorizationDecisions.filter((record) =>
+      record.requestId === intent.requestId && record.stage === "act");
+    const actDecision = actDecisions[0];
+    const actDeniedWithoutEffect = actDecisions.length === 1 && actDecisions[0]?.result === "deny" &&
+      observations.length === 0 && receipt === undefined && finalization !== undefined;
+    const explicitNoEffectFailure = observations.length === 1 && latestObservation !== undefined &&
+      latestObservation.receiptId === null && latestObservation.outcome === "refused" &&
+      (SCHEDULER_FAILURE_CATEGORIES as readonly string[]).includes(latestObservation.code) &&
+      !AMBIGUOUS_ADAPTER_FAILURES.has(latestObservation.code) && (
+        (intent.operation === "register" && latestObservation.externalState === "absent" &&
+          latestObservation.externalRegistrationId === null && latestObservation.enabled === null &&
+          latestObservation.nextTriggerAt === null) ||
+        (intent.operation === "remove" && latestObservation.externalState === "present" &&
+          latestObservation.externalRegistrationId === request?.externalRegistrationId &&
+          latestObservation.enabled === true)
+      );
+    const allowedEffectFailed = actDecisions.length === 1 && actDecisions[0]?.result === "allow" &&
+      explicitNoEffectFailure && receipt === undefined && finalization !== undefined &&
+      finalization.outcome === "failed" && finalization.code === latestObservation?.code;
+    const effectPossibleState = ["executing", "observed", "verified", "finalized", "ambiguous"].includes(intent.state);
+    if (
+      request === undefined || request.result !== "allow" || request.operation !== intent.operation ||
+      request.operationId !== intent.operationId || request.scheduleId !== intent.scheduleId ||
+      request.configRevision !== intent.configRevision || configuration === undefined || registration === undefined ||
+      intent.contractId !== "ato.scheduler/v1" || intent.updatedAt < intent.createdAt ||
+      request.createdAt !== intent.createdAt || intent.operationDeadline <= intent.createdAt ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(intent.adapterId) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(intent.adapterVersion) ||
+      (intent.operation === "register" && intent.expectedRegistrationRevision !== 0) ||
+      (intent.operation === "remove" && intent.expectedRegistrationRevision < 1) ||
+      registration.revision < Math.max(1, intent.expectedRegistrationRevision) ||
+      observations.map((record) => record.observationNumber).sort((left, right) => left - right)
+        .some((number, index) => number !== index + 1) ||
+      (actDecision !== undefined && (!decisionIsSemanticallyValid(actDecision, request, "act") ||
+        actDecision.createdAt < intent.createdAt)) ||
+      (effectPossibleState && (actDecisions.length !== 1 || actDecision?.result !== "allow")) ||
+      (["pending"] as readonly string[]).includes(intent.state) && (actDecisions.length !== 0 || observations.length !== 0 || receipt !== undefined || finalization !== undefined) ||
+      (["executing"] as readonly string[]).includes(intent.state) && (actDecisions.length !== 1 || observations.length !== 0 || receipt !== undefined || finalization !== undefined) ||
+      intent.state === "observed" && (actDecisions.length !== 1 || observations.length === 0 || receipt !== undefined || finalization !== undefined) ||
+      intent.state === "verified" && (actDecisions.length !== 1 || observations.length === 0 || receipt === undefined || finalization !== undefined) ||
+      intent.state === "finalized" && (actDecisions.length !== 1 || receipt === undefined || finalization === undefined) ||
+      intent.state === "ambiguous" && (observations.length === 0 || receipt !== undefined || finalization !== undefined) ||
+      intent.state === "failed" && !actDeniedWithoutEffect && !allowedEffectFailed
+    ) throw persistenceFailure("CORRUPT_ROW", "Scheduler intent lifecycle is incomplete or inconsistent");
+  }
+
+  for (const registration of state.schedulerRegistrations) {
+    const key = `${registration.scheduleId}\u0000${registration.configRevision}`;
+    const configuration = configurationByKey.get(key);
+    const lastIntent = intentById.get(registration.lastIntentId);
+    const activeIntents = state.schedulerIntents.filter((intent) =>
+      intent.scheduleId === registration.scheduleId && intent.configRevision === registration.configRevision &&
+      ["pending", "executing", "observed", "verified", "ambiguous"].includes(intent.state));
+    if (
+      configuration === undefined || lastIntent === undefined ||
+      lastIntent.scheduleId !== registration.scheduleId || lastIntent.configRevision !== registration.configRevision ||
+      activeIntents.length > 1 ||
+      (registration.status === "pending_register" && (
+        registration.externalRegistrationId !== null || registration.enabled !== null || registration.nextTriggerAt !== null
+      )) ||
+      ((registration.status === "active" || registration.status === "pending_remove") && (
+        registration.externalRegistrationId === null || registration.enabled !== true
+      )) ||
+      (registration.status === "removed" && (
+        registration.externalRegistrationId !== null || registration.enabled !== null || registration.nextTriggerAt !== null
+      ))
+    ) throw persistenceFailure("CORRUPT_ROW", "Scheduler registration shape or lineage is inconsistent");
+
+    const activeIntent = activeIntents[0];
+    if (activeIntent !== undefined) {
+      const activeRequest = requestById.get(activeIntent.requestId);
+      const activeObservationCount = state.schedulerObservations.filter((observation) =>
+        observation.intentId === activeIntent.intentId).length;
+      const pendingRemoveBeforeAct = activeIntent.operation === "remove" && activeIntent.state === "pending";
+      if (pendingRemoveBeforeAct) {
+        if (registration.status !== "active" || registration.revision !== activeIntent.expectedRegistrationRevision ||
+          activeRequest?.externalRegistrationId !== registration.externalRegistrationId ||
+          registration.lastIntentId === activeIntent.intentId) {
+          throw persistenceFailure("CORRUPT_ROW", "Pending scheduler removal projection is inconsistent");
+        }
+      } else if (registration.lastIntentId !== activeIntent.intentId) {
+        throw persistenceFailure("CORRUPT_ROW", "Active scheduler intent is not the registration owner");
+      }
+      if (
+        activeIntent.operation === "register" && (
+          (activeIntent.state === "ambiguous" && (
+            registration.status !== "ambiguous" || registration.revision !== 1 + activeObservationCount
+          )) ||
+          (["pending", "executing"].includes(activeIntent.state) &&
+            (registration.status !== "pending_register" || registration.revision !== 1)) ||
+          (["observed", "verified"].includes(activeIntent.state) &&
+            !((activeObservationCount === 1 && registration.status === "pending_register" && registration.revision === 1) ||
+              (activeObservationCount > 1 && registration.status === "ambiguous" && registration.revision === activeObservationCount)))
+        )
+      ) throw persistenceFailure("CORRUPT_ROW", "Scheduler register projection does not match its lifecycle");
+      if (
+        activeIntent.operation === "remove" && !pendingRemoveBeforeAct && (
+          activeRequest === undefined || activeRequest.externalRegistrationId === null ||
+          registration.externalRegistrationId !== activeRequest.externalRegistrationId ||
+          (activeIntent.state === "ambiguous" && (
+            registration.status !== "ambiguous" ||
+            registration.revision !== activeIntent.expectedRegistrationRevision + 1 + activeObservationCount
+          )) ||
+          (activeIntent.state === "executing" && (
+            registration.status !== "pending_remove" || registration.revision !== activeIntent.expectedRegistrationRevision + 1
+          )) ||
+          (["observed", "verified"].includes(activeIntent.state) &&
+            !((activeObservationCount === 1 && registration.status === "pending_remove" &&
+                registration.revision === activeIntent.expectedRegistrationRevision + 1) ||
+              (activeObservationCount > 1 && registration.status === "ambiguous" &&
+                registration.revision === activeIntent.expectedRegistrationRevision + activeObservationCount)))
+        )
+      ) throw persistenceFailure("CORRUPT_ROW", "Scheduler remove projection does not match its lifecycle");
+    }
+
+    if (lastIntent.state === "failed") {
+      const finalization = finalizationByIntent.get(lastIntent.intentId);
+      const actDecision = finalization === undefined ? undefined : decisionById.get(finalization.authorizationDecisionId);
+      const lastRequest = requestById.get(lastIntent.requestId);
+      const expectedRevision = lastIntent.operation === "register"
+        ? 2
+        : lastIntent.expectedRegistrationRevision + (actDecision?.result === "allow" ? 2 : 0);
+      const expectedStatus = lastIntent.operation === "register" ? "removed" : "active";
+      if (registration.status !== expectedStatus || registration.revision !== expectedRevision ||
+        (lastIntent.operation === "remove" && (
+          lastRequest?.externalRegistrationId === null || lastRequest?.externalRegistrationId === undefined ||
+          registration.externalRegistrationId !== lastRequest.externalRegistrationId
+        ))) {
+        throw persistenceFailure("CORRUPT_ROW", "Failed scheduler intent projection is inconsistent");
+      }
+    }
+    if (lastIntent.state === "finalized") {
+      const finalization = finalizationByIntent.get(lastIntent.intentId);
+      if (finalization === undefined || registration.status !== finalization.resultingRegistrationStatus ||
+        registration.revision !== finalization.resultingRegistrationRevision) {
+        throw persistenceFailure("CORRUPT_ROW", "Finalized scheduler intent projection is inconsistent");
+      }
+    }
+  }
+
+  for (const observation of state.schedulerObservations) {
+    const request = requestById.get(observation.requestId);
+    const intent = observation.intentId === null ? undefined : intentById.get(observation.intentId);
+    const receiptCode = (SCHEDULER_RECEIPT_CODES as readonly string[]).includes(observation.code);
+    const failureCode = (SCHEDULER_FAILURE_CATEGORIES as readonly string[]).includes(observation.code);
+    const ambiguousFailure = failureCode && AMBIGUOUS_ADAPTER_FAILURES.has(observation.code);
+    const matchingReconciliationEvent = intent === undefined ? undefined : state.schedulerEvents.find((event) =>
+      event.requestId === observation.requestId && event.intentId === intent.intentId &&
+      event.eventKind === "scheduler.operation.reconciled" &&
+      event.observationNumber === observation.observationNumber);
+    if (request === undefined || (request.operation !== "inspect" && observation.intentId === null) ||
+      (request.operation !== "inspect" && intent !== undefined && intent.requestId !== request.requestId) ||
+      (request.operation === "inspect" && intent !== undefined && (
+        request.actorId !== requestById.get(intent.requestId)?.actorId || request.createdAt < intent.createdAt ||
+        request.scheduleId !== intent.scheduleId || request.configRevision !== intent.configRevision ||
+        request.scopeKind !== requestById.get(intent.requestId)?.scopeKind ||
+        request.projectId !== requestById.get(intent.requestId)?.projectId ||
+        request.projectResourceRevision !== requestById.get(intent.requestId)?.projectResourceRevision ||
+        request.projectConfigRevision !== requestById.get(intent.requestId)?.projectConfigRevision ||
+        matchingReconciliationEvent === undefined
+      )) ||
+      (request.operation === "inspect" && intent === undefined && observation.observationNumber !== 1) ||
+      state.schedulerObservations.filter((candidate) => candidate.requestId === request.requestId).length !== 1 ||
+      (observation.receiptId !== null && (!receiptCode || failureCode || !schedulerReceiptSemanticsAreValid({
+        operation: request.operation,
+        externalState: observation.externalState,
+        externalRegistrationId: (request.operation === "inspect" || request.operation === "remove") &&
+          observation.externalState === "absent" ? null : observation.externalRegistrationId,
+        enabled: observation.enabled,
+        nextTriggerAt: observation.nextTriggerAt,
+        outcome: observation.outcome,
+        code: observation.code as (typeof SCHEDULER_RECEIPT_CODES)[number],
+      }))) ||
+      (observation.receiptId === null && (!failureCode || receiptCode ||
+        observation.outcome !== (ambiguousFailure ? "ambiguous" : "refused") ||
+        (ambiguousFailure && observation.externalState !== "ambiguous"))) ||
+      ((request.operation === "inspect" || request.operation === "remove") &&
+        request.externalRegistrationId !== null &&
+        observation.externalRegistrationId !== request.externalRegistrationId) ||
+      observation.receiptSha256 !== schedulerReceiptSha256(Object.freeze({
+        requestId: observation.requestId,
+        intentId: observation.intentId,
+        observationNumber: observation.observationNumber,
+        operation: request.operation,
+        operationId: request.operationId,
+        scheduleId: request.scheduleId,
+        configRevision: request.configRevision,
+        externalState: observation.externalState,
+        externalRegistrationId: observation.externalRegistrationId,
+        enabled: observation.enabled,
+        nextTriggerAt: observation.nextTriggerAt,
+        outcome: observation.outcome,
+        code: observation.code,
+        receiptId: observation.receiptId,
+        evidenceReference: observation.evidenceReference,
+        observedAt: observation.observedAt,
+      }))
+    ) throw persistenceFailure("CORRUPT_ROW", "Scheduler observation digest or lineage is inconsistent");
+  }
+
+  for (const receipt of state.schedulerReceipts) {
+    const observation = observationById.get(receipt.observationId);
+    const intent = intentById.get(receipt.intentId);
+    const observationEvent = observation === undefined ? undefined : state.schedulerEvents.find((event) =>
+      event.requestId === observation.requestId && event.intentId === receipt.intentId &&
+      (event.eventKind === "scheduler.operation.observed" || event.eventKind === "scheduler.operation.reconciled") &&
+      event.observationNumber === observation.observationNumber);
+    const verifiedEvent = intent === undefined || observation === undefined ? undefined : state.schedulerEvents.find((event) =>
+      event.requestId === intent.requestId && event.intentId === intent.intentId &&
+      event.eventKind === "scheduler.operation.verified" &&
+      event.observationNumber === observation.observationNumber);
+    if (
+      observation === undefined || intent === undefined || observation.intentId !== intent.intentId ||
+      observation.receiptId !== receipt.receiptId || observation.receiptSha256 !== receipt.receiptSha256 ||
+      observation.externalState !== receipt.externalState ||
+      observation.externalRegistrationId !== receipt.externalRegistrationId ||
+      observation.enabled !== receipt.enabled || observation.nextTriggerAt !== receipt.nextTriggerAt ||
+      observation.code !== receipt.code || observation.outcome !== "succeeded" ||
+      observationEvent === undefined || verifiedEvent?.createdAt !== receipt.verifiedAt ||
+      receipt.verifiedAt < observationEvent.createdAt
+    ) throw persistenceFailure("CORRUPT_ROW", "Scheduler verified receipt is inconsistent");
+  }
+
+  for (const finalization of state.schedulerFinalizations) {
+    const intent = intentById.get(finalization.intentId);
+    const registration = intent === undefined ? undefined : registrationByKey.get(`${intent.scheduleId}\u0000${intent.configRevision}`);
+    const originRequest = intent === undefined ? undefined : requestById.get(intent.requestId);
+    const actDecision = decisionById.get(finalization.authorizationDecisionId);
+    const receipt = finalization.verifiedReceiptId === null ? undefined : receiptById.get(finalization.verifiedReceiptId);
+    const latestObservation = intent === undefined ? undefined : state.schedulerObservations
+      .filter((candidate) => candidate.intentId === intent.intentId)
+      .sort((left, right) => left.observationNumber - right.observationNumber)
+      .at(-1);
+    const currentProjection = registration !== undefined &&
+      registration.revision === finalization.resultingRegistrationRevision;
+    const noEffectRemoveDenial = intent?.operation === "remove" && actDecision?.result === "deny" &&
+      finalization.verifiedReceiptId === null;
+    const finalizationEvent = intent === undefined ? undefined : state.schedulerEvents.find((event) =>
+      event.requestId === intent.requestId && event.intentId === intent.intentId &&
+      event.eventKind === "scheduler.operation.finalized");
+    if (
+      intent === undefined || registration === undefined || actDecision?.requestId !== intent.requestId ||
+      actDecision.stage !== "act" ||
+      (actDecision.result !== "allow" && !(
+        actDecision.result === "deny" && finalization.outcome === "failed" && finalization.verifiedReceiptId === null
+      )) ||
+      ((finalization.outcome === "registered" || finalization.outcome === "removed") && finalization.verifiedReceiptId === null) ||
+      !(finalization.outcome === "registered" || finalization.outcome === "removed" || finalization.outcome === "failed") ||
+      (finalization.outcome === "failed" && intent.state !== (receipt === undefined ? "failed" : "finalized")) ||
+      (finalization.outcome !== "failed" && intent.state !== "finalized") ||
+      (finalization.outcome === "registered" && (
+        intent.operation !== "register" || receipt?.externalState !== "present" ||
+        receipt.externalRegistrationId === null || receipt.enabled !== true
+      )) ||
+      (finalization.outcome === "removed" && (
+        intent.operation !== "remove" || receipt?.externalState !== "absent" ||
+        originRequest?.externalRegistrationId === null || originRequest?.externalRegistrationId === undefined ||
+        receipt.externalRegistrationId !== originRequest.externalRegistrationId ||
+        receipt.enabled !== null || receipt.nextTriggerAt !== null
+      )) ||
+      (receipt !== undefined && receipt.intentId !== intent.intentId) ||
+      (receipt !== undefined && finalization.code !== receipt.code) ||
+      (receipt === undefined && actDecision.result === "deny" && finalization.code !== actDecision.reason) ||
+      (receipt === undefined && actDecision.result === "allow" && finalization.code !== latestObservation?.code) ||
+      (receipt !== undefined && (finalizationEvent?.createdAt !== finalization.finalizedAt ||
+        finalization.finalizedAt < receipt.verifiedAt)) ||
+      finalization.finalizedAt < actDecision.createdAt ||
+      registration.revision < finalization.resultingRegistrationRevision ||
+      (currentProjection && (
+        registration.status !== finalization.resultingRegistrationStatus ||
+        (!noEffectRemoveDenial && registration.lastIntentId !== intent.intentId) ||
+        (finalization.outcome === "registered" && (
+          registration.externalRegistrationId !== receipt?.externalRegistrationId ||
+          registration.enabled !== receipt.enabled || registration.nextTriggerAt !== receipt.nextTriggerAt
+        )) ||
+        (finalization.outcome === "removed" && (
+          registration.externalRegistrationId !== null || registration.enabled !== null || registration.nextTriggerAt !== null
+        ))
+      )) ||
+      (finalization.outcome === "failed" && receipt === undefined && intent.operation === "register" &&
+        (finalization.resultingRegistrationStatus !== "removed" ||
+          finalization.resultingRegistrationRevision !== 2)) ||
+      (finalization.outcome === "failed" && receipt === undefined && intent.operation === "remove" && (
+        finalization.resultingRegistrationStatus !== "active" ||
+        finalization.resultingRegistrationRevision !== intent.expectedRegistrationRevision +
+          (actDecision.result === "allow" ? 2 : 0)
+      )) || finalization.finalizedAt < intent.createdAt
+    ) throw persistenceFailure("CORRUPT_ROW", "Scheduler finalization or registration projection is inconsistent");
+  }
+
+  for (const event of state.schedulerEvents) {
+    const request = requestById.get(event.requestId);
+    const intent = event.intentId === null ? undefined : intentById.get(event.intentId);
+    const observation = event.observationNumber === null ? undefined : state.schedulerObservations.find((candidate) =>
+      candidate.intentId === event.intentId && candidate.observationNumber === event.observationNumber);
+    const eventShapeIsValid = request !== undefined && (
+      (event.eventKind === "scheduler.operation.prepared" && intent?.requestId === request.requestId &&
+        request.operation !== "inspect" && request.result === "allow" && event.outcome === "accepted" &&
+        event.observationNumber === null) ||
+      (event.eventKind === "scheduler.operation.denied" && event.outcome === "denied" &&
+        event.observationNumber === null && (
+          (event.intentId === null && request.result === "deny") ||
+          (intent !== undefined && (
+            (request.operation === "inspect" && request.result === "deny") ||
+            (intent.requestId === request.requestId && state.schedulerAuthorizationDecisions.some((decision) =>
+              decision.requestId === request.requestId && decision.stage === "act" && decision.result === "deny"))
+          ))
+        )) ||
+      (event.eventKind === "scheduler.operation.executing" && intent?.requestId === request.requestId &&
+        event.outcome === "accepted" && event.observationNumber === null) ||
+      (event.eventKind === "scheduler.operation.observed" && intent?.requestId === request.requestId &&
+        observation?.requestId === request.requestId) ||
+      (event.eventKind === "scheduler.operation.verified" && intent?.requestId === request.requestId &&
+        observation !== undefined && state.schedulerReceipts.some((receipt) =>
+          receipt.intentId === intent.intentId && receipt.observationId === observation.observationId)) ||
+      (event.eventKind === "scheduler.operation.finalized" && intent?.requestId === request.requestId &&
+        event.observationNumber === null && finalizationByIntent.has(intent.intentId)) ||
+      (event.eventKind === "scheduler.operation.reconciled" && request.operation === "inspect" &&
+        intent !== undefined && observation?.requestId === request.requestId) ||
+      (event.eventKind === "scheduler.inspected" && request.operation === "inspect" && event.intentId === null &&
+        observation?.requestId === request.requestId)
+    );
+    if (
+      request === undefined || request.operationId !== event.operationId || request.actorId !== event.actorId ||
+      request.correlationId !== event.correlationId || request.scheduleId !== event.scheduleId ||
+      request.configRevision !== event.configRevision || !eventShapeIsValid ||
+      (event.intentId !== null && intent === undefined) || (intent !== undefined && (
+        request.operation === "inspect"
+          ? request.actorId !== requestById.get(intent.requestId)?.actorId ||
+            request.scheduleId !== intent.scheduleId || request.configRevision !== intent.configRevision
+          : intent.requestId !== request.requestId
+      )) ||
+      event.createdAt < request.createdAt
+    ) throw persistenceFailure("CORRUPT_ROW", "Scheduler event lineage is inconsistent");
+  }
+
+  const dispatcherRequestById = new Map(state.dispatcherTriggerRequests.map((record) => [record.requestId, record]));
+  const dispatcherDecisionById = new Map(state.dispatcherAuthorizationDecisions.map((record) => [record.decisionId, record]));
+  const dispatcherRunById = new Map(state.dispatcherRuns.map((record) => [record.runId, record]));
+  for (const delivery of state.schedulerDeliveryObservations) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(delivery.adapterId) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(delivery.adapterVersion) ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(delivery.dispatcherTarget)) {
+      throw persistenceFailure("CORRUPT_ROW", "Scheduler delivery trusted binding is invalid");
+    }
+    if (delivery.disposition === "malformed") {
+      if (delivery.requestId !== null || delivery.decisionId !== null || delivery.scheduleId !== null ||
+        delivery.configRevision !== null || delivery.scheduledFor !== null || delivery.deliveredAt !== null ||
+        delivery.triggerIdSha256 !== null || delivery.claimedDeduplicationSha256 !== null ||
+        delivery.attachmentRole !== "none" || delivery.runId !== null) {
+        throw persistenceFailure("CORRUPT_ROW", "Malformed scheduler delivery contains unsafe detail");
+      }
+      continue;
+    }
+    const request = delivery.requestId === null ? undefined : dispatcherRequestById.get(delivery.requestId);
+    const decision = delivery.decisionId === null ? undefined : dispatcherDecisionById.get(delivery.decisionId);
+    const run = delivery.runId === null ? undefined : dispatcherRunById.get(delivery.runId);
+    const tupleKey = `${delivery.scheduleId}\u0000${delivery.configRevision}\u0000${delivery.scheduledFor}`;
+    const tuple = tupleByKey.get(tupleKey);
+    const configuration = delivery.scheduleId === null || delivery.configRevision === null
+      ? undefined : configurationByKey.get(`${delivery.scheduleId}\u0000${delivery.configRevision}`);
+    const configurationRequest = configuration === undefined ? undefined : requestByOperation.get(configuration.createdByOperationId);
+    const configurationIntent = configurationRequest === undefined ? undefined : intentByRequest.get(configurationRequest.requestId);
+    if (
+      request === undefined || request.observationId !== delivery.observationId ||
+      decision === undefined || decision.requestId !== request.requestId ||
+      (delivery.disposition === "authorization_denied" && (decision.result !== "deny" || run !== undefined)) ||
+      (delivery.disposition === "rejected_stale_config" && (decision.result !== "allow" || run !== undefined)) ||
+      (delivery.disposition === "accepted" && (
+        decision.result !== "allow" || run === undefined || tuple === undefined || tuple.runId !== run.runId ||
+        configuration === undefined || configurationIntent === undefined ||
+        delivery.adapterId !== configurationIntent.adapterId ||
+        delivery.adapterVersion !== configurationIntent.adapterVersion ||
+        delivery.dispatcherTarget !== configuration.dispatcherTarget ||
+        delivery.scheduledFor! > delivery.deliveredAt! || delivery.deliveredAt! > delivery.receivedAt ||
+        (delivery.attachmentRole === "canonical") !== (tuple.canonicalObservationId === delivery.observationId)
+      ))
+    ) throw persistenceFailure("CORRUPT_ROW", "Scheduler delivery authorization or attachment is inconsistent");
+  }
+  for (const tuple of state.schedulerScheduledTuples) {
+    const configuration = configurationByKey.get(`${tuple.scheduleId}\u0000${tuple.configRevision}`);
+    const delivery = deliveryById.get(tuple.canonicalObservationId);
+    const run = dispatcherRunById.get(tuple.runId);
+    if (
+      configuration === undefined || delivery === undefined || run === undefined ||
+      delivery.disposition !== "accepted" || delivery.attachmentRole !== "canonical" ||
+      delivery.runId !== tuple.runId || delivery.scheduleId !== tuple.scheduleId ||
+      delivery.configRevision !== tuple.configRevision || delivery.scheduledFor !== tuple.scheduledFor ||
+      run.observationId !== tuple.canonicalObservationId || tuple.createdAt < delivery.receivedAt
+    ) throw persistenceFailure("CORRUPT_ROW", "Scheduler canonical tuple is inconsistent");
+  }
+}
+
 
 export function readApplicationStateUntransactional(database: SqliteDatabase): ApplicationState {
   const domain = readDomainSnapshotUntransactional(database);
@@ -2117,6 +2786,17 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
   const workspaceFinalizations = readWorkspaceFinalizations(database);
   const workspaceEvents = readWorkspaceEvents(database);
   const workspaceCleanupAttestations = readWorkspaceCleanupAttestations(database);
+  const schedulerConfigurations = readSchedulerConfigurations(database);
+  const schedulerRegistrations = readSchedulerRegistrations(database);
+  const schedulerOperationRequests = readSchedulerOperationRequests(database);
+  const schedulerAuthorizationDecisions = readSchedulerAuthorizationDecisions(database);
+  const schedulerIntents = readSchedulerIntents(database);
+  const schedulerObservations = readSchedulerObservations(database);
+  const schedulerReceipts = readSchedulerReceipts(database);
+  const schedulerFinalizations = readSchedulerFinalizations(database);
+  const schedulerEvents = readSchedulerEvents(database);
+  const schedulerDeliveryObservations = readSchedulerDeliveryObservations(database);
+  const schedulerScheduledTuples = readSchedulerScheduledTuples(database);
   const grantRelations = readGrantRelations(database);
   const domainProjectIds = new Set(domain.projects.map((project) => project.id));
   if (projects.some((project) => !domainProjectIds.has(project.projectId) || project.updatedAt < project.createdAt)) {
@@ -3083,6 +3763,7 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     dispatcherRunById.size !== dispatcherRuns.length
   ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher identity inventory is not unique");
   for (const request of dispatcherTriggerRequests) {
+    const scheduledDelivery = schedulerDeliveryObservations.find((candidate) => candidate.requestId === request.requestId);
     const run = dispatcherRuns.find((candidate) => candidate.requestId === request.requestId);
     const decision = run === undefined
       ? dispatcherAuthorizationDecisions.find((candidate) =>
@@ -3099,12 +3780,14 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
       (decision.result === "allow" && (
         grant === undefined ||
         !grantRevisionWasUsableAt(grant, request.actorId, "dispatch.run", decision.createdAt, decision.grantRevision) ||
-        run === undefined || run.observationId !== request.observationId || run.decisionId !== decision.decisionId ||
-        run.actorId !== request.actorId ||
-        run.ownerRevision !== takeoverEvents.length + 1 ||
-        (run.ownerRevision === 1 && run.ownerId !== request.workerOwnerId) ||
-        run.requestedLeaseSeconds !== request.requestedLeaseSeconds || run.createdAt !== request.createdAt ||
-        !events.some((event) => event.runId === run.runId && event.eventKind === "dispatch.started" && event.result === "accepted")
+        (run === undefined
+          ? scheduledDelivery === undefined || scheduledDelivery.decisionId !== decision.decisionId ||
+            (scheduledDelivery.disposition !== "accepted" && scheduledDelivery.disposition !== "rejected_stale_config")
+          : run.observationId !== request.observationId || run.decisionId !== decision.decisionId ||
+            run.actorId !== request.actorId || run.ownerRevision !== takeoverEvents.length + 1 ||
+            (run.ownerRevision === 1 && run.ownerId !== request.workerOwnerId) ||
+            run.requestedLeaseSeconds !== request.requestedLeaseSeconds || run.createdAt !== request.createdAt ||
+            !events.some((event) => event.runId === run.runId && event.eventKind === "dispatch.started" && event.result === "accepted"))
       )) ||
       (decision.result === "deny" && (
         decision.grantId !== null || decision.grantRevision !== null || run !== undefined ||
@@ -3319,6 +4002,10 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     workspaceGenerations, workspaceAuthorizationDecisions, workspaceIntents,
     workspaceObservations, workspaceReceipts, workspaceFinalizations, workspaceEvents,
     workspaceCleanupAttestations,
+    schedulerConfigurations, schedulerRegistrations, schedulerOperationRequests,
+    schedulerAuthorizationDecisions, schedulerIntents, schedulerObservations,
+    schedulerReceipts, schedulerFinalizations, schedulerEvents,
+    schedulerDeliveryObservations, schedulerScheduledTuples,
     lifecycle: Object.freeze([]) as readonly ApplicationLifecycleAuthorization[],
   });
   validateProjectPolicyState(stateWithoutLifecycle);
@@ -3327,6 +4014,7 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
   validatePolicyGatedCompletionState(stateWithoutLifecycle);
   validateWorkspaceState(stateWithoutLifecycle);
   validateCleanupAttestationState(stateWithoutLifecycle);
+  validateSchedulerState(stateWithoutLifecycle, grantRelations);
   for (const authorization of lifecycle) {
     const request = requestById.get(authorization.requestId);
     const decision = decisions.find((candidate) => candidate.decisionId === authorization.decisionId);

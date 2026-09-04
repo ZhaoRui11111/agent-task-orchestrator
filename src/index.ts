@@ -74,6 +74,35 @@ export type {
 export * from "./dispatcher-application.ts";
 export * from "./dispatcher.ts";
 export {
+  SCHEDULER_CONTRACT_ID,
+  SCHEDULER_EXTERNAL_STATES,
+  SCHEDULER_FAILURE_CATEGORIES,
+  SCHEDULER_OPERATIONS,
+  SCHEDULER_RECEIPT_CODES,
+  invokeSchedulerBackend,
+  parseSchedulerBackendRequest,
+  parseSchedulerBackendResult,
+  parseSchedulerDispatchTrigger,
+} from "./scheduler-port.ts";
+export type {
+  SchedulerBackend,
+  SchedulerBackendFailure,
+  SchedulerBackendReceipt,
+  SchedulerBackendRequest,
+  SchedulerBackendResult,
+  SchedulerDispatchTrigger,
+  SchedulerExternalState,
+  SchedulerFailureCategory,
+  SchedulerInspectRequest,
+  SchedulerOperation,
+  SchedulerReceiptCode,
+  SchedulerReceiptOutcome,
+  SchedulerRegisterRequest,
+  SchedulerRemoveRequest,
+  SchedulerScope,
+} from "./scheduler-port.ts";
+export * from "./scheduler-application.ts";
+export {
   WORKSPACE_CONTRACT_ID,
   WORKSPACE_CLEANUP_ATTESTATION_CONTRACT_ID,
   WORKSPACE_OPERATIONS,

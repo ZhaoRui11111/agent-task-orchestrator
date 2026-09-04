@@ -253,7 +253,7 @@ test("schema creation and the Manual stage do not grant dispatch.run; only the c
       (candidate) => candidate.authorizationId === lifecycle.value.authorizationId,
     );
     assert.ok(recorded);
-    assert.equal(APPLICATION_STATE_DIGEST_VERSION, 2);
+    assert.equal(APPLICATION_STATE_DIGEST_VERSION, 3);
     assert.equal(applicationStateSha256(state), recorded.authorizedStateSha256);
     const projectedKeys = Object.keys(applicationStateProjection(state)).sort();
     const expectedKeys = Object.keys(state).filter((key) => key !== "lifecycle").sort();

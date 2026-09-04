@@ -8,16 +8,15 @@ reconcile-first Manual dispatcher, workspace foundation, and injected Phase 3
 library. The implementation is deliberately limited to nineteen base local
 application/lifecycle actions, four database-local execution claim/lease
 actions, six Manual-loop actions, one dispatcher action, five workspace actions,
-and twelve completion/integration actions across contiguous vocabulary versions
-1 through 6. It is not an operating-system
+and twelve completion/integration actions plus three scheduler lifecycle
+actions across contiguous vocabulary versions 1 through 7. It is not an operating-system
 account system, team identity service, RBAC product, cloud identity provider,
 or authorization for development and external actions. The package-private
 Codex SDK implementation does not add an action or reinterpret any existing
 grant.
 
 Runtime grants never authorize repository development, network or secret
-access, pull requests, release, deployment, scheduling, arbitrary filesystem
-access, or any action outside the finite
+access, pull requests, release, deployment, arbitrary filesystem access, or any action outside the finite
 vocabulary below. The four claim actions authorize only claim, claim inspection,
 lease renewal, and reconcile-gated takeover. The six Manual-loop actions
 authorize only the exact local no-workspace port/journal, inspection,
@@ -50,6 +49,18 @@ or release operation. `completion.accept`, `integration.apply`, and
 selects an adapter, executable, root, ref, destination, or policy; these come
 only from trusted injected configuration. The default product runtime and CLI
 construct no Phase 3 adapter or operation route.
+
+The three `scheduler.*` actions authorize only the exact injected library
+operations `register`, read-only `inspect`, and `remove` for one bound runtime or
+Project schedule configuration. Register and remove each require a fresh named
+high-risk confirmation. No scheduler grant selects a backend, platform,
+executable, task definition, cadence, credential, path, or dispatcher target;
+those identities are bounded command/configuration data and trusted injection.
+Inbound `dispatch_trigger` does not consume a scheduler lifecycle grant: it
+derives a trusted scheduler actor and independently requires current
+`dispatch.run` authority before creating a scheduled tuple or dispatcher run.
+The default product runtime and CLI expose generic grant management for these
+labels but no scheduler operation route.
 
 Project content, Task text, repository files, prompts, tool output, Agent text,
 Domain state, persisted audit, a prior authorization decision, and an approved
@@ -115,6 +126,31 @@ requested action against that narrowing receipt. Adapter-observed time is
 evidence only; application lifecycle timestamps and expiry/fence decisions use
 fresh trusted ingress time. Policy, Completion, Integration, and Workspace
 calls remain outside every writer transaction.
+
+The scheduler application owner uses `SchedulerIngress` for the same trusted
+actor/principal/runtime-root identity, trusted UTC time, fresh request,
+correlation, decision, event, operation, intent, observation, receipt, and
+finalization identities, plus separate register/remove confirmations. Adapter
+identity/version is trusted injected configuration. Register/remove prepare,
+Act, observe, verify, Finalize, and reconcile each revalidate their applicable
+tuple. Current authority is checked at prepare and again at the final point-of-
+use Act; Finalize consumes that bound allowed Act decision under current CAS.
+Inspect obtains its own fresh read decision and cannot create a mutation intent. The inbound delivery path obtains the same
+trusted identity/time and current `dispatch.run` decision without accepting an
+actor or authorization from trigger content. No trusted callback or injected
+backend runs inside a writer transaction.
+
+The combined decoder reproduces every scheduler authorization decision through
+the sole current authorization evaluator. Because the schema records timestamps
+rather than a total order among events at an identical instant, it constructs
+global before/after boundaries plus provenance-closed, creation-request-atomic
+focused witnesses for the decision grant and per-grant creation/revocation
+boundary. One such witness must reproduce the complete stored decision tuple
+exactly. Before capability upgrade/renewal or grant issue/revocation, the
+application rejects a trusted mutation time strictly earlier than the latest
+durable scheduler authorization decision, before writing anything. Equal or
+later trusted time is permitted, and no decoder path invents a second
+authorization algorithm.
 
 ## Exact action vocabulary
 
@@ -184,10 +220,16 @@ plus the twelve Phase 3 completion/integration actions:
 - `integration.recover`
 - `integration.release`
 
+plus the three scheduler lifecycle actions:
+
+- `scheduler.register`
+- `scheduler.inspect`
+- `scheduler.remove`
+
 There is no wildcard and no prefix expansion. Unknown actions and unimplemented
 commands are invalid input; they are not mapped to a similar action. These
-actions do not imply scheduler, scheduled delivery, Codex, arbitrary Git,
-filesystem or network, secret, arbitrary diagnostic, MCP, release, or
+actions do not imply a concrete scheduler adapter, real scheduled task, Codex,
+arbitrary Git, filesystem or network, secret, arbitrary diagnostic, MCP, release, or
 deployment capability. `execution.completion.accept` accepts only exact current
 verified Manual-turn evidence; it is distinct from Phase 3
 `completion.accept` and grants no CompletionBackend or gate authority.
@@ -243,8 +285,10 @@ version 1 to 2 appends one origin grant for each of the twenty-three
 claim-capable actions, version 2 to 3 appends one origin grant for each of the
 twenty-nine Manual-capable actions, version 3 to 4 appends one origin grant for
 each of the thirty dispatcher-capable actions, version 4 to 5 appends one
-origin grant for each of the thirty-five workspace-capable actions, and version
-5 to 6 appends one origin grant for each of all forty-seven current actions. A runtime cannot skip
+origin grant for each of the thirty-five workspace-capable actions, version
+5 to 6 appends one origin grant for each of the forty-seven Phase 3-capable
+actions, and version 6 to 7 appends one origin grant for each of all fifty
+current actions. A runtime cannot skip
 any intermediate version or combine two upgrades in one ceremony.
 The epoch, exact grant set, request/allow-decision/audit unit, and terminal
 readback commit together. Migration, bootstrap, an earlier decision, Task
@@ -259,8 +303,8 @@ capability. Each accepted renewal appends a contiguous positive epoch revision,
 the exact vocabulary/version digest, a request/decision/audit unit, and one new
 finite origin grant for every action in the already-current vocabulary:
 nineteen for vocabulary version 1, twenty-three for version 2, twenty-nine for
-version 3, thirty for version 4, thirty-five for version 5, or forty-seven for
-version 6. Every epoch and current origin grant
+version 3, thirty for version 4, thirty-five for version 5, forty-seven for
+version 6, or fifty for version 7. Every epoch and current origin grant
 uses the single `authorization_capability_epochs` and `authorization_grants`
 relations with direct `capability_epoch_id` provenance. Renewal never changes a vocabulary version. Previous epochs and
 grants remain immutable history.
@@ -331,6 +375,8 @@ ingress after a matching grant is found:
 - `integration.apply`
 - `integration.push`
 - `workspace.cleanup`
+- `scheduler.register`
+- `scheduler.remove`
 
 Capability renewal and each capability upgrade also require a fresh
 high-risk confirmation even though they are deliberately not grantable actions.
@@ -553,7 +599,7 @@ data-loss acknowledgement before requesting authorization. An accepted
 decision atomically appends one immutable lifecycle authorization bound to the
 exact operation, proposed backup generation ID, actor, runtime-root key,
 matching grant and revision, request/decision/audit IDs and counts, application
-state digest version 2 from the sole complete non-lifecycle
+state digest version 3 from the sole complete non-lifecycle
 `applicationStateProjection`, and short finite validity interval. Terminal output reads back the
 exact newly allocated lifecycle authorization ID; operation/generation matching
 is never used as a non-unique substitute, including on a retry.
@@ -582,7 +628,8 @@ later request.
 Application requests, bootstrap, local identity, capability epochs, lifecycle
 authorizations, execution attempts, operation evidence, generic/Manual/
 policy-gated completion decisions, dispatcher trigger/decision/audit/
-reconciliation/membership/summary evidence, workspace generations/
+reconciliation/membership/summary evidence, scheduler configuration/
+registration/operation/delivery/tuple evidence, workspace generations/
 authorization/intent/observation/verified-receipt/finalization/event evidence,
 ProjectPolicy receipts, completion-gate evidence, integration reservations/
 effects/events, cleanup attestations, authorization decisions, and audit rows
@@ -612,13 +659,17 @@ exact `dispatch.run` decision path for the explicit-Manual dispatcher. The
 workspace-foundation stage adds one separately confirmed version-5 step and the
 five exact workspace decisions above. The Phase 3 stage adds one separately
 confirmed version-6 step and the twelve completion/integration actions above.
+The scheduler stage adds one separately confirmed version-7 step and the three
+exact lifecycle actions above; register/remove are high risk, while inbound
+delivery still consumes `dispatch.run`.
 The listed high-risk actions each require their own fresh confirmation. The
 current product API continues to expose only the existing Manual/dispatcher
-decisions through `ato.api/v1`; workspace and Phase 3 operation services remain
-package-library-only. The CLI upgrade command may reach vocabulary version 6
-and manage its finite grants, but adds no Phase 3 operation command, error, or
+decisions through `ato.api/v1`; workspace, Phase 3, and scheduler operation
+services remain package-library-only. The CLI upgrade command may reach
+vocabulary version 7 and manage all fifty finite grants, but adds no Phase 3 or
+scheduler operation command, error, or
 alternate authorization owner. This implementation does not provide login,
-credentials, team accounts, RBAC, cloud identity, SchedulerBackend/scheduled
-delivery, MCP, operational/product-wired Codex, general network effects,
+credentials, team accounts, RBAC, cloud identity, concrete SchedulerBackend or
+real scheduled task, MCP, operational/product-wired Codex or scheduler, general network effects,
 release, deployment, or a
 platform-support claim.

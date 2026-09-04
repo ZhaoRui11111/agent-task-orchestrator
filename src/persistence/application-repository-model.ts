@@ -13,6 +13,12 @@ import type {
   WorkspaceOperation as WorkspacePortOperation,
   WorkspaceReceiptCode as WorkspacePortReceiptCode,
 } from "../workspace-port.ts";
+import type {
+  SchedulerExternalState,
+  SchedulerFailureCategory,
+  SchedulerReceiptCode,
+  SchedulerReceiptOutcome,
+} from "../scheduler-port.ts";
 
 export interface RegisteredProject extends ProjectRootIdentity {
   readonly projectId: string;
@@ -1282,6 +1288,190 @@ export interface WorkspaceEventRecord {
   readonly createdAt: string;
 }
 
+export type SchedulerRegistrationStatus = "pending_register" | "active" | "pending_remove" | "removed" | "ambiguous";
+export type SchedulerIntentState = "pending" | "executing" | "observed" | "verified" | "finalized" | "ambiguous" | "failed";
+
+export interface SchedulerConfigurationRecord {
+  readonly scheduleId: string;
+  readonly configRevision: number;
+  readonly scopeKind: "runtime" | "project";
+  readonly projectId: string | null;
+  readonly projectResourceRevision: number | null;
+  readonly projectConfigRevision: number | null;
+  readonly scheduleExpression: string;
+  readonly timeZone: string;
+  readonly dispatcherTarget: string;
+  readonly configSha256: string;
+  readonly createdByOperationId: string;
+  readonly createdAt: string;
+}
+
+export interface SchedulerRegistrationRecord {
+  readonly scheduleId: string;
+  readonly configRevision: number;
+  readonly revision: number;
+  readonly status: SchedulerRegistrationStatus;
+  readonly externalRegistrationId: string | null;
+  readonly enabled: boolean | null;
+  readonly nextTriggerAt: string | null;
+  readonly lastIntentId: string;
+  readonly updatedAt: string;
+}
+
+export interface SchedulerOperationRequestRecord {
+  readonly requestId: string;
+  readonly operationId: string;
+  readonly idempotencyKey: string | null;
+  readonly commandSha256: string;
+  readonly operation: "register" | "inspect" | "remove";
+  readonly actorId: string;
+  readonly correlationId: string;
+  readonly scheduleId: string;
+  readonly configRevision: number;
+  readonly externalRegistrationId: string | null;
+  readonly scopeKind: "runtime" | "project";
+  readonly projectId: string | null;
+  readonly projectResourceRevision: number | null;
+  readonly projectConfigRevision: number | null;
+  readonly result: "allow" | "deny";
+  readonly createdAt: string;
+}
+
+export interface SchedulerAuthorizationDecisionRecord {
+  readonly decisionId: string;
+  readonly requestId: string;
+  readonly stage: "prepare" | "act" | "inspect";
+  readonly actorId: string;
+  readonly action: Extract<AuthorizationAction, "scheduler.register" | "scheduler.inspect" | "scheduler.remove">;
+  readonly result: "allow" | "deny";
+  readonly reason: AuthorizationReason;
+  readonly policy: AuthorizationPolicyResult;
+  readonly grantId: string | null;
+  readonly grantRevision: number | null;
+  readonly projectId: string | null;
+  readonly projectResourceRevision: number | null;
+  readonly projectConfigRevision: number | null;
+  readonly createdAt: string;
+}
+
+export interface SchedulerOperationIntentRecord {
+  readonly intentId: string;
+  readonly requestId: string;
+  readonly operationId: string;
+  readonly operation: "register" | "remove";
+  readonly state: SchedulerIntentState;
+  readonly contractId: "ato.scheduler/v1";
+  readonly adapterId: string;
+  readonly adapterVersion: string;
+  readonly scheduleId: string;
+  readonly configRevision: number;
+  readonly expectedRegistrationRevision: number;
+  readonly operationDeadline: string;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface SchedulerObservationRecord {
+  readonly observationId: string;
+  readonly requestId: string;
+  readonly intentId: string | null;
+  readonly observationNumber: number;
+  readonly externalState: SchedulerExternalState;
+  readonly externalRegistrationId: string | null;
+  readonly enabled: boolean | null;
+  readonly nextTriggerAt: string | null;
+  readonly outcome: SchedulerReceiptOutcome;
+  readonly code: SchedulerReceiptCode | SchedulerFailureCategory;
+  readonly receiptId: string | null;
+  readonly receiptSha256: string;
+  readonly evidenceReference: string | null;
+  readonly observedAt: string;
+}
+
+export interface SchedulerVerifiedReceiptRecord {
+  readonly verifiedReceiptId: string;
+  readonly intentId: string;
+  readonly observationId: string;
+  readonly receiptId: string;
+  readonly receiptSha256: string;
+  readonly externalState: SchedulerExternalState;
+  readonly externalRegistrationId: string | null;
+  readonly enabled: boolean | null;
+  readonly nextTriggerAt: string | null;
+  readonly code: SchedulerReceiptCode;
+  readonly verifiedAt: string;
+}
+
+export interface SchedulerFinalizationRecord {
+  readonly finalizationId: string;
+  readonly intentId: string;
+  readonly verifiedReceiptId: string | null;
+  readonly authorizationDecisionId: string;
+  readonly outcome: "registered" | "removed" | "refused" | "ambiguous" | "failed";
+  readonly code: string;
+  readonly resultingRegistrationStatus: SchedulerRegistrationStatus;
+  readonly resultingRegistrationRevision: number;
+  readonly finalizedAt: string;
+}
+
+export interface SchedulerEventRecord {
+  readonly eventId: string;
+  readonly operationId: string;
+  readonly requestId: string;
+  readonly intentId: string | null;
+  readonly eventKind:
+    | "scheduler.operation.prepared"
+    | "scheduler.operation.denied"
+    | "scheduler.operation.executing"
+    | "scheduler.operation.observed"
+    | "scheduler.operation.verified"
+    | "scheduler.operation.finalized"
+    | "scheduler.operation.reconciled"
+    | "scheduler.inspected";
+  readonly outcome: "accepted" | "denied" | "refused" | "ambiguous" | "failed";
+  readonly reasonCode: string;
+  readonly actorId: string;
+  readonly correlationId: string;
+  readonly scheduleId: string;
+  readonly configRevision: number;
+  readonly observationNumber: number | null;
+  readonly evidenceReference: string | null;
+  readonly createdAt: string;
+}
+
+export type SchedulerDeliveryDisposition = "accepted" | "authorization_denied" | "rejected_stale_config" | "malformed";
+export type SchedulerDeliveryAttachmentRole = "canonical" | "duplicate" | "none";
+
+export interface SchedulerDeliveryObservationRecord {
+  readonly observationId: string;
+  readonly requestId: string | null;
+  readonly decisionId: string | null;
+  readonly adapterId: string;
+  readonly adapterVersion: string;
+  readonly dispatcherTarget: string;
+  readonly contractId: "ato.scheduler/v1";
+  readonly triggerIdSha256: string | null;
+  readonly claimedDeduplicationSha256: string | null;
+  readonly scheduleId: string | null;
+  readonly configRevision: number | null;
+  readonly scheduledFor: string | null;
+  readonly deliveredAt: string | null;
+  readonly receivedAt: string;
+  readonly disposition: SchedulerDeliveryDisposition;
+  readonly attachmentRole: SchedulerDeliveryAttachmentRole;
+  readonly runId: string | null;
+}
+
+export interface SchedulerScheduledTupleRecord {
+  readonly scheduleId: string;
+  readonly configRevision: number;
+  readonly scheduledFor: string;
+  readonly canonicalObservationId: string;
+  readonly runId: string;
+  readonly createdAt: string;
+}
+
 export interface ApplicationState {
   readonly domain: DomainSnapshot;
   readonly projects: readonly RegisteredProject[];
@@ -1347,6 +1537,17 @@ export interface ApplicationState {
   readonly workspaceFinalizations: readonly WorkspaceFinalizationRecord[];
   readonly workspaceEvents: readonly WorkspaceEventRecord[];
   readonly workspaceCleanupAttestations: readonly WorkspaceCleanupAttestationRecord[];
+  readonly schedulerConfigurations: readonly SchedulerConfigurationRecord[];
+  readonly schedulerRegistrations: readonly SchedulerRegistrationRecord[];
+  readonly schedulerOperationRequests: readonly SchedulerOperationRequestRecord[];
+  readonly schedulerAuthorizationDecisions: readonly SchedulerAuthorizationDecisionRecord[];
+  readonly schedulerIntents: readonly SchedulerOperationIntentRecord[];
+  readonly schedulerObservations: readonly SchedulerObservationRecord[];
+  readonly schedulerReceipts: readonly SchedulerVerifiedReceiptRecord[];
+  readonly schedulerFinalizations: readonly SchedulerFinalizationRecord[];
+  readonly schedulerEvents: readonly SchedulerEventRecord[];
+  readonly schedulerDeliveryObservations: readonly SchedulerDeliveryObservationRecord[];
+  readonly schedulerScheduledTuples: readonly SchedulerScheduledTupleRecord[];
   readonly lifecycle: readonly ApplicationLifecycleAuthorization[];
 }
 

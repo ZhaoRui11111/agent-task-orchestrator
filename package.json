@@ -37,7 +37,8 @@
     "package:smoke": "node scripts/package-smoke.mjs",
     "spike:sqlite": "node scripts/sqlite-feasibility.mjs --json",
     "spike:codex": "node scripts/codex-contract.mjs --json",
-    "verify:offline": "pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm docs:check && pnpm dependency:check && pnpm package:smoke && pnpm spike:sqlite && pnpm spike:codex"
+    "spike:scheduler": "node scripts/scheduler-contract.mjs --json",
+    "verify:offline": "pnpm lint && pnpm typecheck && pnpm build && pnpm test && pnpm docs:check && pnpm dependency:check && pnpm package:smoke && pnpm spike:sqlite && pnpm spike:codex && pnpm spike:scheduler"
   },
   "devDependencies": {
     "typescript": "5.9.3"

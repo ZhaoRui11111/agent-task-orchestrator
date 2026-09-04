@@ -8,7 +8,7 @@ required for a platform or external API support claim. The project now has one
 internal current SQLite baseline at schema version `1`, a provisional package-root
   Domain/ProjectRegistry/authorization/application/claim/Manual-loop/dispatcher/
   workspace/Phase-3/persistence surface, implemented closed pure
-`ato.execution/v2`, `ato.project-policy/v1`, `ato.completion/v1`,
+`ato.execution/v2`, `ato.scheduler/v1`, `ato.project-policy/v1`, `ato.completion/v1`,
 `ato.integration/v1`, and `ato.workspace/v2` local ports, and one implemented
 provisional `ato.api/v1` local explicit-Manual product CLI major.
 It still has no released product,
@@ -26,8 +26,9 @@ create or change this policy.
   `0` means a genuinely fresh database with no application object and shipped
   versions begin at `1`. The current and only accepted target is `1`.
   `0001-current-baseline.sql` directly owns the complete implemented local
-  explicit-Manual Phase 2, package-private Codex journal, and fresh-only Phase 3 storage shape, including
-  lifecycle state-digest version 2 and authorization vocabularies 1 through 6.
+  explicit-Manual Phase 2, package-private Codex journal, and fresh-only Phase 3
+  plus scheduler storage shape, including lifecycle state-digest version 3 and
+  authorization vocabularies 1 through 7.
   Schema version and
   authorization vocabulary are independent counters. Exact migration
   identity, checksum, allocation, and mechanics are owned by the
@@ -69,9 +70,12 @@ there. Omitting the version and selecting `ato.api/v1` explicitly are identical;
 all other majors are unsupported before runtime construction or protected state
 evaluation. This major is not a released stability or platform-support promise.
 The package may expose independent library ports and services without adding a
-CLI command: the Phase 3 ports, adapters, application service, and product
-facade therefore do not change the closed 33-command/37-error `ato.api/v1`
-grammar or the three backup/restore JSON formats.
+CLI command: the scheduler and Phase 3 ports/application services, Phase 3
+adapters, and Phase 3 product facade therefore do not change the closed
+33-command/37-error `ato.api/v1` grammar or the three backup/restore JSON
+formats. The existing generic authorization commands may manage the global
+vocabulary-version-7 scheduler labels/grants without creating a scheduler
+operation route.
 
 ### Unreleased current-v1 reset
 
@@ -124,8 +128,8 @@ effect boundary, and `openai-codex-sdk/v1` receipts. `ato.execution/v1` and
 fallback, translation, migration, dual write, or deprecation window. The Codex
 constructor/configuration/driver/injected service remain outside the supported
 package root and every current product/application/dispatcher/API/CLI factory,
-so this port change neither adds an operational Codex route nor reinterprets
-vocabulary-version-6 authority. A later required-field, authorization,
+so this port change neither adds an operational Codex route nor acquires
+authority from the current vocabulary-version-7 action set. A later required-field, authorization,
 side-effect, lifecycle, receipt, or error-meaning change requires v3.
 
 EP-03A is the first implementation of `ato.workspace/v1`. The package was still
@@ -160,6 +164,17 @@ a later required-field, identity, operation, side-effect, receipt, lifecycle,
 authorization-boundary, or error-meaning change requires the corresponding new
 port major. Their local adapters and injected Phase 3 product-library facade do
 not alter the current `ato.api/v1` CLI or backup/restore artifact versions.
+
+EP-03E is the first implementation of exact `ato.scheduler/v1`. Its schedule
+configuration, register/inspect/remove operations and receipts, trusted outer
+scheduled-ingress context, and exact inner trigger shape are closed at that
+identity. A later required-field, identity, operation, cadence ownership,
+side-effect, receipt, lifecycle, authorization-boundary, or error-meaning change
+requires a new scheduler port major. The injected scheduler library, unexported
+no-effect test Fake, durable scheduled-delivery tuple, authorization vocabulary
+version 7, and application-state digest version 3 do not alter the current
+`ato.api/v1` CLI or backup/restore artifact versions; no concrete scheduler
+adapter or compatibility claim exists.
 
 ## Forward migration
 

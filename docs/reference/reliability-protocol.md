@@ -16,7 +16,7 @@ completion. The Codex branch adds exact owned-workspace/HEAD/cwd and verified
 ephemeral-input binding, durable thread/terminal evidence, and ambiguity without
 blind replay; it is not exposed through a supported package-root or product
 factory and does not add operational authorization. It also implements one
-explicit-Manual dispatcher with
+explicit-Manual and scheduled-ingress dispatcher with
 durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
 immutable finite membership, one terminal outcome per member, and
 completeness-gated summaries. One typed product facade exposes only these
@@ -28,9 +28,13 @@ receipts, completion gates and decisions, integration reservations/effects/
 recovery, cleanup attestations, and generic completion/terminal-execution
 convergence. Its configured local adapters perform bounded gate, expected-old
 local ref, configured local-file push, and owner-attested cleanup effects
-outside writer transactions. The default product runtime and CLI construct none
-of them. There is still no SchedulerBackend or scheduled trigger, MCP,
-product-wired Codex route or Codex credential/destination authority, general
+outside writer transactions. The pure exact `ato.scheduler/v1` and its typed
+application owner additionally implement durable register/remove lifecycle,
+read-only inspect, sanitized delivery, exact scheduled-tuple uniqueness, and
+canonical dispatcher-run attachment against an injected backend. The default
+product runtime and CLI construct none of these injected libraries. There is
+still no concrete SchedulerBackend, platform registration, real scheduled task,
+MCP, product-wired Codex or scheduler route, Codex credential/destination authority, general
 network integration, release, deployment, real Codex account E2E, or
 platform-support claim.
 
@@ -130,6 +134,17 @@ revision, while replacement requires the exact cleaned predecessor and
 generation `n+1`. The backend receives this frozen subject, not an inferred path
 or a prior authorization decision.
 
+Current scheduler mutation intents bind register/remove, actor, exact runtime-
+or-Project scope and revisions, schedule ID/config revision and immutable config
+digest, expected registration revision, operation/idempotency/correlation
+identity, contract/adapter version, and bounded deadline. Register additionally
+binds expression, timezone, and dispatcher target through the configuration;
+remove binds the proven external registration identity through the current
+registration. Inspect is a separate read tuple with no mutation intent or
+idempotency key. Scheduled delivery identity is exactly schedule ID, config
+revision, and intended `scheduled_for`; trigger ID and claimed deduplication are
+hashed observation data and cannot replace that tuple.
+
 Phase 3 policy receipts bind their exact query/action, actor, Project resource/
 config/root/repository identity, subject revisions, policy/config/adapter
 identity, decision, finite required facts, observation time and validity. Gate
@@ -223,7 +238,9 @@ workspace foundation uses the same durable
 prepare/effect-possible/observe/verify/finalize ownership rule through its
 specialized generation protocol below; it does not reuse Manual rows or invent
 Manual-only `retry_wait`. Publication, completion gates, and dispatcher fan-out
-do not inherit either evidence family.
+do not inherit either evidence family. Scheduler register/remove use their own
+specialized seven-state intent and registration projection; scheduler inspect
+is a distinct read path with no mutation intent.
 
 ### Intent state set
 
@@ -346,6 +363,71 @@ as bounded ambiguity. In either case a signal is a request, not proof of
 interruption. Only subsequently durable SDK terminal evidence may terminalize
 the turn; absence after abort remains unknown/ambiguous, and the backend never
 fabricates `cancelled` or replays the effect to discover the answer.
+
+## Durable scheduler protocol
+
+Scheduler register/remove intents use `pending`, `executing`, `observed`,
+`verified`, `finalized`, `ambiguous`, or `failed`. Their ordered lifecycle is:
+
+1. **Prepare:** parse the complete command before trusted ingress, resolve the
+   exact runtime/Project and schedule/config/registration tuple, obtain the
+   operation-specific confirmation and current scheduler grant, then atomically
+   persist the request, allowed prepare decision, immutable configuration and
+   initial registration projection when registering, intent, and event.
+2. **Final point-of-use Act:** in a fresh short transaction, revalidate the
+   trusted actor/root, scope/config/registration revision, a newly obtained
+   named confirmation, and current grant. Persist the allowed Act decision and move the intent to
+   `executing` before backend access; a denial finalizes as no effect and never
+   calls the backend.
+3. **Call and observe:** invoke exactly one method on the injected
+   `ato.scheduler/v1` backend outside every writer transaction. Parse its exact
+   result and append a bounded receipt digest/observation. Response loss,
+   integrity failure, or effect-possible uncertainty becomes `ambiguous` rather
+   than replay authority. Retryability alone does not imply ambiguity: a closed
+   non-ambiguous no-effect failure terminalizes as `failed`. Adapter observation
+   time is evidence only; trusted ingress time advances the lifecycle.
+4. **Verify and finalize:** independently compare a successful observation with
+   the intent and operation-specific external-state/code rules, persist at most
+   one verified receipt, and then CAS-finalize the registration/result using the
+   exact allowed Act decision and current intent/registration revision. No
+   adapter return value directly writes registration state.
+
+`scheduler.inspect` instead persists a fresh read request/decision, calls the
+backend outside a transaction, and appends only its bounded observation and
+inspected event. It has no mutation intent, effect idempotency key, verified
+mutation receipt, finalization, or registration projection write. Reconciliation
+of an ambiguous register/remove performs such an independent inspect, binds the
+proof to the original mutation intent, and only then continues verification and
+finalization. A restart at `pending` may perform the first call after fresh Act;
+`executing` must inspect and never blindly replay; `observed` verifies only;
+`verified` finalizes only; terminal state returns durable bounded readback.
+Inspect/remove always reuse the external registration identity persisted in the
+request and reject substitution or null erasure. Every durable observation for a
+non-null inspect/remove request repeats that exact identity even when the adapter
+reports absent state or the application records ambiguity/failure. An ambiguous
+remove registration projection retains it, and reconciliation obtains the remove
+identity from the immutable origin request rather than the current projection.
+Reconciliation recency follows the contiguous observation number, never lexical
+ordering of opaque IDs.
+
+Scheduled delivery is a separate ingress transaction. Malformed input records
+only one generic sanitized observation. A schema-valid delivery first obtains a
+current `dispatch.run` allow/deny without revealing configuration state. Denial
+records no tuple/run. An allowed stale or disabled/non-active config records
+stale disposition and no tuple/run. The accepting transaction also revalidates
+the configured scheduler-source adapter, receiving dispatcher target, current
+enabled Project/revisions when Project-scoped, and the claimed time ordering
+against trusted receipt time. Scheduler source identity remains separate from
+the dispatcher run's Manual execution-adapter identity. The first allowed current-config delivery
+atomically inserts the unique (`schedule_id`, config revision, `scheduled_for`)
+tuple, canonical observation, and starting dispatcher run; every later allowed
+duplicate records its own observation attached to that run without starting or
+restarting it. The run then follows the unchanged reconcile-first dispatcher
+and worker takeover protocol.
+
+This protocol is verified only with an unexported no-effect Fake. It establishes
+no concrete scheduler effect, cadence behavior, daemon availability, real E2E,
+or platform support.
 
 ## Durable workspace generation protocol
 

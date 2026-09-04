@@ -200,7 +200,7 @@ CREATE TABLE authorization_capability_epochs (
   epoch_revision INTEGER NOT NULL UNIQUE CHECK (epoch_revision > 0),
   actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
   runtime_root_key TEXT NOT NULL CHECK (length(runtime_root_key) > 0),
-  vocabulary_version INTEGER NOT NULL CHECK (vocabulary_version IN (1, 2, 3, 4, 5, 6)),
+  vocabulary_version INTEGER NOT NULL CHECK (vocabulary_version IN (1, 2, 3, 4, 5, 6, 7)),
   action_set_sha256 TEXT NOT NULL CHECK (length(action_set_sha256) = 64 AND action_set_sha256 NOT GLOB '*[^0-9A-F]*'),
   request_id TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL CHECK (length(created_at) > 0),
@@ -225,7 +225,8 @@ CREATE TABLE authorization_grants (
     'workspace.reserve', 'workspace.create', 'workspace.inspect', 'workspace.recover', 'workspace.cleanup',
     'completion.gate.run', 'completion.gate.inspect', 'completion.gate.cancel', 'completion.accept',
     'integration.reserve', 'integration.inspect', 'integration.lease.renew', 'integration.lease.takeover',
-    'integration.apply', 'integration.push', 'integration.recover', 'integration.release'
+    'integration.apply', 'integration.push', 'integration.recover', 'integration.release',
+    'scheduler.register', 'scheduler.inspect', 'scheduler.remove'
   )),
   scope_kind TEXT NOT NULL CHECK (scope_kind IN ('runtime', 'project')),
   scope_project_id TEXT,
@@ -345,7 +346,7 @@ CREATE TABLE application_lifecycle_authorizations (
   decision_id TEXT NOT NULL UNIQUE,
   audit_id TEXT NOT NULL UNIQUE,
   authorized_state_sha256 TEXT NOT NULL CHECK (length(authorized_state_sha256) = 64 AND authorized_state_sha256 NOT GLOB '*[^0-9A-F]*'),
-  state_digest_version INTEGER NOT NULL CHECK (state_digest_version = 2),
+  state_digest_version INTEGER NOT NULL CHECK (state_digest_version = 3),
   expected_request_count INTEGER NOT NULL CHECK (expected_request_count >= 1),
   expected_decision_count INTEGER NOT NULL CHECK (expected_decision_count >= 1),
   expected_audit_count INTEGER NOT NULL CHECK (expected_audit_count >= 1),
@@ -2808,4 +2809,323 @@ WHEN NOT EXISTS (
 )
 BEGIN
   SELECT RAISE(ABORT, 'workspace cleanup attestation has no exact cleanup intent');
+END;
+
+CREATE TABLE scheduler_operation_requests (
+  request_id TEXT PRIMARY KEY NOT NULL CHECK (length(request_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL UNIQUE CHECK (length(operation_id) BETWEEN 1 AND 128),
+  idempotency_key TEXT UNIQUE CHECK (idempotency_key IS NULL OR length(idempotency_key) BETWEEN 1 AND 128),
+  command_sha256 TEXT NOT NULL CHECK (length(command_sha256)=64 AND command_sha256 NOT GLOB '*[^0-9A-F]*'),
+  operation TEXT NOT NULL CHECK (operation IN ('register','inspect','remove')),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  correlation_id TEXT NOT NULL CHECK (length(correlation_id) BETWEEN 1 AND 128),
+  schedule_id TEXT NOT NULL CHECK (length(schedule_id) BETWEEN 1 AND 128),
+  config_revision INTEGER NOT NULL CHECK (config_revision > 0),
+  external_registration_id TEXT CHECK (external_registration_id IS NULL OR length(external_registration_id) BETWEEN 1 AND 128),
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('runtime','project')),
+  project_id TEXT,
+  project_resource_revision INTEGER,
+  project_config_revision INTEGER,
+  result TEXT NOT NULL CHECK (result IN ('allow','deny')),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  CHECK ((operation='inspect' AND idempotency_key IS NULL)
+    OR (operation='register' AND idempotency_key IS NOT NULL AND external_registration_id IS NULL)
+    OR (operation='remove' AND idempotency_key IS NOT NULL AND external_registration_id IS NOT NULL)),
+  CHECK ((scope_kind='runtime' AND project_id IS NULL AND project_resource_revision IS NULL AND project_config_revision IS NULL)
+    OR (scope_kind='project' AND length(project_id)>0 AND project_resource_revision>0 AND project_config_revision>0)),
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE scheduler_authorization_decisions (
+  decision_id TEXT PRIMARY KEY NOT NULL CHECK (length(decision_id) BETWEEN 1 AND 128),
+  request_id TEXT NOT NULL,
+  stage TEXT NOT NULL CHECK (stage IN ('prepare','act','inspect')),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  action TEXT NOT NULL CHECK (action IN ('scheduler.register','scheduler.inspect','scheduler.remove')),
+  result TEXT NOT NULL CHECK (result IN ('allow','deny')),
+  reason TEXT NOT NULL CHECK (reason IN (
+    'allowed','actor_mismatch','action_mismatch','scope_mismatch','scope_revision_stale',
+    'grant_expired','grant_not_yet_valid','grant_revoked','grant_missing','policy_denied','confirmation_required'
+  )),
+  policy_result TEXT NOT NULL CHECK (policy_result IN ('allow','deny','read_not_applicable')),
+  grant_id TEXT,
+  grant_revision INTEGER,
+  project_id TEXT,
+  project_resource_revision INTEGER,
+  project_config_revision INTEGER,
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  CHECK ((grant_id IS NULL AND grant_revision IS NULL) OR (length(grant_id)>0 AND grant_revision>0)),
+  CHECK ((project_id IS NULL AND project_resource_revision IS NULL AND project_config_revision IS NULL)
+    OR (length(project_id)>0 AND project_resource_revision>0 AND project_config_revision>0)),
+  CHECK ((result='allow' AND reason='allowed' AND grant_id IS NOT NULL) OR (result='deny' AND reason<>'allowed')),
+  UNIQUE(request_id, stage),
+  FOREIGN KEY (request_id) REFERENCES scheduler_operation_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (grant_id) REFERENCES authorization_grants(grant_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE scheduler_configurations (
+  schedule_id TEXT NOT NULL CHECK (length(schedule_id) BETWEEN 1 AND 128),
+  config_revision INTEGER NOT NULL CHECK (config_revision > 0),
+  scope_kind TEXT NOT NULL CHECK (scope_kind IN ('runtime','project')),
+  project_id TEXT,
+  project_resource_revision INTEGER,
+  project_config_revision INTEGER,
+  schedule_expression TEXT NOT NULL CHECK (length(schedule_expression) BETWEEN 1 AND 256),
+  time_zone TEXT NOT NULL CHECK (length(time_zone) BETWEEN 1 AND 128),
+  dispatcher_target TEXT NOT NULL CHECK (length(dispatcher_target) BETWEEN 1 AND 128),
+  config_sha256 TEXT NOT NULL CHECK (length(config_sha256)=64 AND config_sha256 NOT GLOB '*[^0-9A-F]*'),
+  created_by_operation_id TEXT NOT NULL UNIQUE CHECK (length(created_by_operation_id) BETWEEN 1 AND 128),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  CHECK ((scope_kind='runtime' AND project_id IS NULL AND project_resource_revision IS NULL AND project_config_revision IS NULL)
+    OR (scope_kind='project' AND length(project_id)>0 AND project_resource_revision>0 AND project_config_revision>0)),
+  PRIMARY KEY (schedule_id, config_revision),
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (created_by_operation_id) REFERENCES scheduler_operation_requests(operation_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE scheduler_operation_intents (
+  intent_id TEXT PRIMARY KEY NOT NULL CHECK (length(intent_id) BETWEEN 1 AND 128),
+  request_id TEXT NOT NULL UNIQUE,
+  operation_id TEXT NOT NULL UNIQUE CHECK (length(operation_id) BETWEEN 1 AND 128),
+  operation TEXT NOT NULL CHECK (operation IN ('register','remove')),
+  state TEXT NOT NULL CHECK (state IN ('pending','executing','observed','verified','finalized','ambiguous','failed')),
+  contract_id TEXT NOT NULL CHECK (contract_id='ato.scheduler/v1'),
+  adapter_id TEXT NOT NULL CHECK (length(adapter_id) BETWEEN 1 AND 128),
+  adapter_version TEXT NOT NULL CHECK (length(adapter_version) BETWEEN 1 AND 128),
+  schedule_id TEXT NOT NULL CHECK (length(schedule_id) BETWEEN 1 AND 128),
+  config_revision INTEGER NOT NULL CHECK (config_revision > 0),
+  expected_registration_revision INTEGER NOT NULL CHECK (expected_registration_revision >= 0),
+  operation_deadline TEXT NOT NULL CHECK (length(operation_deadline) > 0),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+  FOREIGN KEY (request_id) REFERENCES scheduler_operation_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (schedule_id, config_revision) REFERENCES scheduler_configurations(schedule_id, config_revision) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE scheduler_registrations (
+  schedule_id TEXT NOT NULL CHECK (length(schedule_id) BETWEEN 1 AND 128),
+  config_revision INTEGER NOT NULL CHECK (config_revision > 0),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  status TEXT NOT NULL CHECK (status IN ('pending_register','active','pending_remove','removed','ambiguous')),
+  external_registration_id TEXT CHECK (external_registration_id IS NULL OR length(external_registration_id) BETWEEN 1 AND 128),
+  enabled INTEGER CHECK (enabled IS NULL OR enabled IN (0,1)),
+  next_trigger_at TEXT,
+  last_intent_id TEXT NOT NULL CHECK (length(last_intent_id) BETWEEN 1 AND 128),
+  updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+  PRIMARY KEY (schedule_id, config_revision),
+  CHECK ((status='active' AND external_registration_id IS NOT NULL AND enabled IS NOT NULL)
+    OR status<>'active'),
+  FOREIGN KEY (schedule_id, config_revision) REFERENCES scheduler_configurations(schedule_id, config_revision) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (last_intent_id) REFERENCES scheduler_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
+
+CREATE TABLE scheduler_observations (
+  observation_id TEXT PRIMARY KEY NOT NULL CHECK (length(observation_id) BETWEEN 1 AND 128),
+  request_id TEXT NOT NULL,
+  intent_id TEXT,
+  observation_number INTEGER NOT NULL CHECK (observation_number > 0),
+  external_state TEXT NOT NULL CHECK (external_state IN ('present','absent','ambiguous')),
+  external_registration_id TEXT CHECK (external_registration_id IS NULL OR length(external_registration_id) BETWEEN 1 AND 128),
+  enabled INTEGER CHECK (enabled IS NULL OR enabled IN (0,1)),
+  next_trigger_at TEXT,
+  outcome TEXT NOT NULL CHECK (outcome IN ('succeeded','refused','ambiguous')),
+  code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
+  receipt_id TEXT CHECK (receipt_id IS NULL OR length(receipt_id) BETWEEN 1 AND 128),
+  receipt_sha256 TEXT NOT NULL CHECK (length(receipt_sha256)=64 AND receipt_sha256 NOT GLOB '*[^0-9A-F]*'),
+  evidence_reference TEXT CHECK (evidence_reference IS NULL OR length(evidence_reference) BETWEEN 1 AND 128),
+  observed_at TEXT NOT NULL CHECK (length(observed_at) > 0),
+  UNIQUE(request_id, observation_number),
+  FOREIGN KEY (request_id) REFERENCES scheduler_operation_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (intent_id) REFERENCES scheduler_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE scheduler_verified_receipts (
+  verified_receipt_id TEXT PRIMARY KEY NOT NULL CHECK (length(verified_receipt_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL UNIQUE,
+  observation_id TEXT NOT NULL UNIQUE,
+  receipt_id TEXT NOT NULL UNIQUE CHECK (length(receipt_id) BETWEEN 1 AND 128),
+  receipt_sha256 TEXT NOT NULL CHECK (length(receipt_sha256)=64 AND receipt_sha256 NOT GLOB '*[^0-9A-F]*'),
+  external_state TEXT NOT NULL CHECK (external_state IN ('present','absent','ambiguous')),
+  external_registration_id TEXT CHECK (external_registration_id IS NULL OR length(external_registration_id) BETWEEN 1 AND 128),
+  enabled INTEGER CHECK (enabled IS NULL OR enabled IN (0,1)),
+  next_trigger_at TEXT,
+  code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
+  verified_at TEXT NOT NULL CHECK (length(verified_at) > 0),
+  FOREIGN KEY (intent_id) REFERENCES scheduler_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (observation_id) REFERENCES scheduler_observations(observation_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE scheduler_finalizations (
+  finalization_id TEXT PRIMARY KEY NOT NULL CHECK (length(finalization_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL UNIQUE,
+  verified_receipt_id TEXT UNIQUE,
+  authorization_decision_id TEXT NOT NULL,
+  outcome TEXT NOT NULL CHECK (outcome IN ('registered','removed','refused','ambiguous','failed')),
+  code TEXT NOT NULL CHECK (length(code) BETWEEN 1 AND 64),
+  resulting_registration_status TEXT NOT NULL CHECK (resulting_registration_status IN ('pending_register','active','pending_remove','removed','ambiguous')),
+  resulting_registration_revision INTEGER NOT NULL CHECK (resulting_registration_revision > 0),
+  finalized_at TEXT NOT NULL CHECK (length(finalized_at) > 0),
+  FOREIGN KEY (intent_id) REFERENCES scheduler_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (verified_receipt_id) REFERENCES scheduler_verified_receipts(verified_receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (authorization_decision_id) REFERENCES scheduler_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE scheduler_events (
+  event_id TEXT PRIMARY KEY NOT NULL CHECK (length(event_id) BETWEEN 1 AND 128),
+  operation_id TEXT NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 128),
+  request_id TEXT NOT NULL,
+  intent_id TEXT,
+  event_kind TEXT NOT NULL CHECK (event_kind IN (
+    'scheduler.operation.prepared','scheduler.operation.denied','scheduler.operation.executing',
+    'scheduler.operation.observed','scheduler.operation.verified','scheduler.operation.finalized',
+    'scheduler.operation.reconciled','scheduler.inspected'
+  )),
+  outcome TEXT NOT NULL CHECK (outcome IN ('accepted','denied','refused','ambiguous','failed')),
+  reason_code TEXT NOT NULL CHECK (length(reason_code) BETWEEN 1 AND 64),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  correlation_id TEXT NOT NULL CHECK (length(correlation_id) BETWEEN 1 AND 128),
+  schedule_id TEXT NOT NULL CHECK (length(schedule_id) BETWEEN 1 AND 128),
+  config_revision INTEGER NOT NULL CHECK (config_revision > 0),
+  observation_number INTEGER CHECK (observation_number IS NULL OR observation_number > 0),
+  evidence_reference TEXT CHECK (evidence_reference IS NULL OR length(evidence_reference) BETWEEN 1 AND 128),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  FOREIGN KEY (request_id) REFERENCES scheduler_operation_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (intent_id) REFERENCES scheduler_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE scheduler_delivery_observations (
+  observation_id TEXT PRIMARY KEY NOT NULL CHECK (length(observation_id) BETWEEN 1 AND 128),
+  request_id TEXT,
+  decision_id TEXT,
+  adapter_id TEXT NOT NULL CHECK (length(adapter_id) BETWEEN 1 AND 128),
+  adapter_version TEXT NOT NULL CHECK (length(adapter_version) BETWEEN 1 AND 128),
+  dispatcher_target TEXT NOT NULL CHECK (length(dispatcher_target) BETWEEN 1 AND 128),
+  contract_id TEXT NOT NULL CHECK (contract_id='ato.scheduler/v1'),
+  trigger_id_sha256 TEXT CHECK (trigger_id_sha256 IS NULL OR (length(trigger_id_sha256)=64 AND trigger_id_sha256 NOT GLOB '*[^0-9A-F]*')),
+  claimed_deduplication_sha256 TEXT CHECK (claimed_deduplication_sha256 IS NULL OR (length(claimed_deduplication_sha256)=64 AND claimed_deduplication_sha256 NOT GLOB '*[^0-9A-F]*')),
+  schedule_id TEXT,
+  config_revision INTEGER,
+  scheduled_for TEXT,
+  delivered_at TEXT,
+  received_at TEXT NOT NULL CHECK (length(received_at) > 0),
+  disposition TEXT NOT NULL CHECK (disposition IN ('accepted','authorization_denied','rejected_stale_config','malformed')),
+  attachment_role TEXT NOT NULL CHECK (attachment_role IN ('canonical','duplicate','none')),
+  run_id TEXT,
+  CHECK ((disposition='malformed' AND request_id IS NULL AND decision_id IS NULL AND trigger_id_sha256 IS NULL
+      AND claimed_deduplication_sha256 IS NULL AND schedule_id IS NULL AND config_revision IS NULL
+      AND scheduled_for IS NULL AND delivered_at IS NULL AND attachment_role='none' AND run_id IS NULL)
+    OR (disposition<>'malformed' AND request_id IS NOT NULL AND decision_id IS NOT NULL
+      AND trigger_id_sha256 IS NOT NULL AND claimed_deduplication_sha256 IS NOT NULL
+      AND length(schedule_id)>0 AND config_revision>0 AND scheduled_for IS NOT NULL AND delivered_at IS NOT NULL)),
+  CHECK ((disposition='accepted' AND attachment_role IN ('canonical','duplicate') AND run_id IS NOT NULL)
+    OR (disposition<>'accepted' AND attachment_role='none' AND run_id IS NULL)),
+  FOREIGN KEY (request_id) REFERENCES dispatcher_trigger_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (decision_id) REFERENCES dispatcher_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (run_id) REFERENCES dispatcher_runs(run_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE scheduler_scheduled_tuples (
+  schedule_id TEXT NOT NULL CHECK (length(schedule_id) BETWEEN 1 AND 128),
+  config_revision INTEGER NOT NULL CHECK (config_revision > 0),
+  scheduled_for TEXT NOT NULL CHECK (length(scheduled_for) > 0),
+  canonical_observation_id TEXT NOT NULL UNIQUE CHECK (length(canonical_observation_id) BETWEEN 1 AND 128),
+  run_id TEXT NOT NULL UNIQUE CHECK (length(run_id) BETWEEN 1 AND 128),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  PRIMARY KEY (schedule_id, config_revision, scheduled_for),
+  FOREIGN KEY (schedule_id, config_revision) REFERENCES scheduler_configurations(schedule_id, config_revision) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (canonical_observation_id) REFERENCES scheduler_delivery_observations(observation_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (run_id) REFERENCES dispatcher_runs(run_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX scheduler_intents_state_index ON scheduler_operation_intents(state, operation_deadline, intent_id);
+CREATE INDEX scheduler_delivery_run_index ON scheduler_delivery_observations(run_id, observation_id) WHERE run_id IS NOT NULL;
+
+CREATE TRIGGER scheduler_operation_requests_no_update BEFORE UPDATE ON scheduler_operation_requests BEGIN
+  SELECT RAISE(ABORT, 'scheduler operation requests are immutable');
+END;
+CREATE TRIGGER scheduler_operation_requests_no_delete BEFORE DELETE ON scheduler_operation_requests BEGIN
+  SELECT RAISE(ABORT, 'scheduler operation requests are immutable');
+END;
+CREATE TRIGGER scheduler_authorization_decisions_no_update BEFORE UPDATE ON scheduler_authorization_decisions BEGIN
+  SELECT RAISE(ABORT, 'scheduler authorization decisions are immutable');
+END;
+CREATE TRIGGER scheduler_authorization_decisions_no_delete BEFORE DELETE ON scheduler_authorization_decisions BEGIN
+  SELECT RAISE(ABORT, 'scheduler authorization decisions are immutable');
+END;
+CREATE TRIGGER scheduler_configurations_no_update BEFORE UPDATE ON scheduler_configurations BEGIN
+  SELECT RAISE(ABORT, 'scheduler configurations are immutable');
+END;
+CREATE TRIGGER scheduler_configurations_no_delete BEFORE DELETE ON scheduler_configurations BEGIN
+  SELECT RAISE(ABORT, 'scheduler configurations are immutable');
+END;
+CREATE TRIGGER scheduler_operation_intents_update_guard
+BEFORE UPDATE ON scheduler_operation_intents
+WHEN NEW.intent_id<>OLD.intent_id OR NEW.request_id<>OLD.request_id OR NEW.operation_id<>OLD.operation_id
+  OR NEW.operation<>OLD.operation OR NEW.contract_id<>OLD.contract_id OR NEW.adapter_id<>OLD.adapter_id
+  OR NEW.adapter_version<>OLD.adapter_version OR NEW.schedule_id<>OLD.schedule_id
+  OR NEW.config_revision<>OLD.config_revision OR NEW.expected_registration_revision<>OLD.expected_registration_revision
+  OR NEW.operation_deadline<>OLD.operation_deadline OR NEW.created_at<>OLD.created_at
+  OR NEW.updated_at<=OLD.updated_at OR NEW.revision<>OLD.revision+1
+  OR NOT ((OLD.state='pending' AND NEW.state IN ('executing','failed'))
+    OR (OLD.state='executing' AND NEW.state IN ('observed','ambiguous','failed'))
+    OR (OLD.state='observed' AND NEW.state IN ('verified','ambiguous','failed'))
+    OR (OLD.state='verified' AND NEW.state IN ('finalized','ambiguous'))
+    OR (OLD.state='ambiguous' AND NEW.state IN ('observed','ambiguous')))
+BEGIN
+  SELECT RAISE(ABORT, 'scheduler intent update violates identity, revision or lifecycle');
+END;
+CREATE TRIGGER scheduler_operation_intents_no_delete BEFORE DELETE ON scheduler_operation_intents BEGIN
+  SELECT RAISE(ABORT, 'scheduler intents cannot be deleted');
+END;
+CREATE TRIGGER scheduler_registrations_update_guard
+BEFORE UPDATE ON scheduler_registrations
+WHEN NEW.schedule_id<>OLD.schedule_id OR NEW.config_revision<>OLD.config_revision
+  OR NEW.revision<>OLD.revision+1 OR NEW.updated_at<=OLD.updated_at
+  OR NOT ((OLD.status='pending_register' AND NEW.status IN ('active','removed','ambiguous'))
+    OR (OLD.status='active' AND NEW.status='pending_remove')
+    OR (OLD.status='pending_remove' AND NEW.status IN ('active','removed','ambiguous'))
+    OR (OLD.status='ambiguous' AND NEW.status IN ('active','removed','ambiguous')))
+BEGIN
+  SELECT RAISE(ABORT, 'scheduler registration update violates identity, revision or lifecycle');
+END;
+CREATE TRIGGER scheduler_registrations_no_delete BEFORE DELETE ON scheduler_registrations BEGIN
+  SELECT RAISE(ABORT, 'scheduler registrations cannot be deleted');
+END;
+CREATE TRIGGER scheduler_observations_no_update BEFORE UPDATE ON scheduler_observations BEGIN
+  SELECT RAISE(ABORT, 'scheduler observations are immutable');
+END;
+CREATE TRIGGER scheduler_observations_no_delete BEFORE DELETE ON scheduler_observations BEGIN
+  SELECT RAISE(ABORT, 'scheduler observations are immutable');
+END;
+CREATE TRIGGER scheduler_verified_receipts_no_update BEFORE UPDATE ON scheduler_verified_receipts BEGIN
+  SELECT RAISE(ABORT, 'scheduler verified receipts are immutable');
+END;
+CREATE TRIGGER scheduler_verified_receipts_no_delete BEFORE DELETE ON scheduler_verified_receipts BEGIN
+  SELECT RAISE(ABORT, 'scheduler verified receipts are immutable');
+END;
+CREATE TRIGGER scheduler_finalizations_no_update BEFORE UPDATE ON scheduler_finalizations BEGIN
+  SELECT RAISE(ABORT, 'scheduler finalizations are immutable');
+END;
+CREATE TRIGGER scheduler_finalizations_no_delete BEFORE DELETE ON scheduler_finalizations BEGIN
+  SELECT RAISE(ABORT, 'scheduler finalizations are immutable');
+END;
+CREATE TRIGGER scheduler_events_no_update BEFORE UPDATE ON scheduler_events BEGIN
+  SELECT RAISE(ABORT, 'scheduler events are immutable');
+END;
+CREATE TRIGGER scheduler_events_no_delete BEFORE DELETE ON scheduler_events BEGIN
+  SELECT RAISE(ABORT, 'scheduler events are immutable');
+END;
+CREATE TRIGGER scheduler_delivery_observations_no_update BEFORE UPDATE ON scheduler_delivery_observations BEGIN
+  SELECT RAISE(ABORT, 'scheduler delivery observations are immutable');
+END;
+CREATE TRIGGER scheduler_delivery_observations_no_delete BEFORE DELETE ON scheduler_delivery_observations BEGIN
+  SELECT RAISE(ABORT, 'scheduler delivery observations are immutable');
+END;
+CREATE TRIGGER scheduler_scheduled_tuples_no_update BEFORE UPDATE ON scheduler_scheduled_tuples BEGIN
+  SELECT RAISE(ABORT, 'scheduler tuples are immutable');
+END;
+CREATE TRIGGER scheduler_scheduled_tuples_no_delete BEFORE DELETE ON scheduler_scheduled_tuples BEGIN
+  SELECT RAISE(ABORT, 'scheduler tuples are immutable');
 END;

@@ -5,15 +5,19 @@
 This file is the sole normative owner of port directions, current port
 identifiers and versions, operation shapes, receipt envelopes, and adapter
 error taxonomy. The package implements the pure `ato.execution/v2`,
-`ato.project-policy/v1`, `ato.completion/v1`, `ato.integration/v1`, and sole
-current `ato.workspace/v2` contract kits. Concrete local implementations are
+`ato.scheduler/v1`, `ato.project-policy/v1`, `ato.completion/v1`,
+`ato.integration/v1`, and sole current `ato.workspace/v2` contract kits.
+Concrete local implementations are
 the durable `manual-local` execution adapter/control, a package-private and
 non-composed `openai-codex-sdk-local` execution adapter/driver, configured
 `local-project-policy`, bounded `local-completion`,
 `local-git-integration`, and `windows-git-local` workspace backend. Fake
 backends are test-only and unexported. The Codex constructor, configuration,
 driver, and injected service are absent from the supported package root and all
-current product/application/dispatcher/CLI factories. Scheduler remains planned.
+current product/application/dispatcher/CLI factories. The scheduler port and
+typed injected application owner are implemented, but there is no concrete
+scheduler adapter; its deterministic no-effect Fake is test-only and
+unexported.
 
 The Phase 3 ports and local adapters are direct injected library surfaces. The
 default product runtime and sole current `ato.api/v1` CLI construct none of
@@ -47,10 +51,11 @@ Each implemented port section below owns one exact closed call shape; unknown,
 missing, accessor-backed, or cross-class fields are rejected. The generic
 classes describe responsibility boundaries shared by current and later ports,
 not a field union that an implemented call may extend. In particular,
-`ato.workspace/v2` uses the exact specialized envelope documented in its
-section and keeps actor, authorization-decision, confirmation, and policy facts
-inside the durable application owner rather than forwarding them to the
-backend. Fields from another class are never accepted as nullable placeholders.
+`ato.workspace/v2` and `ato.scheduler/v1` use the exact specialized envelopes
+documented in their sections and keep actor, authorization-decision,
+confirmation, intent, and policy facts inside the durable application owner
+rather than forwarding them to the backend when their exact request does not
+name those fields. Fields from another class are never accepted as nullable placeholders.
 Each operation section states which Project, Task, execution, run, trigger,
 workspace, or schedule identities are applicable.
 
@@ -99,19 +104,17 @@ and [application decision sequence](authorization-contract.md#application-decisi
 
 ### Inbound scheduler trigger
 
-This shape remains planned; the implemented dispatcher accepts only its own
-typed explicit-Manual trigger and does not implement `ato.scheduler/v1` or a
-scheduled delivery channel.
-
-An inbound trigger contains scheduler adapter/contract and registration
-identity, trigger ID, schedule ID, scheduled instant, observed delivery instant,
-config revision, and the adapter's claimed deduplication value. It contains no
-caller-asserted actor, Task, execution, run, mutating intent, or final
-authorization. Typed outer ingress bounds and authenticates the delivery
-channel, derives the registered scheduler actor from that trusted identity, and
-ensures a sanitized observation is persisted even when the inner trigger is
-malformed. A valid inner shape derives the authoritative scheduled tuple and is
-bound to a final `dispatch.run` allow/deny before the ingress transaction. That
+Trusted outer ingress supplies the configured scheduler adapter ID/version,
+actor, principal, runtime-root identity, worker owner, and current time. The
+untrusted inner trigger contains only contract ID, trigger ID, schedule ID,
+positive config revision, scheduled instant, observed delivery instant, and the
+adapter's bounded claimed deduplication value. It contains no registration
+identity, adapter identity, caller-asserted actor, Task, execution, run,
+mutating intent, or authorization. Typed outer ingress bounds the delivery
+channel and ensures a sanitized observation is persisted even when the inner
+trigger is malformed. A valid inner shape resolves the authoritative current
+registration and dispatcher target from durable state, derives the exact
+scheduled tuple, and is bound to a current `dispatch.run` allow/deny. The same
 transaction creates or attaches the tuple's one canonical run only on allow;
 denial records a sanitized unattached observation with its decision reference
 but creates no run, Task, or external effect.
@@ -323,6 +326,12 @@ verification, finalization, response-loss, and restart handling.
 
 ## SchedulerBackend: `ato.scheduler/v1`
 
+This pure exact contract kit and typed injected application owner are
+implemented and exported. No production scheduler adapter, platform-specific
+grammar, executable, task definition, registration factory, or default
+product/API/CLI construction path exists. The unexported test Fake performs no
+filesystem, process, network, clock, scheduler, SQL, or other external effect.
+
 Outbound lifecycle operations are:
 
 - `register`: a `scheduler.register` mutating-effect call binding schedule ID,
@@ -336,10 +345,50 @@ Outbound lifecycle operations are:
   authorization and persisted intent; it reports observed
   absent/present/ambiguous external registration state.
 
-All three are Task-, execution-, dispatcher-run-, and trigger-independent. Their
-scope is the exact system/Project schedule resource; `register` and `remove`
-still require the full mutating envelope, while `inspect` requires the read
-envelope.
+The trusted outer scheduled-ingress context supplies the configured scheduler
+source adapter ID/version, configured receiving dispatcher target, actor,
+principal, runtime-root identity, and current time. Its untrusted inner trigger
+has exactly `contractId`, `triggerId`,
+`scheduleId`, positive `configRevision`, canonical `scheduledFor`, canonical
+`observedAt`, and bounded `claimedDeduplication`. The application resolves the
+durable registration and configured target itself and requires their owning
+source adapter and target to equal that trusted ingress context; neither
+registration identity, adapter identity, target, actor, authorization, nor
+dispatcher membership is accepted from trigger content. This scheduler source
+identity is independent of the Manual execution adapter identity used after a
+run is created.
+
+All three are Task-, execution-, dispatcher-run-, and trigger-independent. Each
+exact backend request contains `contractId=ato.scheduler/v1`, operation and
+operation/correlation identities, schedule ID, positive config revision, and an
+exact runtime-or-Project scope. Register additionally carries its idempotency
+key, bounded opaque schedule expression/timezone, and dispatcher target; inspect
+carries nullable external registration identity; remove carries its own
+idempotency key and non-null external registration identity. The application
+persists that request-bound identity and rejects any successful present-state
+receipt that substitutes it. Unknown, missing,
+accessor-backed, proxy-throwing, cross-operation, platform-specific, or
+differently cased fields fail before backend dispatch. Actor, grants,
+confirmation, durable intent, and authorization bindings remain inside the
+application owner rather than entering this pure port shape.
+
+A successful result contains only `ok: true` and one exact receipt. The receipt
+binds contract, receipt/operation/schedule/config identities; nullable external
+registration ID; external state `present|absent|ambiguous`; outcome
+`succeeded|refused|ambiguous`; one operation-compatible closed code; nullable
+enabled and next-trigger observations; nullable bounded evidence reference; and
+canonical observed time. Code/outcome/state/nullability combinations are
+closed and semantically revalidated by the application owner. A failed result
+contains only `ok: false` and the shared closed category, bounded stable code,
+exact retryable/ambiguous flags, nullable retry time, and nullable bounded
+evidence reference. Throws or invalid adapter output become a closed integrity
+failure, not raw exception disclosure.
+
+Receipt `observedAt` is external evidence only. Application state transitions,
+verification, and finalization use trusted ingress time. A retryable result is
+not automatically ambiguous: a closed non-ambiguous failure is terminal
+no-effect evidence, while only effect-possible or integrity-ambiguous outcomes
+enter reconciliation.
 
 The inbound `dispatch_trigger` shape contains contract ID, trigger ID, schedule
 ID, scheduled time, observed delivery time, config revision, and the adapter's

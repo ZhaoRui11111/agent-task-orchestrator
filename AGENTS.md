@@ -39,7 +39,8 @@ bounded thread/terminal evidence before convergence, never exposes raw SDK item
 payloads, never treats response loss as replay authority, and leaves Task
 completion to the existing completion owner. No supported package-root,
 product-runtime, dispatcher, API, or CLI route can construct or select it; the
-current vocabulary-version-6 grants remain Manual-only product authority. The explicit
+current vocabulary-version-7 grant set creates no supported Codex selection or
+destination authority. The explicit
 Manual dispatcher adds a separately upgraded `dispatch.run` capability,
 durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
 immutable finite candidate membership, one terminal outcome per member, and a
@@ -54,8 +55,9 @@ and fixed public error mapping. Adapter work remains
 outside writer transactions, turn success alone never completes a Task, lease
 expiry never authorizes blind replay, and stale-fence writes are refused.
 
-The fresh-only Phase 3 library extends the same schema-version-1 baseline with
-application-state digest version 2 and authorization vocabulary version 6. It
+The fresh-only Phase 3 library and scheduler extension use the same
+schema-version-1 baseline with application-state digest version 3 and
+authorization vocabulary version 7. Phase 3
 implements exact `ato.project-policy/v1`, `ato.completion/v1`,
 `ato.integration/v1`, and the sole current `ato.workspace/v2` contracts, one
 typed Phase 3 application/product-library owner, and persistence-owned policy,
@@ -72,13 +74,25 @@ bound owned cleanup. Their filesystem/Git effects are limited to trusted local
 configuration and disposable fixtures; none writes SQLite or is constructed by
 the default product runtime or CLI.
 
+The package also exports the pure exact `ato.scheduler/v1` port and one typed,
+injected scheduler application owner. Register/remove follow the durable
+intent/observation/verified-receipt/finalization protocol, inspect follows its
+separate read decision/query/observation path, and scheduled delivery extends
+the existing dispatcher with sanitized observations, current-config checks,
+current `dispatch.run` authorization, one unique
+`(schedule_id, config_revision, scheduled_for)` tuple, and canonical-run
+attachment. The only scheduler backend is an unexported no-effect test Fake;
+there is no concrete scheduler adapter, platform grammar, default product/API/
+CLI scheduler operation route, real scheduled task, or scheduler support claim.
+
 The Phase 2 product capabilities are implemented only for the local
 explicit-Manual product and `manual-local` adapter. They do not execute Task
 content or perform an external Project/workspace effect. The Phase 3 capability
 is an explicitly injected library surface with no public CLI command or default
 product composition; its disposable Git `2.53.0.windows.1` evidence is
-development evidence only. The repository still has no scheduler or scheduled
-trigger, MCP component, product-wired Codex or Phase 3 route, Codex credential/
+development evidence only. The repository still has no concrete scheduler
+adapter or real scheduled task, MCP component, product-wired Codex, scheduler,
+or Phase 3 route, Codex credential/
 destination authority, daemon/service, general external-service integration,
 release, deployment, real Codex account E2E, or validated
 platform-support claim. Do not describe those absent modules, platform support,
@@ -91,7 +105,8 @@ current finite local grant model, and the
 [persistence contract](docs/reference/persistence-contract.md) for the current
 schema and storage/recovery boundary. The
 [reliability protocol](docs/reference/reliability-protocol.md) owns the current
-claim/lease/fence, Manual and package-private Codex effects, dispatcher fan-out, workspace, gate,
+claim/lease/fence, Manual and package-private Codex effects, scheduler lifecycle
+and delivery, dispatcher fan-out, workspace, gate,
 completion, integration, and cleanup protocols. The
 [CLI contract](docs/reference/cli-contract.md) alone owns commands, public output,
 and exit codes.

@@ -7,7 +7,8 @@ handling, log-content redaction, retention, diagnostic disclosure, and default
 no telemetry. The current schema-version-1 application owners implement sanitized append-only
 Phase 1, claim, reliable Manual-loop, package-private Codex turn/terminal,
 explicit-Manual dispatcher, and dedicated
-workspace/ProjectPolicy/gate/completion/integration/cleanup audit/evidence
+workspace/ProjectPolicy/gate/completion/integration/cleanup and scheduler
+audit/evidence
 subsets, and the local product CLI/read-only doctor implement
 the closed display subset described below. No runtime logger, secret provider,
 diagnostic bundle exporter, retention job, or telemetry implementation exists
@@ -108,6 +109,21 @@ adapter payload/errors, SQL, stacks, and arbitrary caller text are neither
 dispatcher records nor library result fields. A malformed value fails before
 trusted ingress/state access; an unrecognized persisted enum or code is typed
 corruption rather than displayable text.
+
+The scheduler library keeps bounded schedule expression, timezone, dispatcher
+target, and external registration identity only in the authoritative typed
+configuration/registration records needed for lifecycle and reconciliation.
+Those values are sensitive configuration and are absent from scheduler events,
+delivery observations, generic audit, the current CLI, feasibility evidence,
+and logs. Operation records retain only the exact opaque identities, scope and
+revision bindings, closed lifecycle/action/result/reason codes, timestamps,
+integrity digests, and nullable bounded evidence references required by the
+protocol. Raw adapter payload/error text is discarded. Scheduled delivery
+stores hashes of the trigger ID and claimed deduplication value, not their raw
+text; malformed input leaves only a sanitized observation. The injected typed
+library may return the exact bound external registration identity and next
+trigger time to its authorized caller, but no default product route exposes
+them.
 
 The workspace/Phase 3 library stores only opaque Project/Task/run/member/
 execution/workspace/operation/policy/gate/reservation/attestation identities,

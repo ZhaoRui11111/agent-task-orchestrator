@@ -10,7 +10,9 @@ package-private Codex turn/terminal journal, dispatcher request/
 decision/audit, reconciliation, member, no-execution member-denial, and summary
 rows, plus current policy receipts, completion-gate transition evidence,
 completion decisions, integration reservation/transition evidence, cleanup
-attestations, the workspace transition-event relation, and closed current
+attestations, the workspace transition-event relation, scheduler operation/
+authorization/intent/observation/receipt/finalization/event records, scheduled-
+delivery observations and canonical tuples, and closed current
 `ato.api/v1` responses, implement only a
 bounded durable/display evidence subset; they are not log files or a general
 event sink.
@@ -23,15 +25,16 @@ rows are source-of-truth records owned by the
 
 ## Correlation model
 
-- Each current user/explicit-Manual ingress creates one `correlation_id`; a
-  future scheduler ingress must do the same. Nested work
-  propagates it unchanged across application, persistence, dispatcher, and
-  adapter boundaries.
+- Each current user/explicit-Manual ingress creates one `correlation_id`; each
+  syntactically valid scheduled delivery does the same. A malformed scheduled
+  delivery persists only its sanitized observation without invented request or
+  correlation identity. Nested work propagates an established correlation ID
+  unchanged across application, persistence, dispatcher, and adapter boundaries.
 - `causation_id` identifies the immediately preceding event or command.
 - Structured events include applicable stable IDs for actor, Project, Task,
-  execution, run, trigger, operation/intent, receipt, workspace/generation,
-  policy, gate, integration reservation, cleanup attestation, and authorization
-  decision.
+  execution, run, trigger, schedule/config revision, operation/intent, receipt,
+  workspace/generation, policy, gate, integration reservation, cleanup
+  attestation, and authorization decision.
 - Missing optional IDs are explicit nulls. Logs never substitute Task title,
   filesystem path, prompt excerpt, or external response text for a stable ID.
 - Adapter calls carry correlation and operation identity, and adapter errors
@@ -47,8 +50,8 @@ envelope is:
 - UTC `occurred_at`, severity `debug|info|warn|error|security`, and stable
   `event_name`;
 - component and operation name;
-- nullable actor, Project, Task, execution, run, trigger, intent, receipt,
-  workspace, and gate IDs;
+- nullable actor, Project, Task, execution, run, trigger, schedule, intent,
+  receipt, workspace, and gate IDs;
 - stable outcome and reason codes;
 - bounded numeric measurements and retry/latency fields;
 - `privacy_classification`, `redaction_applied`, and redaction-policy version;
@@ -59,7 +62,8 @@ The initial event-name families are `domain.command`, `authorization.decision`,
 `persistence.transaction`, `migration.transition`, `backup.transition`,
 `dispatch.run`, `execution.claim`, `lease.transition`, `operation.transition`,
 `adapter.call`, `workspace.transition`, `gate.verdict`, `integration.transition`,
-`security.refusal`, and `diagnostic.access`.
+`scheduler.transition`, `scheduler.delivery`, `security.refusal`, and
+`diagnostic.access`.
 
 Events describe observed facts. They do not claim an external effect succeeded
 unless a verified receipt/finalization exists, and they do not claim a Task
@@ -67,11 +71,12 @@ completed based on an execution-turn event.
 
 ## Current dedicated transition evidence
 
-The current workspace/Phase 3 library does not implement the general
+The current workspace/Phase 3 and scheduler libraries do not implement the general
 operational event envelope or a sink. It persists dedicated append-only
 `workspace_events`, `completion_gate_events`, and `integration_events`
-relations as authoritative transition evidence, while the generic application
-audit records bounded policy/completion/integration command outcomes.
+relations plus `scheduler_events` and `scheduler_delivery_observations` as
+authoritative transition evidence, while the generic application audit records
+bounded policy/completion/integration command outcomes.
 
 The workspace event-kind set is `workspace.operation.prepared`,
 `workspace.operation.denied`, `workspace.operation.executing`,
@@ -100,6 +105,19 @@ outcome/reason codes, revisions/fences/counts/times, and nullable bounded
 evidence references. Policy receipts, verified gate receipts, generic and
 subtyped completion decisions, integration receipts/finalizations, and cleanup
 attestations are source-of-truth records rather than reconstructed events.
+
+Scheduler events use the closed prepared/denied/executing/observed/verified/
+finalized/reconciled lifecycle plus `scheduler.inspected`. They contain only
+bound opaque operation/request/intent/actor/correlation/schedule identities,
+config revision, closed outcome/reason, nullable observation number/evidence
+reference, and trusted time. Delivery observations contain trusted adapter/
+contract identity, hashes of the trigger and claimed-deduplication values,
+nullable schedule/config/time/run bindings, and closed disposition/attachment
+role. Raw trigger or deduplication text, schedule expression, timezone,
+dispatcher target, external registration identity, actor from trigger content,
+adapter payload/error, and arbitrary attributes are absent. The immutable
+scheduled-tuple relation, not an event, binds exact `(schedule_id,
+config_revision, scheduled_for)` to one canonical observation and run.
 
 The package-private Codex path likewise implements no operational event stream.
 Its source-of-truth subset is the exact execution intent/authorization/

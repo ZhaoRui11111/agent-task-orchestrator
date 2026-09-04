@@ -107,13 +107,14 @@ first reproduce the frozen dependency install in an empty disposable project
 and generation-local store, then pack the declared distribution, install it
 into a disposable consumer without registry access, typecheck the public
   declarations without undeclared Node type dependencies, import the library
-  entry, exercise trusted bootstrap plus Project/Task commands and five
-  sequential explicit capability upgrades through vocabulary version 6, an atomic
+  entry, exercise trusted bootstrap plus Project/Task commands and six
+  sequential explicit capability upgrades through vocabulary version 7, an atomic
   execution claim, the local Manual start/inspect/outcome/finalization/
   completion library loop after restart, the typed product facade's Manual
   dispatch-to-completion restart path, and a fresh persistence backup; verify
   the exported reconcile-first dispatcher/product operational surfaces, exact
-  Phase 3 port kits, typed application/product-library declarations, and the
+  scheduler and Phase 3 port kits, typed injected scheduler and Phase 3
+  application/product-library declarations, and the
   local ProjectPolicy, completion, integration, and Windows Git workspace
   adapter factories, constants, and narrow configuration types without wiring
   or invoking those adapters through the default product; and
@@ -123,16 +124,15 @@ into a disposable consumer without registry access, typecheck the public
   absence of read-only doctor side effects. Packed declarations must contain one
   product API major, one public error table/type, the current schema-1
   backup/restore declarations, and no synthetic scaffold/capability-status
-  registry. The exact packed inventory is 228 files, including the compiled
+  registry. The exact packed inventory is 240 files, including the compiled
   package-private Codex modules but exposing them through no package export.
 
 The package-root library export is the explicit operational facade. It exposes
 the pure TypeScript Domain Core including its canonical cancellation-reason predicate,
 ProjectRegistry identity owner, finite authorization
 owner, typed Phase 1 and claim application services, the pure execution-v2 port
-  kit, production local Manual backend/control, and public Manual reliable-loop
-  surface,
-reconcile-first Manual dispatcher, the exact ProjectPolicy/completion/
+kit, production local Manual backend/control, public Manual reliable-loop
+surface, reconcile-first dispatcher and exact scheduler port/application, the exact ProjectPolicy/completion/
 integration/workspace port kits, typed durable workspace and Phase 3 application
 services, the explicitly injected Phase 3 product-library facade, local
 ProjectPolicy/completion/Git-integration adapters, the product-unwired Windows
@@ -151,7 +151,7 @@ wildcard. The `ato` console is the local Phase 1 and explicit-Manual Phase 2
 product CLI defined by the
 [CLI/API contract](cli-contract.md).
 
-Production source is exactly these 57 files:
+Production source is exactly these 60 files:
 
 - `src/index.ts`, `src/domain.ts`, `src/cli.ts`, `src/cli-api.ts`,
   `src/cli-api-model.ts`, `src/cli-api-parser.ts`,
@@ -164,6 +164,7 @@ Production source is exactly these 57 files:
   `src/execution-loop.ts`, `src/manual-execution-backend.ts`,
   `src/codex-execution-backend.ts`, `src/codex-sdk-worker.ts`,
   `src/dispatcher-application.ts`, `src/dispatcher.ts`,
+  `src/scheduler-application.ts`, `src/scheduler-port.ts`,
   `src/project-policy-port.ts`, `src/local-project-policy.ts`,
   `src/completion-port.ts`, `src/completion-application.ts`,
   `src/local-completion-backend.ts`, `src/integration-port.ts`,
@@ -184,6 +185,7 @@ Production source is exactly these 57 files:
   `src/persistence/manual-backend-repository.ts`,
   `src/persistence/codex-backend-repository.ts`,
   `src/persistence/codex-receipt-digest.ts`,
+  `src/persistence/scheduler-receipt-digest.ts`,
   `src/persistence/migrations.ts`, `src/persistence/repository.ts`,
   `src/persistence/runtime.ts`, `src/persistence/store.ts`, and
   `src/persistence/values.ts`.
@@ -205,8 +207,10 @@ exception. The package-private Codex backend imports exactly `node:crypto`,
 `node:fs`, and `node:path`; the SDK worker
 is the sole production importer of `@openai/codex-sdk`, and the Codex journal
 imports no Node built-in. No other source may mention a Codex/OpenAI boundary
-without entering the exact audited allowlist. The package must not acquire a
-scheduler, MCP, product-wired Codex route, credential broker, daemon, general
+without entering the exact audited allowlist. The scheduler port imports no
+Node built-in and the application accepts only an injected backend. The package
+must not acquire a concrete scheduler adapter, MCP, product-wired Codex or
+scheduler operation route, credential broker, daemon, general
 remote service effect, or default product/CLI Phase 3 composition as part of
 this boundary. The four
 Phase 3 adapters are explicitly injected library surfaces; their effects are
@@ -222,13 +226,14 @@ The following package scripts are the public local entry points:
 | `pnpm lint` | Repository hygiene, frozen configuration, source-boundary, and diff checks |
 | `pnpm typecheck` | Strict TypeScript checking without output |
 | `pnpm build` | Produce the ESM package and declarations |
-| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop/package-private-Codex/dispatcher/workspace/Phase-3/product-facade atomicity and security, exact port/adapter contracts, Codex SDK-driver/workspace/failpoint restart, gate/completion/integration/cleanup crash/restart recovery, persistence, versioned CLI, doctor, and real local disposable-fixture contracts |
-| `pnpm test:persistence` | Run the targeted current schema-version-1 baseline, repository/decoder, Manual and Codex journal/evidence, dispatcher/workspace/Phase-3 durable records, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
+| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop/package-private-Codex/dispatcher/scheduler/workspace/Phase-3/product-facade atomicity and security, exact port/adapter contracts, scheduler duplicate/restart/corruption, Codex SDK-driver/workspace/failpoint restart, gate/completion/integration/cleanup crash/restart recovery, persistence, versioned CLI, doctor, and real local disposable-fixture contracts |
+| `pnpm test:persistence` | Run the targeted current schema-version-1 baseline, repository/decoder, Manual and Codex journal/evidence, dispatcher/scheduler/workspace/Phase-3 durable records, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
 | `pnpm docs:check` | Resolve exact-case repository-relative Markdown links, validate same-file and cross-file heading fragments, and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |
 | `pnpm package:smoke` | Pack and consume the declared package boundary offline |
 | `pnpm spike:sqlite` | Run the local Windows SQLite feasibility procedure |
 | `pnpm spike:codex` | Check exact official/pinned-package Codex capability evidence, package-private isolation, `externalE2E=not_run`, and `supportClaim=false` |
+| `pnpm spike:scheduler` | Check the exact library-only scheduler port/application/ingress and package/default-product boundary, including `adapterImplemented=false`, `externalE2E=not_run`, and `supportClaim=false` |
 | `pnpm verify:offline` | Run every local gate above that does not require a registry vulnerability query |
 | `pnpm dependency:audit` | Query the configured package registry vulnerability service for production dependencies |
 

@@ -62,7 +62,7 @@ const MIGRATION_SOURCES = Object.freeze([
     id: "current-baseline",
     fileName: "0001-current-baseline.sql",
     canonicalLineEnding: "lf",
-    checksumSha256: "E17C6ACFF0891C3B8FD6F1DADBF3616DDFCF4391F7F5D7427FE0F2F8CCFFED0D",
+    checksumSha256: "D7CDF784C090773CC846D484A8208A0D78FB8F640D8BA37A5827122AB70A4C3A",
   }),
 ] satisfies readonly MigrationSource[]);
 

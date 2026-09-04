@@ -83,7 +83,7 @@ identity with the current durable ready receipt on both sides of the check.
 This consumer neither creates nor cleans a workspace, cannot
 select a caller path, and does not turn Codex turn success into Task completion.
 It is absent from every supported package-root/product/dispatcher/API/CLI
-factory; current vocabulary-version-6 grants supply no Codex destination,
+factory; current vocabulary-version-7 grants supply no Codex destination,
 credential, disclosure, or workspace-effect authority.
 
 ## Run and workspace topology

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "contractId": "ato.scheduler/v1",
+  "evidenceMode": "library_contract_only",
+  "implementation": {
+    "application": "implemented",
+    "port": "implemented",
+    "scheduledIngress": "implemented",
+    "testBackend": "no_effect_fake"
+  },
+  "productBoundary": {
+    "defaultComposition": "absent",
+    "platform": "unselected",
+    "schedulerOperationRoute": "absent"
+  },
+  "adapterImplemented": false,
+  "externalE2E": "not_run",
+  "supportClaim": false
+}

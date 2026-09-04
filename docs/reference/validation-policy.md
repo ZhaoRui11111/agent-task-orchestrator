@@ -16,7 +16,7 @@ successful narrow check does not waive another applicable route.
 | Domain or state machine | Targeted unit tests plus property/state-machine tests for legal and illegal histories |
 | ProjectRegistry or application service | Canonical path/identity and revision negatives, typed command/query parity with Domain, accepted/denied atomicity, restart readback, concurrent writers, injected failure, and public-boundary tests |
 | Persistence, schema, migration, backup, restore, or doctor | Targeted repository tests, exact fresh-baseline and incompatible/noncurrent refusal matrix, canonical migration identity from uniform LF and CRLF transports, malformed/mixed-EOL pre-mutation refusal, concurrent-reader/writer tests, read-only diagnostic tests, and interruption or corruption recovery |
-| Dispatcher, ProjectPolicy, gate/completion, workspace lifecycle, integration/publication, lease, cleanup, or recovery | Exact port/hostile-shape tests, policy-purity and freshness matrices, competing-worker/reservation tests, fencing and CAS tests, point-of-use ownership/path negatives, and failpoint recovery at every durable transition |
+| Dispatcher, scheduler lifecycle/delivery, ProjectPolicy, gate/completion, workspace lifecycle, integration/publication, lease, cleanup, or recovery | Exact port/hostile-shape tests, authorization/confirmation and current-config negatives, duplicate/canonical-tuple and read-versus-mutation matrices, policy-purity and freshness matrices, competing-worker/reservation tests, fencing and CAS tests, point-of-use ownership/path negatives, and failpoint recovery at every durable transition |
 | Adapter or external side effect | Shared adapter contract suite plus E2E on every platform/API combination for which support will be claimed |
 | Package-private Codex execution | Exact v2 discriminant/hostile-shape tests; pinned SDK declaration/event-driver tests; owned-workspace/cwd/input/HEAD/dirty/alias/reparse negatives; pre-SDK journal and every durable failpoint restart; same-thread continuation, terminal, cancellation, corruption, redaction, no-auto-completion, and package-root/factory non-reachability checks; real account E2E is `not_run` unless separately authorized and cannot support a claim |
 | CLI, MCP, or another public interface | Schema and negative-input tests plus application-service parity tests proving there is no second business-rule implementation |
@@ -122,7 +122,7 @@ parity, end-to-end restart, current-v1 dispatch/inspect/resume/retry/cancel/
 Manual-report/completion, typed product-facade derivation, and human/JSON
 redaction test surfaces. Local lint,
 typecheck, build, Node tests, documentation,
-dependency-shape, package-consumption, SQLite, and Codex boundary checks can be
+dependency-shape, package-consumption, SQLite, Codex, and scheduler boundary checks can be
 executed against a candidate when the frozen local dependency is installed.
 The committed Windows workflow is a CI skeleton only; hosted enforcement
 remains unverified until an actual run is observed. The Phase 1 application,
@@ -136,13 +136,22 @@ source-first partial-success classification, authorization and confirmation
 negatives, writer-boundary static analysis, every-write-seam rollback, SQLite
 close/reopen at each durable phase, response-loss/ambiguity recovery, stale
 revision/fence refusal, combined decoder corruption, redaction, and package-
-export evidence. The explicitly injected Windows/local adapters additionally
+export evidence. The scheduler library adds exact-v1 hostile-shape tests,
+register/remove intent-before-effect and response-loss reconciliation, separate
+read-only inspect, final point-of-use authorization, backup/restore/doctor,
+combined-decoder corruption, bounded delivery observations, authorization-first
+denial, stale/malformed refusal, one canonical run per exact scheduled tuple,
+duplicate attachment, Manual-trigger separation, and source/build/packed/default-
+product boundary evidence. Its contract probe requires
+`adapterImplemented=false`, `externalE2E=not_run`, and `supportClaim=false`.
+The explicitly injected Windows/local adapters additionally
 have closed-command/environment, hostile-tree/path/reparse/hardlink,
 evidence-root, ownership-manifest, point-of-use cleanup-attestation, local
 fast-forward/push, response-loss, restart, and disposable-fixture E2E coverage.
 This is implementation evidence, not a platform-support claim. There is still
-no SchedulerBackend or scheduled trigger, MCP, product-wired or supported Codex
-route, default product/CLI Phase 3 route, external-service integration, or support-
+no concrete SchedulerBackend, real scheduled task, or default product/CLI
+scheduler operation route, MCP, product-wired or supported Codex route, default
+product/CLI Phase 3 route, external-service integration, or support-
 matrix harness, so those routes remain unimplemented and cannot be claimed as
 passing. Repository task-artifact checks cover only maintainer workflow scratch
 and do not count as product persistence or general destructive-action support.

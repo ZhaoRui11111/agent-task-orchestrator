@@ -73,6 +73,19 @@ import type {
   WorkspaceVerifiedReceiptRecord,
   WorkspaceFinalizationRecord,
   WorkspaceEventRecord,
+  SchedulerRegistrationStatus,
+  SchedulerIntentState,
+  SchedulerConfigurationRecord,
+  SchedulerRegistrationRecord,
+  SchedulerOperationRequestRecord,
+  SchedulerAuthorizationDecisionRecord,
+  SchedulerOperationIntentRecord,
+  SchedulerObservationRecord,
+  SchedulerVerifiedReceiptRecord,
+  SchedulerFinalizationRecord,
+  SchedulerEventRecord,
+  SchedulerDeliveryObservationRecord,
+  SchedulerScheduledTupleRecord,
   ApplicationState,
   NewGrantRecord,
   NewLocalIdentityRecord,
@@ -1332,6 +1345,209 @@ export class ApplicationTransaction {
       record.reasonCode, record.actorId, record.correlationId, record.causationId,
       record.workspaceId, record.generation, record.generationRevision,
       record.observationNumber, record.evidenceReference, record.createdAt,
+    );
+  }
+
+  insertSchedulerConfiguration(record: SchedulerConfigurationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO scheduler_configurations(
+        schedule_id, config_revision, scope_kind, project_id, project_resource_revision,
+        project_config_revision, schedule_expression, time_zone, dispatcher_target,
+        config_sha256, created_by_operation_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.scheduleId, record.configRevision, record.scopeKind, record.projectId,
+      record.projectResourceRevision, record.projectConfigRevision, record.scheduleExpression,
+      record.timeZone, record.dispatcherTarget, record.configSha256,
+      record.createdByOperationId, record.createdAt,
+    );
+  }
+
+  insertSchedulerRegistration(record: SchedulerRegistrationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO scheduler_registrations(
+        schedule_id, config_revision, revision, status, external_registration_id,
+        enabled, next_trigger_at, last_intent_id, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.scheduleId, record.configRevision, record.revision, record.status,
+      record.externalRegistrationId, record.enabled === null ? null : record.enabled ? 1 : 0,
+      record.nextTriggerAt, record.lastIntentId, record.updatedAt,
+    );
+  }
+
+  advanceSchedulerRegistration(
+    scheduleId: string,
+    configRevision: number,
+    expectedRevision: number,
+    expectedStatus: SchedulerRegistrationStatus,
+    nextStatus: SchedulerRegistrationStatus,
+    externalRegistrationId: string | null,
+    enabled: boolean | null,
+    nextTriggerAt: string | null,
+    lastIntentId: string,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE scheduler_registrations
+       SET revision=revision+1, status=?, external_registration_id=?, enabled=?,
+         next_trigger_at=?, last_intent_id=?, updated_at=?
+       WHERE schedule_id=? AND config_revision=? AND revision=? AND status=?`,
+    ).run(
+      nextStatus, externalRegistrationId, enabled === null ? null : enabled ? 1 : 0,
+      nextTriggerAt, lastIntentId, updatedAt, scheduleId, configRevision,
+      expectedRevision, expectedStatus,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Scheduler registration lifecycle CAS failed", { scheduleId, configRevision });
+    }
+  }
+
+  insertSchedulerOperationRequest(record: SchedulerOperationRequestRecord): void {
+    this.#database.prepare(
+      `INSERT INTO scheduler_operation_requests(
+        request_id, operation_id, idempotency_key, command_sha256, operation, actor_id, correlation_id,
+        schedule_id, config_revision, external_registration_id, scope_kind, project_id, project_resource_revision,
+        project_config_revision, result, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.requestId, record.operationId, record.idempotencyKey, record.commandSha256, record.operation,
+      record.actorId, record.correlationId, record.scheduleId, record.configRevision,
+      record.externalRegistrationId, record.scopeKind, record.projectId, record.projectResourceRevision,
+      record.projectConfigRevision, record.result, record.createdAt,
+    );
+  }
+
+  insertSchedulerAuthorizationDecision(record: SchedulerAuthorizationDecisionRecord): void {
+    this.#database.prepare(
+      `INSERT INTO scheduler_authorization_decisions(
+        decision_id, request_id, stage, actor_id, action, result, reason, policy_result,
+        grant_id, grant_revision, project_id, project_resource_revision,
+        project_config_revision, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.decisionId, record.requestId, record.stage, record.actorId, record.action,
+      record.result, record.reason, record.policy, record.grantId, record.grantRevision,
+      record.projectId, record.projectResourceRevision, record.projectConfigRevision,
+      record.createdAt,
+    );
+  }
+
+  insertSchedulerIntent(record: SchedulerOperationIntentRecord): void {
+    this.#database.prepare(
+      `INSERT INTO scheduler_operation_intents(
+        intent_id, request_id, operation_id, operation, state, contract_id, adapter_id,
+        adapter_version, schedule_id, config_revision, expected_registration_revision,
+        operation_deadline, revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.intentId, record.requestId, record.operationId, record.operation, record.state,
+      record.contractId, record.adapterId, record.adapterVersion, record.scheduleId,
+      record.configRevision, record.expectedRegistrationRevision, record.operationDeadline,
+      record.revision, record.createdAt, record.updatedAt,
+    );
+  }
+
+  advanceSchedulerIntent(
+    intentId: string,
+    expectedRevision: number,
+    expectedState: SchedulerIntentState,
+    nextState: SchedulerIntentState,
+    updatedAt: string,
+  ): void {
+    const result = this.#database.prepare(
+      `UPDATE scheduler_operation_intents SET state=?, revision=revision+1, updated_at=?
+       WHERE intent_id=? AND revision=? AND state=?`,
+    ).run(nextState, updatedAt, intentId, expectedRevision, expectedState);
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Scheduler intent lifecycle CAS failed", { intentId });
+    }
+  }
+
+  insertSchedulerObservation(record: SchedulerObservationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO scheduler_observations(
+        observation_id, request_id, intent_id, observation_number, external_state,
+        external_registration_id, enabled, next_trigger_at, outcome, code, receipt_id,
+        receipt_sha256, evidence_reference, observed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.observationId, record.requestId, record.intentId, record.observationNumber,
+      record.externalState, record.externalRegistrationId,
+      record.enabled === null ? null : record.enabled ? 1 : 0, record.nextTriggerAt,
+      record.outcome, record.code, record.receiptId, record.receiptSha256,
+      record.evidenceReference, record.observedAt,
+    );
+  }
+
+  insertSchedulerReceipt(record: SchedulerVerifiedReceiptRecord): void {
+    this.#database.prepare(
+      `INSERT INTO scheduler_verified_receipts(
+        verified_receipt_id, intent_id, observation_id, receipt_id, receipt_sha256,
+        external_state, external_registration_id, enabled, next_trigger_at, code, verified_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.verifiedReceiptId, record.intentId, record.observationId, record.receiptId,
+      record.receiptSha256, record.externalState, record.externalRegistrationId,
+      record.enabled === null ? null : record.enabled ? 1 : 0,
+      record.nextTriggerAt, record.code, record.verifiedAt,
+    );
+  }
+
+  insertSchedulerFinalization(record: SchedulerFinalizationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO scheduler_finalizations(
+        finalization_id, intent_id, verified_receipt_id, authorization_decision_id,
+        outcome, code, resulting_registration_status, resulting_registration_revision,
+        finalized_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.finalizationId, record.intentId, record.verifiedReceiptId,
+      record.authorizationDecisionId, record.outcome, record.code,
+      record.resultingRegistrationStatus, record.resultingRegistrationRevision,
+      record.finalizedAt,
+    );
+  }
+
+  insertSchedulerEvent(record: SchedulerEventRecord): void {
+    this.#database.prepare(
+      `INSERT INTO scheduler_events(
+        event_id, operation_id, request_id, intent_id, event_kind, outcome,
+        reason_code, actor_id, correlation_id, schedule_id, config_revision,
+        observation_number, evidence_reference, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.eventId, record.operationId, record.requestId, record.intentId,
+      record.eventKind, record.outcome, record.reasonCode, record.actorId,
+      record.correlationId, record.scheduleId, record.configRevision,
+      record.observationNumber, record.evidenceReference, record.createdAt,
+    );
+  }
+
+  insertSchedulerDeliveryObservation(record: SchedulerDeliveryObservationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO scheduler_delivery_observations(
+        observation_id, request_id, decision_id, adapter_id, adapter_version, dispatcher_target, contract_id,
+        trigger_id_sha256, claimed_deduplication_sha256, schedule_id, config_revision,
+        scheduled_for, delivered_at, received_at, disposition, attachment_role, run_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.observationId, record.requestId, record.decisionId, record.adapterId,
+      record.adapterVersion, record.dispatcherTarget, record.contractId, record.triggerIdSha256,
+      record.claimedDeduplicationSha256, record.scheduleId, record.configRevision,
+      record.scheduledFor, record.deliveredAt, record.receivedAt, record.disposition,
+      record.attachmentRole, record.runId,
+    );
+  }
+
+  insertSchedulerScheduledTuple(record: SchedulerScheduledTupleRecord): void {
+    this.#database.prepare(
+      `INSERT INTO scheduler_scheduled_tuples(
+        schedule_id, config_revision, scheduled_for, canonical_observation_id, run_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.scheduleId, record.configRevision, record.scheduledFor,
+      record.canonicalObservationId, record.runId, record.createdAt,
     );
   }
 
