@@ -26,9 +26,11 @@ v2 ports, separately authorized policy/gate/completion/integration/cleanup
 actions, no-blind-replay recovery, strict hostile receipt parsing, gate
 freshness, integration fencing/partial-success classification, attestation-
 bound owned cleanup, bounded redacted transition evidence, test Fakes, and local
-Windows adapters, plus a package-private non-composed Codex SDK backend with
-exact owned-workspace/input/thread/terminal binding, a pre-SDK durable journal,
-bounded event projection, and no-blind-replay restart behavior. The workspace backend implements direct-exclusive creation,
+Windows adapters, plus an explicitly authorized Codex product composition over
+a package-private SDK backend with Project-scoped profile, C19 replay identity,
+targeted ownership, exact owned-workspace/input/thread/terminal binding, T1/T6
+authorization, a pre-SDK durable journal, bounded event projection, and no-
+blind-replay restart behavior. The workspace backend implements direct-exclusive creation,
 ownership-manifest, authoritative inspect/recover, and verified quarantine-
 then-delete cleanup; the completion and Git integration adapters execute only
 bounded configured local effects. The fresh-only scheduler library adds exact
@@ -36,11 +38,11 @@ bounded configured local effects. The fresh-only scheduler library adds exact
 blind-replay recovery, sanitized scheduled delivery, current `dispatch.run`
 authorization, and one canonical dispatcher run per exact scheduled tuple. It
 still has no MCP server, concrete SchedulerBackend or platform scheduler effect,
-supported or product-wired scheduler/Codex route, Codex credential/
-destination authority, default product/CLI Phase 3 route, team identity/RBAC,
-general external-service integration, or supported platform security boundary.
-The sole current `ato.api/v1` facade and CLI expose only the local Manual subset;
-no supported product route executes Task content.
+product-wired scheduler route, default product/CLI Phase 3 route, team identity/
+RBAC, general external-service integration, administrator-managed Codex
+effective-configuration attestation, or supported platform security boundary.
+The sole current `ato.api/v1` facade and CLI expose the retained local Manual
+subset plus the closed profile/targeted Codex route.
 
 The model assumes one local operator and treats repository content, Task text,
 prompts, adapter responses, tool output, filesystem entries, Git metadata, MCP
@@ -94,7 +96,7 @@ into a support claim.
 
 | ID | Abuse case | Required mitigation | Residual risk |
 | --- | --- | --- | --- |
-| T1 | Traversal, symlink/junction/reparse substitution, case/normalization ambiguity, or path-swap race escapes a managed root or targets user data. | For the implemented runtime root, use the absolute/non-root/non-overlap, no-follow identity, owner-derived descendant, inventory, and refusal rules in the [persistence contract](../reference/persistence-contract.md#runtime-root-and-path-ownership). ProjectRegistry separately requires an absolute normalized local directory, no alias/reparse component, no runtime overlap, a canonical device/inode/mode receipt, final pre-transaction filesystem revalidation, and in-transaction receipt/revision comparison without writing the target. The product-unwired Windows workspace backend applies the [completion/workspace contract](../reference/completion-workspace-contract.md): disjoint trusted roots, closed non-bare repository topology, no-follow identities, owner-derived descendants, bounded canonical names, per-operation positive-control/current-directory capability attestations in both mutation parents, parent/child directory-identity handshakes, held subtree handles, single-link exclusive file creation, case-exact directory-prefix validation, and refusal whenever authoritative inspection cannot prove the exact generation. | Same-user replacement between checks, platform reparse semantics, privileged mutation, and process-memory compromise can exceed application-level containment; no Windows ACL or platform-support claim is made. |
+| T1 | Traversal, symlink/junction/reparse substitution, case/normalization ambiguity, or path-swap race escapes a managed root or targets user data. | For the implemented runtime root, use the absolute/non-root/non-overlap, no-follow identity, owner-derived descendant, inventory, and refusal rules in the [persistence contract](../reference/persistence-contract.md#runtime-root-and-path-ownership). ProjectRegistry separately requires an absolute normalized local directory, no alias/reparse component, no runtime overlap, a canonical device/inode/mode receipt, final pre-transaction filesystem revalidation, and in-transaction receipt/revision comparison without writing the target. The Windows workspace backend used by the Codex and injected Phase 3 owners applies the [completion/workspace contract](../reference/completion-workspace-contract.md): disjoint trusted roots, closed non-bare repository topology, no-follow identities, owner-derived descendants, bounded canonical names, per-operation positive-control/current-directory capability attestations in both mutation parents, parent/child directory-identity handshakes, held subtree handles, single-link exclusive file creation, case-exact directory-prefix validation, and refusal whenever authoritative inspection cannot prove the exact generation. | Same-user replacement between checks, platform reparse semantics, privileged mutation, and process-memory compromise can exceed application-level containment; no Windows ACL or platform-support claim is made. |
 | T2 | Prompt, Task, repository, issue, tool output, or adapter response injects instructions to reveal data, broaden scope, or perform a tool/external mutation. | Treat content as data; route every structured command through schema ingress and the [authorization envelope](../reference/authorization-contract.md); expose only narrow versioned ports; never treat model text as a grant, receipt, or policy decision. | A chosen execution backend may still produce unsafe suggestions or modify files inside its already authorized workspace. |
 | T3 | A timeout/crash causes duplicate, fabricated, or destructively rolled-back external mutation. | Persist semantic intent before effects; independently observe and verify receipts; fence stale workers; CAS finalization; retain actual partial success and ambiguity under the [reliability protocol](../reference/reliability-protocol.md). | Some external systems cannot provide authoritative inspection or idempotency; those operations remain ambiguous and need human resolution. |
 | T4 | Secrets are stored in Tasks, database rows, prompts, receipts, command lines, logs, diagnostics, or error bodies. | Apply the [privacy and logging contract](privacy-and-logging.md): external credential references, least disclosure, secret-value omission, fail-closed redaction, and separately authorized backend disclosure. | A secret deliberately included in source/prompt content may reach the configured backend; best-effort pattern detection cannot find every secret. |
@@ -104,7 +106,7 @@ into a support claim.
 | T8 | CLI or a future MCP surface exposes arbitrary shell, SQL, filesystem, cleanup, or external actions; malformed/oversized input bypasses application rules. | Offer only narrow versioned command schemas; validate size/type/version before runtime open; call the same application/authorization owners; omit arbitrary shell/SQL/filesystem endpoints; require distinct current grants and confirmation for the implemented high-risk actions. | A compromised local account remains outside the application's checks; no MCP surface exists yet. |
 | T9 | A stale lease holder, replayed receipt, stale schedule/config revision, or stale gate writes after takeover or HEAD/policy change. | The current claim and Manual-loop owners bind execution, owner, lease/execution/Task revisions, Project revisions, attempt/fence, intent, independently observed receipt, and finalization; they reconcile before replacement and reject old-fence writes. Scheduler lifecycle binds schedule/config/registration/operation revisions and adapter receipts, and scheduled delivery resolves current active registration before creating or attaching its tuple. Workspace and Phase 3 additionally bind generation/revision, run/member lineage, immutable ownership digest, policy/config receipt, full gate identity/freshness, integration reservation/lease/object/ref state, cleanup attestation, and adapter receipt digests. The local adapters reopen owner-bound evidence at point of use, and the final completion transaction rechecks current authorization, Task revision, execution fence, HEAD, policy, gates, integration, and preservation facts. | The Manual journal and local library adapters are inspectable only in their configured local scope; any effect whose physical state cannot prove absence or exact ownership remains ambiguous and requires operator resolution. |
 | T10 | A policy adapter, dependency, or external API changes behavior/version without detection. | Use exact port/version negotiation, policy revision binding, evidence-bound support claims, and incompatibility errors from the [adapter](../reference/adapter-contracts.md) and [versioning](../reference/versioning-compatibility-contract.md) owners. | A correctly versioned but compromised dependency can still act maliciously within granted OS permissions. |
-| T11 | A Codex call runs in a substituted/dirty/wrong-HEAD workspace, consumes changed Task input, replaces a durable thread, leaks SDK content, or is blindly replayed after response loss. | Keep construction package-private and non-composed; require the exact current `ato.workspace/v2` ownership tuple, canonical configured cwd, detached HEAD, clean tracked/untracked/ignored inventory and SHA-256 Task-input match before the pre-SDK journal and again at point of use; accept thread identity only from `thread.started`; retain only closed terminal hashes; drop item/raw-error events; and treat any present unproved turn as ambiguity rather than replay authority. | The SDK/process can modify data already writable within its verified workspace, and a same-user or privileged process can exceed application checks; no real-account or platform-support evidence exists. |
+| T11 | A Codex call is selected without authority, resolves/leaks a credential too early, runs in a substituted/dirty/wrong-HEAD workspace, consumes changed Task input, replaces a durable thread, leaks SDK content, or is blindly replayed after response loss. | Permit only the fixed profile/destination/credential-reference tuple; store C19's complete original public identity before sub-owner calls; require Prepare before credential availability and one fresh confirmed Act atomically consumed by the exact pending intent before credential/Task/SDK access; revalidate the complete grant conjunction, profile and constructor digest; require the exact current `ato.workspace/v2` ownership tuple, canonical configured cwd, detached HEAD, clean tracked/untracked/ignored inventory and SHA-256 Task-input match; create a new fenced execution/workspace for continuation; accept thread identity only from `thread.started`; retain closed results; drop item/raw-error events; and treat every post-Act unproved turn as observation-only ambiguity. | The SDK/process can modify data already writable within its verified workspace. The OS administrator, installed runtime, and administrator-managed layers are explicit TCB and may override effective settings; no real-account, effective-policy attestation, or platform-support evidence exists. |
 
 ## Negative-test obligations
 
@@ -114,7 +116,7 @@ produce binary evidence for every applicable row.
 The current implementation covers the runtime-root and ProjectRegistry portions
 of N1, the local content/authorization portion of N3, the application audit plus
 CLI/doctor disclosure subset of N4, the current schema-version-1 SQLite/
-application/lifecycle/Manual-loop/package-private-Codex/dispatcher/scheduler/workspace/Phase-3 record portions
+application/lifecycle/Manual-loop/Codex-product-backend/dispatcher/scheduler/workspace/Phase-3 record portions
 of N5 and N11, the local Manual/gate/workspace/integration intent/effect/
 inspection/receipt/finalization/crash/restart/stale-fence subset of N6 and N10,
 the dispatcher scheduled-tuple/worker-death/fan-out subset of N7, and the sole-
@@ -126,13 +128,15 @@ topology, object/tree, junction/reparse/hardlink, ownership, evidence-root,
 identity-handshake, closed inventory, direct-exclusive creation, local fast-
 forward/push, authoritative inspection/recovery, and attestation-bound cleanup
 cases. Deterministic injected-driver and disposable Git fixtures additionally
-cover Codex port discrimination, workspace/input/thread/terminal/cancellation,
-every-stage restart, no-replay, corruption, and redaction behavior. Scheduler
+cover Codex profile/configuration, authorization/disclosure order, C19 replay,
+targeted/successor ownership, port discrimination, workspace/input/thread/
+terminal/cancellation, every-stage restart, no-replay, corruption, and
+redaction behavior. Scheduler
 contract/Fake tests additionally cover lifecycle restart stages, typed
 corruption, hostile receipts, authorization, stale configuration, and duplicate
 scheduled delivery. Operational logger, concrete SchedulerBackend/platform
-scheduling effect, MCP, product-wired scheduler/Codex,
-real-account Codex, default product/CLI Phase 3 composition, and external-service
+scheduling effect, MCP, product-wired scheduler, administrator-policy
+attestation, real-account Codex, default product/CLI Phase 3 composition, and external-service
 publication remain future obligations; local adapter-library evidence cannot
 satisfy them or a support claim.
 
@@ -172,15 +176,15 @@ logic but cannot satisfy a real platform/API support row.
 ## Explicit non-claims
 
 The implemented controls are limited to the Phase 1 local boundaries, the
-local explicit-Manual Phase 2 product, reliable loop and dispatcher, and the
-package-private non-composed Codex boundary plus injected local scheduler and
+local explicit-Manual Phase 2 product, reliable loop and dispatcher, the
+authorized Codex product boundary, plus injected local scheduler and
 workspace/Phase 3 libraries and the adapters named above.
 This model does not claim release
 readiness, multi-user isolation, RBAC,
 cloud security, remote availability, arbitrary-code sandboxing, malware
 detection, perfect secret/PII detection, guaranteed rollback of external
-effects, operational Codex authorization/account isolation, default product/CLI
-filesystem/Git containment, general or automatic
+effects, Codex account isolation, administrator-managed effective-policy
+attestation, general or automatic
 cleanup, arbitrary Git integration/ref/push behavior, supported MCP exposure,
 or support for any
 platform/API absent validated compatibility evidence.

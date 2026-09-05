@@ -1,6 +1,6 @@
 # Architecture decision records
 
-This directory records accepted architecture decisions for agent-task-orchestrator. Acceptance means that implementation work must satisfy the decision; it does not by itself prove that a capability is implemented, tested, or supported. The repository currently has the qualified local explicit-Manual Phase 2 product runtime and separately injected Phase 3 and scheduler libraries described in [ARCHITECTURE.md](../../ARCHITECTURE.md), but no concrete scheduler adapter, default scheduler operation route, supported platform, or release.
+This directory records accepted architecture decisions for agent-task-orchestrator. Acceptance means that implementation work must satisfy the decision; it does not by itself prove that a capability is implemented, tested, or supported. The repository currently has the qualified local explicit-Manual Phase 2 product runtime, the closed authorized Codex product subset, and separately injected Phase 3 and scheduler libraries described in [ARCHITECTURE.md](../../ARCHITECTURE.md), but no concrete scheduler adapter, default scheduler operation route, validated Codex platform/account support, supported platform, or release.
 
 ADRs preserve context, the selected direction, and rejected alternatives. They do not own mutable state, protocol, security, compatibility, or validation details. Those rules remain with the live owners inventoried by the [contract ownership matrix](../reference/contract-ownership.md).
 

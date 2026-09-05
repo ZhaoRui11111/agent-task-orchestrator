@@ -5,6 +5,7 @@ import test from "node:test";
 import ts from "typescript";
 import {
   EXPECTED_CLI_NODE_BUILTINS,
+  EXPECTED_CODEX_NODE_BUILTINS,
   EXPECTED_MIGRATION_FILES,
   EXPECTED_PHASE3_NODE_BUILTINS,
   EXPECTED_PRODUCTION_SOURCE_FILES,
@@ -75,6 +76,7 @@ const APPLICATION_TYPE_EXPORTS = Object.freeze([
 const CLI_RUNTIME_EXPORTS = Object.freeze([
   "CLI_API_VERSION",
   "PUBLIC_ERROR_TABLE",
+  "mapCodexProductFailureToPublicCode",
   "mapProductFailureToPublicCode",
   "parseCliArguments",
   "runCli",
@@ -120,6 +122,10 @@ const EXPECTED_COMMAND_IDS = Object.freeze([
   "execution.request-cancel",
   "manual.outcome-report",
   "execution.accept-manual-completion",
+  "codex.profile.activate",
+  "codex.profile.inspect",
+  "codex.profile.deactivate",
+  "codex.dispatch-run",
 ]);
 
 const EXPECTED_PUBLIC_ERRORS = Object.freeze([
@@ -160,6 +166,10 @@ const EXPECTED_PUBLIC_ERRORS = Object.freeze([
   "RESTORE_RECOVERY_REQUIRED",
   "AMBIGUOUS_EXTERNAL_STATE",
   "INTERNAL_ERROR",
+  "CODEX_PROFILE_NOT_FOUND",
+  "CODEX_PROFILE_INACTIVE",
+  "CODEX_CREDENTIAL_UNAVAILABLE",
+  "CODEX_ADAPTER_FAILURE",
 ]);
 
 const EXPECTED_CLI_BUILTINS = Object.freeze({
@@ -347,12 +357,12 @@ test("CLI modules have the exact DAG, facade, tables, and sole effect owner", ()
   const exports = facadeExports(CLI_FACADE, new Set(CLI_MODULES));
   assert.deepEqual(exports.runtime, CLI_RUNTIME_EXPORTS);
   assert.deepEqual(exports.types, CLI_TYPE_EXPORTS);
-  assert.equal(exports.runtime.length, 5);
+  assert.equal(exports.runtime.length, 6);
   assert.equal(exports.types.length, 4);
   assert.deepEqual(commandIds(), EXPECTED_COMMAND_IDS);
   assert.deepEqual(publicErrorCodes(), EXPECTED_PUBLIC_ERRORS);
-  assert.equal(commandIds().length, 33);
-  assert.equal(publicErrorCodes().length, 37);
+  assert.equal(commandIds().length, 37);
+  assert.equal(publicErrorCodes().length, 41);
 
   for (const token of [
     "runCli",
@@ -364,6 +374,7 @@ test("CLI modules have the exact DAG, facade, tables, and sole effect owner", ()
     "createApplicationService",
     "createManualExecutionBackend",
     "createProductRuntime",
+    "createCodexProductApplication",
     "restoreBackup",
   ]) assert.deepEqual(tokenOwners(CLI_MODULES, token), ["src/cli-api-runtime.ts"]);
   assert.equal(
@@ -383,12 +394,15 @@ test("CLI modules have the exact DAG, facade, tables, and sole effect owner", ()
 });
 
 test("CLI, Phase 3, and Codex Node built-ins equal exact per-file maps and repo-utils rejects family-wide exceptions", () => {
-  assert.equal(EXPECTED_PRODUCTION_SOURCE_FILES.length, 60);
+  assert.equal(EXPECTED_PRODUCTION_SOURCE_FILES.length, 63);
   assert.deepEqual(EXPECTED_CLI_NODE_BUILTINS, EXPECTED_CLI_BUILTINS);
   for (const [relative, expected] of Object.entries(EXPECTED_CLI_BUILTINS)) {
     assert.deepEqual(nodeBuiltins(relative), expected, `${relative} Node built-ins drifted`);
   }
   for (const [relative, expected] of Object.entries(EXPECTED_PHASE3_NODE_BUILTINS)) {
+    assert.deepEqual(nodeBuiltins(relative), expected, `${relative} Node built-ins drifted`);
+  }
+  for (const [relative, expected] of Object.entries(EXPECTED_CODEX_NODE_BUILTINS)) {
     assert.deepEqual(nodeBuiltins(relative), expected, `${relative} Node built-ins drifted`);
   }
 

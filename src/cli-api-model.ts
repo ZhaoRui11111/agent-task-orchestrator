@@ -38,6 +38,10 @@ export const PUBLIC_ERROR_TABLE = Object.freeze({
   RESTORE_RECOVERY_REQUIRED: Object.freeze({ exitCode: 8, message: "Restore requires manual recovery." }),
   AMBIGUOUS_EXTERNAL_STATE: Object.freeze({ exitCode: 8, message: "The external execution state is ambiguous." }),
   INTERNAL_ERROR: Object.freeze({ exitCode: 9, message: "The operation failed internally." }),
+  CODEX_PROFILE_NOT_FOUND: Object.freeze({ exitCode: 5, message: "The Codex profile was not found." }),
+  CODEX_PROFILE_INACTIVE: Object.freeze({ exitCode: 6, message: "The Codex profile is not active." }),
+  CODEX_CREDENTIAL_UNAVAILABLE: Object.freeze({ exitCode: 7, message: "The configured Codex credential is unavailable." }),
+  CODEX_ADAPTER_FAILURE: Object.freeze({ exitCode: 7, message: "The Codex execution adapter failed." }),
 } as const);
 
 export type PublicErrorCode = keyof typeof PUBLIC_ERROR_TABLE;
@@ -112,11 +116,41 @@ export const COMMAND_SPECS = Object.freeze([
   { id: "dispatch.run", path: ["dispatch", "run"], required: ["idempotency-key", "lease-duration-seconds"], optional: [] },
   { id: "dispatch.resume", path: ["dispatch", "resume"], required: ["run-id"], optional: [] },
   { id: "execution.inspect", path: ["execution", "inspect"], required: [...EXECUTION_COMMON_OPTIONS], optional: [] },
-  { id: "execution.resume", path: ["execution", "resume"], required: [...EXECUTION_COMMON_OPTIONS, "continuation-reference", "required-action-receipt-id"], optional: [] },
-  { id: "execution.retry", path: ["execution", "retry"], required: [...EXECUTION_COMMON_OPTIONS, "continuation-reference", "required-action-receipt-id"], optional: [] },
+  { id: "execution.resume", path: ["execution", "resume"], required: [...EXECUTION_COMMON_OPTIONS, "continuation-reference", "required-action-receipt-id"], optional: ["confirm"] },
+  { id: "execution.retry", path: ["execution", "retry"], required: [...EXECUTION_COMMON_OPTIONS, "continuation-reference", "required-action-receipt-id"], optional: ["confirm"] },
   { id: "execution.request-cancel", path: ["execution", "request-cancel"], required: [...EXECUTION_COMMON_OPTIONS, "reason-code"], optional: [] },
   { id: "manual.outcome-report", path: ["manual", "outcome-report"], required: [...EXECUTION_COMMON_OPTIONS, "report-id", "outcome", "code", "confirm"], optional: ["evidence-reference"] },
   { id: "execution.accept-manual-completion", path: ["execution", "accept-manual-completion"], required: [...EXECUTION_COMMON_OPTIONS, "confirm"], optional: [] },
+  {
+    id: "codex.profile.activate", path: ["codex", "profile", "activate"],
+    required: [
+      "project-id", "expected-project-resource-revision", "expected-project-config-revision",
+      "profile-id", "expected-profile-revision", "workspace-root-key", "workspace-root",
+      "codex-home-key", "codex-home", "git-executable", "idempotency-key", "confirm",
+    ], optional: [],
+  },
+  {
+    id: "codex.profile.inspect", path: ["codex", "profile", "inspect"],
+    required: [
+      "project-id", "expected-project-resource-revision", "expected-project-config-revision",
+      "profile-id", "expected-profile-revision",
+    ], optional: [],
+  },
+  {
+    id: "codex.profile.deactivate", path: ["codex", "profile", "deactivate"],
+    required: [
+      "project-id", "expected-project-resource-revision", "expected-project-config-revision",
+      "profile-id", "expected-profile-revision", "idempotency-key", "confirm",
+    ], optional: [],
+  },
+  {
+    id: "codex.dispatch-run", path: ["codex", "dispatch-run"],
+    required: [
+      "project-id", "expected-project-resource-revision", "expected-project-config-revision",
+      "profile-id", "expected-profile-revision", "task-id", "expected-task-revision",
+      "base-reference", "idempotency-key", "lease-duration-seconds", "confirm",
+    ], optional: [],
+  },
 ] satisfies readonly CommandSpec[]);
 
 export const PRODUCT_COMMAND_IDS: ReadonlySet<string> = new Set([
@@ -129,6 +163,10 @@ export const PRODUCT_COMMAND_IDS: ReadonlySet<string> = new Set([
   "execution.request-cancel",
   "manual.outcome-report",
   "execution.accept-manual-completion",
+  "codex.profile.activate",
+  "codex.profile.inspect",
+  "codex.profile.deactivate",
+  "codex.dispatch-run",
 ]);
 
 export const ONE_TOKEN_COMMANDS: ReadonlySet<string> = new Set(["status", "doctor", "init", "restore"]);

@@ -1,4 +1,4 @@
-import { Codex, type ThreadEvent, type Usage } from "@openai/codex-sdk";
+import { Codex, type CodexOptions, type ThreadEvent, type Usage } from "@openai/codex-sdk";
 
 export const PINNED_CODEX_SDK_VERSION = "0.153.2" as const;
 
@@ -24,6 +24,15 @@ export interface CodexSdkDriver {
     request: CodexSdkRunRequest,
     observe: (event: CodexSdkObservedEvent) => void,
   ): Promise<void>;
+}
+
+export type CodexSdkConstructor = (
+  options: CodexOptions,
+) => Pick<Codex, "startThread" | "resumeThread">;
+
+export interface CodexProductSdkConfiguration {
+  readonly apiKey: string;
+  readonly codexHome: string;
 }
 
 export type CodexSdkDriverErrorCode =
@@ -80,14 +89,16 @@ function observeEvent(
   event: ThreadEvent,
   request: CodexSdkRunRequest,
   observe: (event: CodexSdkObservedEvent) => void,
-  state: { threadId: string | null; turnStarted: boolean; terminal: boolean },
+  state: { threadId: string | null; threadStartedObserved: boolean; turnStarted: boolean; terminal: boolean },
 ): void {
   if (event.type === "thread.started") {
     if (!validThreadId(event.thread_id) || (request.threadId !== null && request.threadId !== event.thread_id) ||
-      state.turnStarted || state.terminal || (state.threadId !== null && state.threadId !== event.thread_id)) {
+      state.threadStartedObserved || state.turnStarted || state.terminal ||
+      (state.threadId !== null && state.threadId !== event.thread_id)) {
       throw new CodexSdkDriverError("thread_identity_changed");
     }
     state.threadId = event.thread_id;
+    state.threadStartedObserved = true;
     observe(Object.freeze({ type: "thread.started", threadId: event.thread_id }));
     return;
   }
@@ -142,7 +153,12 @@ export class PinnedCodexSdkDriver implements CodexSdkDriver {
       ? this.#codex.startThread(threadOptions)
       : this.#codex.resumeThread(request.threadId!, threadOptions);
     const streamed = await thread.runStreamed(request.input, Object.freeze({ signal: request.signal }));
-    const state = { threadId: request.threadId, turnStarted: false, terminal: false };
+    const state = {
+      threadId: request.threadId,
+      threadStartedObserved: false,
+      turnStarted: false,
+      terminal: false,
+    };
     try {
       for await (const event of streamed.events) observeEvent(event, request, observe, state);
     } catch (error) {
@@ -158,4 +174,21 @@ export class PinnedCodexSdkDriver implements CodexSdkDriver {
 
 export function createPinnedCodexSdkDriver(): CodexSdkDriver {
   return new PinnedCodexSdkDriver();
+}
+
+export function createProductCodexSdkDriver(
+  configuration: CodexProductSdkConfiguration,
+  construct: CodexSdkConstructor = (options) => new Codex(options),
+): CodexSdkDriver {
+  if (typeof configuration.apiKey !== "string" || configuration.apiKey.length === 0 ||
+    typeof configuration.codexHome !== "string" || configuration.codexHome.length === 0) {
+    throw new TypeError("Codex product SDK configuration is invalid");
+  }
+  const options: CodexOptions = Object.freeze({
+    baseUrl: "https://api.openai.com/v1",
+    apiKey: configuration.apiKey,
+    env: Object.freeze({ CODEX_HOME: configuration.codexHome }),
+    config: Object.freeze({ model_provider: "openai" }),
+  });
+  return new PinnedCodexSdkDriver(construct(options));
 }

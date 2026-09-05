@@ -83,15 +83,18 @@ export function validateCodexEvidence(record) {
   requireExactKeys(
     record,
     [
-      "capabilities", "evidenceMode", "externalE2E", "officialDocumentation", "pinnedPackage",
-      "schemaVersion", "supportClaim", "windowsObservation",
+      "administratorPolicyAttestation", "capabilities", "evidenceMode", "externalE2E",
+      "officialDocumentation", "pinnedPackage", "productComposition", "schemaVersion",
+      "supportClaim", "windowsObservation",
     ],
     "Codex evidence",
   );
-  if (record.schemaVersion !== 2) fail("unsupported Codex evidence schema");
+  if (record.schemaVersion !== 3) fail("unsupported Codex evidence schema");
   if (record.evidenceMode !== "package_validated") fail("unknown Codex evidence mode");
-  if (record.externalE2E !== "not_run" || record.supportClaim !== false) {
-    fail("package-only evidence cannot create an external support claim");
+  if (record.productComposition !== true) fail("Codex product composition evidence is absent");
+  if (record.administratorPolicyAttestation !== "not_run" ||
+    record.externalE2E !== "not_run" || record.supportClaim !== false) {
+    fail("package-only product evidence cannot create an administrator or external support claim");
   }
   requireExactKeys(record.officialDocumentation, ["sources", "status"], "official documentation");
   if (record.officialDocumentation.status !== "verified" ||
@@ -135,6 +138,8 @@ export function validateCodexEvidence(record) {
     boundaryStatus: "passed",
     evidenceMode: "package_validated",
     packagePreflight: "passed",
+    productComposition: true,
+    administratorPolicyAttestation: "not_run",
     externalE2E: "not_run",
     supportClaim: false,
   };

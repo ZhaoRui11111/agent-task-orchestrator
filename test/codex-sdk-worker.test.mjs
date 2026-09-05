@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CodexSdkDriverError, PinnedCodexSdkDriver } from "../src/codex-sdk-worker.ts";
+import {
+  CodexSdkDriverError,
+  PinnedCodexSdkDriver,
+  createProductCodexSdkDriver,
+} from "../src/codex-sdk-worker.ts";
 
 const USAGE = Object.freeze({
   input_tokens: 2,
@@ -71,6 +75,51 @@ test("pinned driver starts once, drops item payloads, and binds non-model termin
   assert.equal(client.calls[0].options.approvalPolicy, "never");
 });
 
+test("product driver constructs the pinned SDK with only the closed product tuple", async () => {
+  const apiKey = "SENTINEL EP03F CONSTRUCTOR KEY";
+  const codexHome = "D:\\private-codex-home";
+  const client = fakeCodex([
+    Object.freeze({ type: "thread.started", thread_id: "thread-1" }),
+    Object.freeze({ type: "turn.started" }),
+    Object.freeze({ type: "turn.completed", usage: USAGE }),
+  ]);
+  let captured = null;
+  const driver = createProductCodexSdkDriver(Object.freeze({ apiKey, codexHome }), (options) => {
+    captured = options;
+    return client;
+  });
+
+  assert.deepEqual(captured, {
+    baseUrl: "https://api.openai.com/v1",
+    apiKey,
+    env: { CODEX_HOME: codexHome },
+    config: { model_provider: "openai" },
+  });
+  assert.deepEqual(Reflect.ownKeys(captured).sort(), ["apiKey", "baseUrl", "config", "env"]);
+  assert.deepEqual(Reflect.ownKeys(captured.env), ["CODEX_HOME"]);
+  assert.deepEqual(Reflect.ownKeys(captured.config), ["model_provider"]);
+  assert.equal(Object.isFrozen(captured), true);
+  assert.equal(Object.isFrozen(captured.env), true);
+  assert.equal(Object.isFrozen(captured.config), true);
+  assert.equal("codexPathOverride" in captured, false);
+  assert.equal("configOverrides" in captured, false);
+
+  const selected = request("start");
+  await driver.run(selected, () => {});
+  assert.deepEqual(client.calls[0], {
+    kind: "start",
+    options: {
+      workingDirectory: selected.workingDirectory,
+      skipGitRepoCheck: false,
+      sandboxMode: "workspace-write",
+      networkAccessEnabled: false,
+      webSearchMode: "disabled",
+      approvalPolicy: "never",
+    },
+  });
+  assert.equal(client.calls[1].signal, selected.signal);
+});
+
 test("pinned driver resumes only the supplied thread and refuses replacement identity", async () => {
   const client = fakeCodex([], [
     Object.freeze({ type: "turn.started" }),
@@ -88,6 +137,30 @@ test("pinned driver resumes only the supplied thread and refuses replacement ide
   ]);
   await assert.rejects(
     new PinnedCodexSdkDriver(changed).run(request("resume", "thread-1"), () => {}),
+    (error) => error instanceof CodexSdkDriverError && error.code === "thread_identity_changed",
+  );
+});
+
+test("pinned driver rejects every duplicate thread.started event for start and resume", async () => {
+  const duplicateStart = fakeCodex([
+    Object.freeze({ type: "thread.started", thread_id: "thread-1" }),
+    Object.freeze({ type: "thread.started", thread_id: "thread-1" }),
+    Object.freeze({ type: "turn.started" }),
+    Object.freeze({ type: "turn.completed", usage: USAGE }),
+  ]);
+  await assert.rejects(
+    new PinnedCodexSdkDriver(duplicateStart).run(request("start"), () => {}),
+    (error) => error instanceof CodexSdkDriverError && error.code === "thread_identity_changed",
+  );
+
+  const duplicateResume = fakeCodex([], [
+    Object.freeze({ type: "thread.started", thread_id: "thread-1" }),
+    Object.freeze({ type: "thread.started", thread_id: "thread-1" }),
+    Object.freeze({ type: "turn.started" }),
+    Object.freeze({ type: "turn.completed", usage: USAGE }),
+  ]);
+  await assert.rejects(
+    new PinnedCodexSdkDriver(duplicateResume).run(request("resume", "thread-1"), () => {}),
     (error) => error instanceof CodexSdkDriverError && error.code === "thread_identity_changed",
   );
 });

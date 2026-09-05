@@ -8,13 +8,14 @@ error taxonomy. The package implements the pure `ato.execution/v2`,
 `ato.scheduler/v1`, `ato.project-policy/v1`, `ato.completion/v1`,
 `ato.integration/v1`, and sole current `ato.workspace/v2` contract kits.
 Concrete local implementations are
-the durable `manual-local` execution adapter/control, a package-private and
-non-composed `openai-codex-sdk-local` execution adapter/driver, configured
+the durable `manual-local` execution adapter/control, a package-private
+product-composed `openai-codex-sdk-local` execution adapter/driver, configured
 `local-project-policy`, bounded `local-completion`,
 `local-git-integration`, and `windows-git-local` workspace backend. Fake
-backends are test-only and unexported. The Codex constructor, configuration,
-driver, and injected service are absent from the supported package root and all
-current product/application/dispatcher/CLI factories. The scheduler port and
+backends are test-only and unexported. The Codex product application factory
+and bounded public types are exported; its constructor, credential resolver,
+driver, backend, targeted-dispatcher seam, and injected test factory remain
+absent from the supported package root. The scheduler port and
 typed injected application owner are implemented, but there is no concrete
 scheduler adapter; its deterministic no-effect Fake is test-only and
 unexported.
@@ -34,7 +35,7 @@ declare an unverified external effect successful, or write SQLite directly.
 
 | Port | Direction relative to core | Current contract ID | Responsibility boundary |
 | --- | --- | --- | --- |
-| Execution | Outbound: reliable application loop calls adapter; the implemented Manual dispatcher calls only its retained Manual branch | `ato.execution/v2` | Start, resume, inspect, or request cancellation of one discriminated Manual no-workspace or package-private Codex owned-workspace turn |
+| Execution | Outbound: reliable application loop calls adapter; Manual/scheduled dispatch retain Manual while the targeted Codex route selects the owned-workspace branch | `ato.execution/v2` | Start, resume, inspect, or request cancellation of one discriminated Manual no-workspace or package-private Codex owned-workspace turn |
 | Workspace | Outbound: workspace application coordinator calls injected backend | `ato.workspace/v2` | Reserve, create, inspect, recover, or attestation-bound cleanup of one exactly bound workspace generation |
 | Scheduler | Outbound lifecycle plus inbound trigger delivery | `ato.scheduler/v1` | Register/inspect/remove a schedule and deliver a bounded dispatch trigger |
 | ProjectPolicy | Outbound: application calls adapter | `ato.project-policy/v1` | Evaluate mutation, completion requirements, integration, and cleanup policy |
@@ -215,7 +216,7 @@ current fresh Act binding and rechecks its referenced finite grant; replay may
 return an already committed operation, but a new mutation cannot consume a
 revoked, expired, stale, or prepare-only decision.
 
-The package-private Codex backend is `openai-codex-sdk-local` at adapter version
+The product-selected package-private Codex backend is `openai-codex-sdk-local` at adapter version
 `0.153.2`, backed only by pinned `@openai/codex-sdk` `0.153.2`. Before SDK access
 it requires each configured Project binding to include the registry `rootKey`
 alongside `projectId` and path, and requires that identity to match the current
@@ -226,9 +227,14 @@ ownership manifest, authoritative Git worktree registration, repository
 identity, detached HEAD, and clean inventory including ignored entries. The
 Codex verifier compares that physical repository identity with the current
 ready workspace receipt before and after inspection and independently
-recomputes the Task-input digest. It runs the SDK with that exact working directory,
-workspace-write sandbox, network and web search disabled, and approval policy
-`never`. A journal row is committed before SDK invocation. New-thread identity
+recomputes the Task-input digest. Only after the product's fresh one-consumer
+Act does it resolve the fixed credential reference and construct the SDK with
+base URL `https://api.openai.com/v1`, that API key, an env containing only the
+profile-bound `CODEX_HOME`, fixed `model_provider=openai`, no path/config
+override, and the exact working directory, workspace-write sandbox, disabled
+network/web search, and approval policy `never`. These are product-supplied
+inputs, not an attestation of administrator-managed effective configuration.
+A journal row is committed before SDK invocation. New-thread identity
 is accepted only from the first valid `thread.started`; continuation uses
 `resumeThread` with the exact predecessor thread. Only `thread.started`,
 `turn.started`, `turn.completed`, and `turn.failed` cross the driver boundary;
@@ -239,12 +245,12 @@ backend's `inspect` is a read of its own exact durable journal, and any crash or
 lost response after SDK access but before trustworthy terminal persistence is
 `unknown`/ambiguous rather than replay authority. `AbortSignal` requests active
 in-process cancellation when such a controller is available, but is not terminal
-cancellation proof. The current non-composed harness admits no concurrent second
-intent while start is unfinished, so unavailable cancellation returns bounded
-ambiguity rather than claiming the signal was sent. The backend does not
-fabricate `cancelled`, retry an effect-possible start, or complete a Task. No
-supported package-root or product factory exposes this adapter, and no real
-account/platform support claim follows from package or fake-driver tests.
+cancellation proof. An unavailable active controller returns bounded ambiguity
+rather than claiming the signal was sent. The backend does not fabricate
+`cancelled`, retry an effect-possible start, or complete a Task. The product
+factory exposes only the closed application surface, not this adapter or its
+seams; no real-account/platform support claim follows from package or fake-
+driver tests.
 
 ## WorkspaceBackend: `ato.workspace/v2`
 

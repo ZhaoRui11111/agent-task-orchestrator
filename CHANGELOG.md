@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Added the explicit authorized Codex product composition without changing the
+  sole `ato.api/v1` major or any port major. Vocabulary version 8 adds exactly
+  five Codex profile/invocation/cancellation actions; the CLI now has 37
+  commands and 41 public errors, including three profile paths and one targeted
+  one-member Codex dispatch path. A Project-scoped profile binds the fixed
+  product destination, opaque process credential reference, private Codex home,
+  Git executable, and workspace-root identities. Prepare precedes credential
+  availability; one fresh Act atomically consumes the pending intent before
+  credential resolution, Task disclosure, or SDK access. Resume/retry allocate
+  a new fenced execution and owned workspace, response loss remains
+  observation-only, Manual/scheduled behavior remains exact, and completion
+  remains Phase-3-owned. Application-state digest version 4 and the fresh-only
+  schema-version-1 baseline include the new lineage. Deterministic fakes and
+  disposable Git fixtures prove only local mechanics: administrator-policy
+  attestation and external E2E remain `not_run`, and `supportClaim=false`.
+
 - Added the fresh-only library-level scheduler closure without adding a default
   product or CLI scheduler operation route. The package exports the pure exact
   `ato.scheduler/v1` port and one typed injected application owner; register and

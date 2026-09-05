@@ -9,20 +9,22 @@ This is an independent community project. It is not made, sponsored, or endorsed
 The repository contains a governance and architecture-contract baseline, an
 executable TypeScript/Node toolchain and feasibility harness, a pure in-memory
 Domain Core, ProjectRegistry, finite local authorization, typed application
-services, and one current schema-version-1 SQLite baseline. The closed local
-explicit-Manual Phase 2 product remains the sole current `ato.api/v1` CLI: it
-provides the 33-command/37-error Project, Task, dependency, authorization,
-backup/restore, doctor, Manual execution, and dispatcher surface without
-executing Task content or touching a Project repository.
+services, and one current schema-version-1 SQLite baseline. The sole current
+`ato.api/v1` CLI contains 37 commands and 41 public errors: it retains the exact
+explicit-Manual Phase 2 Project, Task, dependency, authorization, backup/
+restore, doctor, execution, and dispatcher behavior and adds a closed,
+explicitly authorized Codex profile and targeted-dispatch subset.
 
 The package's sole current execution port is `ato.execution/v2`. The retained
-`manual-local` adapter uses `workspaceMode=none` and remains the only backend
-constructed by the supported package root, product runtime, dispatcher, API,
-or CLI. A package-private `@openai/codex-sdk` `0.153.2` backend implements the
-owned-workspace branch with verified ephemeral Task input and durable bounded
-thread/terminal evidence, but no supported public factory can select it. It was
-validated with deterministic injected drivers and disposable Git fixtures only;
-no real account turn, credential use, Windows/Codex support claim, or automatic
+`manual-local` adapter uses `workspaceMode=none`; existing Manual and scheduled
+dispatch routes remain byte-for-byte Manual-only. A package-private
+`@openai/codex-sdk` `0.153.2` backend implements the owned-workspace branch with
+verified ephemeral Task input and durable bounded thread/terminal evidence. The
+exported Codex product factory and CLI select it only through an active trusted
+Project profile, a targeted one-member run, and a fresh invocation Act bound to
+the exact pending intent. Validation uses deterministic injected drivers and
+disposable Git fixtures only; no real account turn, credential use, effective
+administrator-policy attestation, Windows/Codex support claim, or automatic
 Task completion follows from that evidence.
 
 The package additionally exposes the fresh-only Phase 3 library closure. It
@@ -41,8 +43,10 @@ completion, reservation release, and cleanup state.
 The package also exports the fresh-only pure `ato.scheduler/v1` contract and a
 typed injected scheduler application owner. Authorization vocabulary version 7
 adds exactly `scheduler.register`, `scheduler.inspect`, and `scheduler.remove`;
-application-state digest version 3 covers their durable configuration,
-registration, operation, delivery-observation, and scheduled-tuple records.
+application-state digest version 4 covers their durable configuration,
+registration, operation, delivery-observation, and scheduled-tuple records
+together with Codex profile/product/effect state. Vocabulary version 8
+cumulatively adds exactly five Codex actions after the scheduler stage.
 Register/remove use intent-before-effect and restart reconciliation, inspect is
 a separate read-only path, and scheduled delivery uses current `dispatch.run`
 authority plus the existing dispatcher to create one canonical run per exact
@@ -55,10 +59,9 @@ of them, add no Phase 3 command or public error, and retain the three independen
 backup/restore JSON schema-version-1 formats unchanged. Local Git and filesystem
 effects are validated only in disposable repository fixtures; no product
 platform support is claimed. The repository still has no MCP server, concrete
-SchedulerBackend, real scheduled task, product-wired scheduler or Codex route,
-or Codex
-credential/destination authority, daemon/service, release, deployment, or
-general network integration.
+SchedulerBackend, real scheduled task, product-wired scheduler route,
+daemon/service, release, deployment, general network integration, real Codex
+account E2E, or administrator-managed effective-configuration attestation.
 
 Unimplemented planned capabilities are not current capabilities. Design
 proposals and roadmaps must remain clearly labeled until their implementations
@@ -144,10 +147,10 @@ current completion grant and fresh confirmation atomically accept the exact
 verified evidence. The production Manual adapter records only no-workspace
 turn state; it does not execute Task content or touch a Project repository.
 
-Current `ato.api/v1` commands reach this service only through the typed product
+Current Manual `ato.api/v1` commands reach this service only through the typed product
 facade, which derives the non-public
 turn, intent, receipt, and finalization tuple from current schema-version-1 state.
-Neither the facade nor the Manual backend invokes Codex, Git, workspace,
+Neither the Manual facade nor the Manual backend invokes Codex, Git, workspace,
 scheduler, policy, completion-gate, or Task-content effects, and local
 development evidence is not a platform-support claim. The exact rules are owned by the
 [authorization contract](docs/reference/authorization-contract.md),
@@ -182,8 +185,8 @@ Vocabulary version 6 cumulatively adds exactly twelve completion/integration
 actions after the five workspace actions. `completion.accept`,
 `integration.apply`, `integration.push`, and `workspace.cleanup` are high risk.
 Every vocabulary step remains separately confirmed; bootstrap and renewal never
-upgrade it. The default CLI stays at the exact 33 commands and 37 public errors,
-and no support, release, remote-network, or automatic cleanup claim follows
+upgrade it. The Phase 3 library still has no CLI route, and no support, release,
+remote-network, or automatic cleanup claim follows
 from this library implementation.
 
 ## Durable scheduler ingress library
@@ -226,11 +229,12 @@ before the real local Manual effect is invoked through the reliable loop.
 Restart and takeover continue from those durable rows; a terminal run summary
 is withheld until every sealed member and every claimed intent is complete.
 
-The package root exposes both the Manual dispatcher and its injected scheduled
-ingress, while the sole current `ato.api/v1` product surface exposes only the
-Manual trigger and durable run resume. The product adds no scheduler operation
-or cadence route, concrete SchedulerBackend, daemon, MCP, selectable Codex/Git/workspace behavior,
-completion gates,
+The package root exposes the Manual dispatcher, its injected scheduled ingress,
+and the internal targeted one-member Codex specialization. The sole current
+`ato.api/v1` product surface exposes the Manual trigger/run resume plus the
+closed Codex targeted-dispatch path; it adds no generic backend selector,
+scheduler operation or cadence route, concrete SchedulerBackend, daemon, MCP,
+Phase 3 completion gates,
 release, or platform-support claim. The dispatcher—not CLI code—owns candidate
 selection, reconciliation, fan-out, and summary completeness. Its ordering and
 fan-out rules are owned by the
@@ -262,7 +266,7 @@ ato authorization list --limit 100
 Restore always requires both current `runtime.restore` authority and its two
 exact request-local confirmations. Doctor is grant-independent and read-only.
 Omitting `--api-version` and passing `--api-version ato.api/v1` select the same
-complete 33-command product tree, including one-step capability upgrade, Manual
+complete 37-command product tree, including one-step capability upgrade, Manual
 dispatch/run resume, execution inspect/resume/retry/cancel, trusted Manual
 outcome reporting, and separately confirmed Manual completion:
 
@@ -275,12 +279,15 @@ Each later vocabulary requires its own confirmed upgrade invocation; migration
 and renewal never advance the current authorization stage. Retired `ato.api/v2` and any other
 unsupported major fail before runtime construction or protected mutation; no
 compatibility fallback exists. Use `--format json` for the versioned single-line
-machine surface. The exhaustive 33-command tree, `COMMON` execution tuple,
-closed projections, and 37-code public error/exit table are in the
+machine surface. The exhaustive 37-command tree, `COMMON` execution tuple,
+closed projections, and 41-code public error/exit table are in the
 [CLI/API contract](docs/reference/cli-contract.md). The tree can perform six
-sequential confirmed upgrades through vocabulary version 7 and manage grants
-for all 50 actions, including scheduler labels, but it exposes no scheduler,
-workspace, policy, gate, integration, or cleanup operation command. This
+sequential confirmed upgrades to version 7 and one further upgrade to
+vocabulary version 8, managing all 55 actions. It exposes exactly
+`codex profile activate|inspect|deactivate` and `codex dispatch-run`; existing
+execution inspect/resume/retry/request-cancel select Manual or Codex only from
+durable state. It exposes no scheduler, generic workspace, policy, gate,
+integration, or cleanup operation command. This
 development package is not a release or
 platform-support claim.
 

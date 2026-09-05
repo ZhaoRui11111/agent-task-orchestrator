@@ -65,9 +65,14 @@ import type {
   CodexTurnTerminalSignal,
   CompletionDecisionRecord,
   ManualCompletionDecisionRecord,
+  CodexProfileRecord,
+  CodexProfileOperationRecord,
+  CodexProductOperationRecord,
+  CodexEffectAuthorizationRecord,
   DispatcherTriggerRequestRecord,
   DispatcherAuthorizationDecisionRecord,
   DispatcherRunStatus,
+  DispatcherRouteKind,
   DispatcherRunRecord,
   DispatcherAuditCode,
   DispatcherReconciliationCode,
@@ -919,7 +924,8 @@ export function readCodexTurns(database: SqliteDatabase): readonly CodexBackendT
       "codex_backend_turns.terminal_signal",
       terminalSignals,
     );
-    if (!/^task-sha256:[0-9a-f]{64}$/u.test(inputReference) || workspaceContractId !== "ato.workspace/v2" ||
+    if (!/^(?:task-sha256:[0-9a-f]{64}|codex-task-binding:[0-9A-F]{64})$/u.test(inputReference) ||
+      workspaceContractId !== "ato.workspace/v2" ||
       (lifecycle === "turn_succeeded" ? terminalSignal !== "turn.completed" :
         lifecycle === "failed" ? terminalSignal !== "turn.failed" : terminalSignal !== null)) {
       throw persistenceFailure("CORRUPT_ROW", "Codex turn contract, input, or terminal identity is invalid");
@@ -1078,6 +1084,221 @@ export function readManualCompletionDecisions(database: SqliteDatabase): readonl
   })));
 }
 
+export function readCodexProfiles(database: SqliteDatabase): readonly CodexProfileRecord[] {
+  const statuses = new Set<CodexProfileRecord["status"]>(["active", "deactivated"]);
+  return Object.freeze(database.prepare(
+    `SELECT profile_id, project_id, creator_operation_id, actor_id, revision, status,
+      project_resource_revision, project_config_revision, project_root_key,
+      destination, credential_reference, workspace_root, workspace_root_key, workspace_platform,
+      workspace_device, workspace_inode, workspace_mode, codex_home, codex_home_key, codex_home_platform,
+      codex_home_device, codex_home_inode, codex_home_mode, git_executable, git_executable_key,
+      git_executable_platform, git_executable_device, git_executable_inode, git_executable_mode,
+      constructor_config_sha256, created_at, updated_at FROM codex_profiles ORDER BY profile_id`,
+  ).all().map((row) => {
+    if (row.destination !== "openai-codex-api" || row.credential_reference !== "process-env:CODEX_API_KEY") {
+      throw persistenceFailure("CORRUPT_ROW", "Codex profile destination or credential reference is unsupported");
+    }
+    return Object.freeze({
+      profileId: sqliteText(row.profile_id, "codex_profiles.profile_id"),
+      projectId: sqliteText(row.project_id, "codex_profiles.project_id"),
+      creatorOperationId: sqliteText(row.creator_operation_id, "codex_profiles.creator_operation_id"),
+      actorId: sqliteText(row.actor_id, "codex_profiles.actor_id"),
+      revision: positive(row.revision, "codex_profiles.revision"),
+      status: enumText(row.status, "codex_profiles.status", statuses),
+      projectResourceRevision: positive(row.project_resource_revision, "codex_profiles.project_resource_revision"),
+      projectConfigRevision: positive(row.project_config_revision, "codex_profiles.project_config_revision"),
+      projectRootKey: sqliteText(row.project_root_key, "codex_profiles.project_root_key"),
+      destination: "openai-codex-api" as const,
+      credentialReference: "process-env:CODEX_API_KEY" as const,
+      workspaceRoot: sqliteText(row.workspace_root, "codex_profiles.workspace_root"),
+      workspaceRootKey: sqliteText(row.workspace_root_key, "codex_profiles.workspace_root_key"),
+      workspacePlatform: sqliteText(row.workspace_platform, "codex_profiles.workspace_platform"),
+      workspaceDevice: sqliteText(row.workspace_device, "codex_profiles.workspace_device"),
+      workspaceInode: sqliteText(row.workspace_inode, "codex_profiles.workspace_inode"),
+      workspaceMode: nonnegative(row.workspace_mode, "codex_profiles.workspace_mode"),
+      codexHome: sqliteText(row.codex_home, "codex_profiles.codex_home"),
+      codexHomeKey: sqliteText(row.codex_home_key, "codex_profiles.codex_home_key"),
+      codexHomePlatform: sqliteText(row.codex_home_platform, "codex_profiles.codex_home_platform"),
+      codexHomeDevice: sqliteText(row.codex_home_device, "codex_profiles.codex_home_device"),
+      codexHomeInode: sqliteText(row.codex_home_inode, "codex_profiles.codex_home_inode"),
+      codexHomeMode: nonnegative(row.codex_home_mode, "codex_profiles.codex_home_mode"),
+      gitExecutable: sqliteText(row.git_executable, "codex_profiles.git_executable"),
+      gitExecutableKey: sqliteText(row.git_executable_key, "codex_profiles.git_executable_key"),
+      gitExecutablePlatform: sqliteText(row.git_executable_platform, "codex_profiles.git_executable_platform"),
+      gitExecutableDevice: sqliteText(row.git_executable_device, "codex_profiles.git_executable_device"),
+      gitExecutableInode: sqliteText(row.git_executable_inode, "codex_profiles.git_executable_inode"),
+      gitExecutableMode: nonnegative(row.git_executable_mode, "codex_profiles.git_executable_mode"),
+      constructorConfigSha256: uppercaseSha256(row.constructor_config_sha256, "codex_profiles.constructor_config_sha256"),
+      createdAt: timestamp(row.created_at, "codex_profiles.created_at"),
+      updatedAt: timestamp(row.updated_at, "codex_profiles.updated_at"),
+    });
+  }));
+}
+
+export function readCodexProfileOperations(database: SqliteDatabase): readonly CodexProfileOperationRecord[] {
+  const actions = new Set<CodexProfileOperationRecord["action"]>(["codex.profile.activate", "codex.profile.deactivate"]);
+  const results = new Set<CodexProfileOperationRecord["result"]>(["allow", "deny"]);
+  return Object.freeze(database.prepare(
+    `SELECT operation_id, idempotency_key, request_id, decision_id, audit_id, confirmation_id, actor_id,
+      action, project_id, expected_project_resource_revision, expected_project_config_revision, profile_id,
+      expected_profile_revision, result, reason, policy_result, grant_id, grant_revision,
+      configuration_sha256, resulting_profile_revision, resulting_status, created_at
+    FROM codex_profile_operations ORDER BY operation_id`,
+  ).all().map((row) => Object.freeze({
+    operationId: sqliteText(row.operation_id, "codex_profile_operations.operation_id"),
+    idempotencyKey: sqliteText(row.idempotency_key, "codex_profile_operations.idempotency_key"),
+    requestId: sqliteText(row.request_id, "codex_profile_operations.request_id"),
+    decisionId: sqliteText(row.decision_id, "codex_profile_operations.decision_id"),
+    auditId: sqliteText(row.audit_id, "codex_profile_operations.audit_id"),
+    confirmationId: sqliteNullableText(row.confirmation_id, "codex_profile_operations.confirmation_id"),
+    actorId: sqliteText(row.actor_id, "codex_profile_operations.actor_id"),
+    action: enumText(row.action, "codex_profile_operations.action", actions),
+    projectId: sqliteText(row.project_id, "codex_profile_operations.project_id"),
+    expectedProjectResourceRevision: positive(row.expected_project_resource_revision, "codex_profile_operations.expected_project_resource_revision"),
+    expectedProjectConfigRevision: positive(row.expected_project_config_revision, "codex_profile_operations.expected_project_config_revision"),
+    profileId: sqliteText(row.profile_id, "codex_profile_operations.profile_id"),
+    expectedProfileRevision: nonnegative(row.expected_profile_revision, "codex_profile_operations.expected_profile_revision"),
+    result: enumText(row.result, "codex_profile_operations.result", results),
+    reason: enumText(row.reason, "codex_profile_operations.reason", AUTHORIZATION_REASONS),
+    policy: enumText(row.policy_result, "codex_profile_operations.policy_result", POLICY_RESULTS),
+    grantId: sqliteNullableText(row.grant_id, "codex_profile_operations.grant_id"),
+    grantRevision: nullablePositive(row.grant_revision, "codex_profile_operations.grant_revision"),
+    configurationSha256: row.configuration_sha256 === null ? null
+      : uppercaseSha256(row.configuration_sha256, "codex_profile_operations.configuration_sha256"),
+    resultingProfileRevision: nullablePositive(row.resulting_profile_revision, "codex_profile_operations.resulting_profile_revision"),
+    resultingStatus: row.resulting_status === null ? null
+      : enumText(row.resulting_status, "codex_profile_operations.resulting_status", new Set(["active", "deactivated"] as const)),
+    createdAt: timestamp(row.created_at, "codex_profile_operations.created_at"),
+  })));
+}
+
+export function readCodexProductOperations(database: SqliteDatabase): readonly CodexProductOperationRecord[] {
+  const commands = new Set<CodexProductOperationRecord["commandKind"]>(["codex.dispatch-run", "execution.resume", "execution.retry"]);
+  const stages = new Set<CodexProductOperationRecord["stage"]>([
+    "prepared", "member_bound", "workspace_ready", "intent_prepared",
+    "effect_possible", "effect_terminal", "workspace_refreshed",
+  ]);
+  const lifecycles = new Set<CodexProductOperationRecord["lifecycle"]>(["active", "finalized", "refused", "recovery_required"]);
+  return Object.freeze(database.prepare(
+    `SELECT operation_id, public_idempotency_key, command_kind, command_json, command_sha256, actor_id,
+      profile_id, profile_revision, constructor_config_sha256, project_id, expected_project_resource_revision,
+      expected_project_config_revision, task_id, expected_task_revision, base_reference, lease_duration_seconds,
+      source_execution_id, source_execution_revision, source_attempt_number, source_fencing_token,
+      source_backend_execution_id, source_thread_id, source_observation_number, source_verified_receipt_id,
+      source_workspace_id, source_workspace_generation, source_workspace_revision, source_workspace_root_key,
+      source_workspace_ownership_binding_sha256, source_workspace_head_object_id, source_workspace_verified_receipt_id,
+      continuation_reference, required_action_receipt_id, run_id, member_id, execution_id, workspace_id,
+      intent_id, stage, lifecycle, revision, workspace_generation, workspace_revision,
+      workspace_head_object_id, result_code, result_json, created_at, updated_at
+    FROM codex_product_operations ORDER BY operation_id`,
+  ).all().map((row) => Object.freeze({
+    operationId: sqliteText(row.operation_id, "codex_product_operations.operation_id"),
+    publicIdempotencyKey: sqliteText(row.public_idempotency_key, "codex_product_operations.public_idempotency_key"),
+    commandKind: enumText(row.command_kind, "codex_product_operations.command_kind", commands),
+    commandJson: sqliteText(row.command_json, "codex_product_operations.command_json"),
+    commandSha256: uppercaseSha256(row.command_sha256, "codex_product_operations.command_sha256"),
+    actorId: sqliteText(row.actor_id, "codex_product_operations.actor_id"),
+    profileId: sqliteText(row.profile_id, "codex_product_operations.profile_id"),
+    profileRevision: positive(row.profile_revision, "codex_product_operations.profile_revision"),
+    constructorConfigSha256: uppercaseSha256(row.constructor_config_sha256, "codex_product_operations.constructor_config_sha256"),
+    projectId: sqliteText(row.project_id, "codex_product_operations.project_id"),
+    expectedProjectResourceRevision: positive(row.expected_project_resource_revision, "codex_product_operations.expected_project_resource_revision"),
+    expectedProjectConfigRevision: positive(row.expected_project_config_revision, "codex_product_operations.expected_project_config_revision"),
+    taskId: sqliteText(row.task_id, "codex_product_operations.task_id"),
+    expectedTaskRevision: positive(row.expected_task_revision, "codex_product_operations.expected_task_revision"),
+    baseReference: nullableLowercaseSha1(row.base_reference, "codex_product_operations.base_reference"),
+    leaseDurationSeconds: nullablePositive(row.lease_duration_seconds, "codex_product_operations.lease_duration_seconds"),
+    sourceExecutionId: sqliteNullableText(row.source_execution_id, "codex_product_operations.source_execution_id"),
+    sourceExecutionRevision: nullablePositive(row.source_execution_revision, "codex_product_operations.source_execution_revision"),
+    sourceAttemptNumber: nullablePositive(row.source_attempt_number, "codex_product_operations.source_attempt_number"),
+    sourceFencingToken: nullablePositive(row.source_fencing_token, "codex_product_operations.source_fencing_token"),
+    sourceBackendExecutionId: sqliteNullableText(row.source_backend_execution_id, "codex_product_operations.source_backend_execution_id"),
+    sourceThreadId: sqliteNullableText(row.source_thread_id, "codex_product_operations.source_thread_id"),
+    sourceObservationNumber: nullablePositive(row.source_observation_number, "codex_product_operations.source_observation_number"),
+    sourceVerifiedReceiptId: sqliteNullableText(row.source_verified_receipt_id, "codex_product_operations.source_verified_receipt_id"),
+    sourceWorkspaceId: sqliteNullableText(row.source_workspace_id, "codex_product_operations.source_workspace_id"),
+    sourceWorkspaceGeneration: nullablePositive(row.source_workspace_generation, "codex_product_operations.source_workspace_generation"),
+    sourceWorkspaceRevision: nullablePositive(row.source_workspace_revision, "codex_product_operations.source_workspace_revision"),
+    sourceWorkspaceRootKey: sqliteNullableText(row.source_workspace_root_key, "codex_product_operations.source_workspace_root_key"),
+    sourceWorkspaceOwnershipBindingSha256: row.source_workspace_ownership_binding_sha256 === null ? null
+      : uppercaseSha256(row.source_workspace_ownership_binding_sha256, "codex_product_operations.source_workspace_ownership_binding_sha256"),
+    sourceWorkspaceHeadObjectId: nullableLowercaseSha1(row.source_workspace_head_object_id, "codex_product_operations.source_workspace_head_object_id"),
+    sourceWorkspaceVerifiedReceiptId: sqliteNullableText(row.source_workspace_verified_receipt_id, "codex_product_operations.source_workspace_verified_receipt_id"),
+    continuationReference: sqliteNullableText(row.continuation_reference, "codex_product_operations.continuation_reference"),
+    requiredActionReceiptId: sqliteNullableText(row.required_action_receipt_id, "codex_product_operations.required_action_receipt_id"),
+    runId: sqliteText(row.run_id, "codex_product_operations.run_id"),
+    memberId: sqliteText(row.member_id, "codex_product_operations.member_id"),
+    executionId: sqliteText(row.execution_id, "codex_product_operations.execution_id"),
+    workspaceId: sqliteText(row.workspace_id, "codex_product_operations.workspace_id"),
+    intentId: sqliteText(row.intent_id, "codex_product_operations.intent_id"),
+    stage: enumText(row.stage, "codex_product_operations.stage", stages),
+    lifecycle: enumText(row.lifecycle, "codex_product_operations.lifecycle", lifecycles),
+    revision: positive(row.revision, "codex_product_operations.revision"),
+    workspaceGeneration: nullablePositive(row.workspace_generation, "codex_product_operations.workspace_generation"),
+    workspaceRevision: nullablePositive(row.workspace_revision, "codex_product_operations.workspace_revision"),
+    workspaceHeadObjectId: nullableLowercaseSha1(row.workspace_head_object_id, "codex_product_operations.workspace_head_object_id"),
+    resultCode: sqliteNullableText(row.result_code, "codex_product_operations.result_code"),
+    resultJson: sqliteNullableText(row.result_json, "codex_product_operations.result_json"),
+    createdAt: timestamp(row.created_at, "codex_product_operations.created_at"),
+    updatedAt: timestamp(row.updated_at, "codex_product_operations.updated_at"),
+  })));
+}
+
+export function readCodexEffectAuthorizations(database: SqliteDatabase): readonly CodexEffectAuthorizationRecord[] {
+  const phases = new Set<CodexEffectAuthorizationRecord["phase"]>(["prepare", "act"]);
+  const results = new Set<CodexEffectAuthorizationRecord["result"]>(["allow", "deny"]);
+  return Object.freeze(database.prepare(
+    `SELECT authorization_id, product_operation_id, phase, binding_revision, request_id, decision_id,
+      audit_id, confirmation_id, actor_id, action, result, reason, policy_result, grant_id, grant_revision,
+      required_grant_set_version, required_grant_set_json, required_grant_set_sha256,
+      core_authorization_decision_id, core_authorization_binding_revision,
+      profile_id, profile_revision, constructor_config_sha256, run_id, member_id, execution_id, intent_id,
+      workspace_id, workspace_generation, workspace_revision, created_at
+    FROM codex_effect_authorizations ORDER BY product_operation_id, binding_revision`,
+  ).all().map((row) => {
+    if (row.action !== "codex.execution.invoke") throw persistenceFailure("CORRUPT_ROW", "Codex effect action is unsupported");
+    return Object.freeze({
+      authorizationId: sqliteText(row.authorization_id, "codex_effect_authorizations.authorization_id"),
+      productOperationId: sqliteText(row.product_operation_id, "codex_effect_authorizations.product_operation_id"),
+      phase: enumText(row.phase, "codex_effect_authorizations.phase", phases),
+      bindingRevision: positive(row.binding_revision, "codex_effect_authorizations.binding_revision"),
+      requestId: sqliteText(row.request_id, "codex_effect_authorizations.request_id"),
+      decisionId: sqliteText(row.decision_id, "codex_effect_authorizations.decision_id"),
+      auditId: sqliteText(row.audit_id, "codex_effect_authorizations.audit_id"),
+      confirmationId: sqliteNullableText(row.confirmation_id, "codex_effect_authorizations.confirmation_id"),
+      actorId: sqliteText(row.actor_id, "codex_effect_authorizations.actor_id"),
+      action: "codex.execution.invoke" as const,
+      result: enumText(row.result, "codex_effect_authorizations.result", results),
+      reason: enumText(row.reason, "codex_effect_authorizations.reason", AUTHORIZATION_REASONS),
+      policy: enumText(row.policy_result, "codex_effect_authorizations.policy_result", POLICY_RESULTS),
+      grantId: sqliteNullableText(row.grant_id, "codex_effect_authorizations.grant_id"),
+      grantRevision: nullablePositive(row.grant_revision, "codex_effect_authorizations.grant_revision"),
+      requiredGrantSetVersion: row.required_grant_set_version === 1
+        ? 1 as const
+        : (() => { throw persistenceFailure("CORRUPT_ROW", "Codex required grant-set version is unsupported"); })(),
+      requiredGrantSetJson: sqliteText(row.required_grant_set_json, "codex_effect_authorizations.required_grant_set_json"),
+      requiredGrantSetSha256: uppercaseSha256(row.required_grant_set_sha256, "codex_effect_authorizations.required_grant_set_sha256"),
+      coreAuthorizationDecisionId: sqliteNullableText(
+        row.core_authorization_decision_id, "codex_effect_authorizations.core_authorization_decision_id",
+      ),
+      coreAuthorizationBindingRevision: nullablePositive(
+        row.core_authorization_binding_revision, "codex_effect_authorizations.core_authorization_binding_revision",
+      ),
+      profileId: sqliteText(row.profile_id, "codex_effect_authorizations.profile_id"),
+      profileRevision: positive(row.profile_revision, "codex_effect_authorizations.profile_revision"),
+      constructorConfigSha256: uppercaseSha256(row.constructor_config_sha256, "codex_effect_authorizations.constructor_config_sha256"),
+      runId: sqliteText(row.run_id, "codex_effect_authorizations.run_id"),
+      memberId: sqliteText(row.member_id, "codex_effect_authorizations.member_id"),
+      executionId: sqliteText(row.execution_id, "codex_effect_authorizations.execution_id"),
+      intentId: sqliteNullableText(row.intent_id, "codex_effect_authorizations.intent_id"),
+      workspaceId: sqliteText(row.workspace_id, "codex_effect_authorizations.workspace_id"),
+      workspaceGeneration: nullablePositive(row.workspace_generation, "codex_effect_authorizations.workspace_generation"),
+      workspaceRevision: nullablePositive(row.workspace_revision, "codex_effect_authorizations.workspace_revision"),
+      createdAt: timestamp(row.created_at, "codex_effect_authorizations.created_at"),
+    });
+  }));
+}
+
 export function readDispatcherTriggerRequests(database: SqliteDatabase): readonly DispatcherTriggerRequestRecord[] {
   const results = new Set<DispatcherTriggerRequestRecord["result"]>(["allow", "deny"]);
   return Object.freeze(database.prepare(
@@ -1127,8 +1348,9 @@ export function readDispatcherAuthorizationDecisions(database: SqliteDatabase): 
 
 export function readDispatcherRuns(database: SqliteDatabase): readonly DispatcherRunRecord[] {
   const statuses = new Set<DispatcherRunStatus>(["starting", "reconciling", "sweeping", "completed", "partial", "failed", "interrupted"]);
+  const routes = new Set<DispatcherRouteKind>(["manual", "scheduled", "codex-start", "codex-continuation"]);
   return Object.freeze(database.prepare(
-    `SELECT run_id, observation_id, request_id, decision_id, actor_id, owner_id, owner_revision,
+    `SELECT run_id, observation_id, request_id, decision_id, actor_id, route_kind, product_operation_id, owner_id, owner_revision,
       run_revision, requested_lease_seconds, heartbeat_at, lease_expires_at, status, created_at, updated_at
     FROM dispatcher_runs ORDER BY run_id`,
   ).all().map((row) => Object.freeze({
@@ -1137,6 +1359,8 @@ export function readDispatcherRuns(database: SqliteDatabase): readonly Dispatche
     requestId: sqliteText(row.request_id, "dispatcher_runs.request_id"),
     decisionId: sqliteText(row.decision_id, "dispatcher_runs.decision_id"),
     actorId: sqliteText(row.actor_id, "dispatcher_runs.actor_id"),
+    routeKind: enumText(row.route_kind, "dispatcher_runs.route_kind", routes),
+    productOperationId: sqliteNullableText(row.product_operation_id, "dispatcher_runs.product_operation_id"),
     ownerId: sqliteText(row.owner_id, "dispatcher_runs.owner_id"),
     ownerRevision: positive(row.owner_revision, "dispatcher_runs.owner_revision"),
     runRevision: positive(row.run_revision, "dispatcher_runs.run_revision"),
@@ -1237,6 +1461,7 @@ export function readDispatcherMembers(database: SqliteDatabase): readonly Dispat
   return Object.freeze(database.prepare(
     `SELECT member_id, run_id, membership_revision, ordinal, project_id, project_resource_revision,
       project_config_revision, task_id, task_revision, lifecycle, outcome, execution_id, intent_id,
+      product_operation_id, owner_kind,
       code, revision, created_at, updated_at FROM dispatcher_members ORDER BY run_id, ordinal`,
   ).all().map((row) => Object.freeze({
     memberId: sqliteText(row.member_id, "dispatcher_members.member_id"),
@@ -1252,6 +1477,12 @@ export function readDispatcherMembers(database: SqliteDatabase): readonly Dispat
     outcome: row.outcome === null ? null : enumText(row.outcome, "dispatcher_members.outcome", outcomes),
     executionId: sqliteNullableText(row.execution_id, "dispatcher_members.execution_id"),
     intentId: sqliteNullableText(row.intent_id, "dispatcher_members.intent_id"),
+    productOperationId: sqliteNullableText(row.product_operation_id, "dispatcher_members.product_operation_id"),
+    ownerKind: row.owner_kind === null ? null : enumText(
+      row.owner_kind,
+      "dispatcher_members.owner_kind",
+      new Set<Exclude<DispatcherMemberRecord["ownerKind"], null>>(["execution-start-intent", "codex-product-operation"]),
+    ),
     code: row.code === null ? null : enumText(row.code, "dispatcher_members.code", codes),
     revision: positive(row.revision, "dispatcher_members.revision"),
     createdAt: timestamp(row.created_at, "dispatcher_members.created_at"),

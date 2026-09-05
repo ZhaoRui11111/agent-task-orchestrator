@@ -39,6 +39,11 @@ import type { SqliteDatabase } from "./database.ts";
 import { persistenceFailure } from "./errors.ts";
 import { applicationStateSha256 } from "./application-repository-digest.ts";
 import { codexTerminalReceiptSha256 } from "./codex-receipt-digest.ts";
+import {
+  codexProfileConfigurationSha256,
+  codexRequiredGrantSetSha256,
+  compactCanonicalJson,
+} from "./codex-product-digest.ts";
 import { schedulerConfigurationSha256, schedulerReceiptSha256 } from "./scheduler-receipt-digest.ts";
 import { applicationAuditKind } from "./application-repository-model.ts";
 import type {
@@ -76,6 +81,10 @@ import {
   readCodexBackendOperations,
   readCompletionDecisions,
   readManualCompletionDecisions,
+  readCodexProfiles,
+  readCodexProfileOperations,
+  readCodexProductOperations,
+  readCodexEffectAuthorizations,
   readDispatcherTriggerRequests,
   readDispatcherAuthorizationDecisions,
   readDispatcherRuns,
@@ -2695,6 +2704,7 @@ function validateSchedulerState(
       (delivery.disposition === "rejected_stale_config" && (decision.result !== "allow" || run !== undefined)) ||
       (delivery.disposition === "accepted" && (
         decision.result !== "allow" || run === undefined || tuple === undefined || tuple.runId !== run.runId ||
+        run.routeKind !== "scheduled" || run.productOperationId !== null ||
         configuration === undefined || configurationIntent === undefined ||
         delivery.adapterId !== configurationIntent.adapterId ||
         delivery.adapterVersion !== configurationIntent.adapterVersion ||
@@ -2713,8 +2723,497 @@ function validateSchedulerState(
       delivery.disposition !== "accepted" || delivery.attachmentRole !== "canonical" ||
       delivery.runId !== tuple.runId || delivery.scheduleId !== tuple.scheduleId ||
       delivery.configRevision !== tuple.configRevision || delivery.scheduledFor !== tuple.scheduledFor ||
-      run.observationId !== tuple.canonicalObservationId || tuple.createdAt < delivery.receivedAt
+      run.observationId !== tuple.canonicalObservationId || run.routeKind !== "scheduled" ||
+      run.productOperationId !== null || tuple.createdAt < delivery.receivedAt
     ) throw persistenceFailure("CORRUPT_ROW", "Scheduler canonical tuple is inconsistent");
+  }
+}
+
+const CODEX_STORED_FAILURE_MESSAGES = Object.freeze(new Map<string, ReadonlySet<string>>([
+  ["CODEX_CREDENTIAL_UNAVAILABLE", new Set(["The configured Codex credential is unavailable."])],
+  ["CODEX_ADAPTER_FAILURE", new Set(["The Codex execution adapter failed."])],
+  ["PROJECT_IDENTITY_CHANGED", new Set([
+    "The Project identity changed.",
+    "The trusted runtime root identity changed.",
+  ])],
+  ["AUTHORIZATION_DENIED", new Set([
+    "Current grants did not authorize Codex dispatch.",
+    "Current grants did not authorize the Codex Task claim.",
+  ])],
+  ["TASK_NOT_ELIGIBLE", new Set(["The requested Task could not be claimed."])],
+]));
+
+function storedWaitingProjection(
+  intent: ApplicationState["executionIntents"][number],
+  observation: ApplicationState["executionObservations"][number] | undefined,
+  finalization: ApplicationState["executionFinalizations"][number],
+): Readonly<Record<string, unknown>> | null {
+  if (finalization.outcome !== "waiting") return null;
+  const lifecycle = observation?.lifecycle ?? (intent.lastErrorAmbiguous === true ? "unknown" : "failed");
+  const isAmbiguous = lifecycle === "unknown" || intent.lastErrorAmbiguous === true;
+  const category = intent.lastErrorCategory;
+  const reason = isAmbiguous ? "ambiguous_external_state" :
+    category === "unauthorized" || category === "policy_denied" ? "authorization_required" :
+    category === "incompatible_contract" ? "backend_incompatible" :
+    category === "rate_limited" ? "rate_limited" :
+    category === "resource_exhausted" ? "resource_exhausted" :
+    "execution_failed";
+  const requiredAction = isAmbiguous ? "execution.inspect" :
+    intent.lastErrorRetryable === false ? "execution.cancel" : "execution.retry";
+  return Object.freeze({
+    reason,
+    phase: lifecycle === "unknown" ? "reconcile" : "manual_execution",
+    requiredAction,
+    lastErrorCode: observation?.code ?? intent.lastErrorCode ?? "adapter_failure",
+    lastErrorSummary: null,
+    retryable: intent.lastErrorRetryable ?? lifecycle !== "unknown",
+    retryCount: intent.retryCount,
+    retryAfter: intent.retryAfter === null ? null : Date.parse(intent.retryAfter),
+    executionId: intent.executionId,
+    workspaceRevision: intent.workspaceRevision === null ? null : String(intent.workspaceRevision),
+    waitingTaskRevision: finalization.taskRevision,
+  });
+}
+
+function codexTerminalResultIsValid(
+  state: ApplicationState,
+  operation: ApplicationState["codexProductOperations"][number],
+): boolean {
+  if (operation.resultJson === null) {
+    return operation.lifecycle === "active" || operation.lifecycle === "recovery_required";
+  }
+  if (operation.lifecycle !== "finalized" && operation.lifecycle !== "refused") return false;
+  let decoded: unknown;
+  try { decoded = JSON.parse(operation.resultJson); } catch { return false; }
+  if (compactCanonicalJson(decoded) !== operation.resultJson || typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) {
+    return false;
+  }
+  const result = decoded as Record<string, unknown>;
+  const resultKeys = Object.keys(result).sort((left, right) => left.localeCompare(right, "en"));
+  if (resultKeys.join("\u0000") === "error\u0000ok" && result.ok === false) {
+    if ((operation.lifecycle !== "refused" && operation.lifecycle !== "finalized") ||
+      typeof result.error !== "object" || result.error === null || Array.isArray(result.error)) return false;
+    const error = result.error as Record<string, unknown>;
+    const messages = typeof error.code === "string" ? CODEX_STORED_FAILURE_MESSAGES.get(error.code) : undefined;
+    const valid = Object.keys(error).sort((left, right) => left.localeCompare(right, "en")).join("\u0000") === "code\u0000message" &&
+      typeof error.message === "string" && messages?.has(error.message) === true;
+    if (!valid) return false;
+    const intent = state.executionIntents.find((candidate) => candidate.intentId === operation.intentId);
+    if (operation.lifecycle === "finalized") {
+      const expected = intent?.lastErrorCode === "codex_credential_unavailable"
+        ? Object.freeze({ code: "CODEX_CREDENTIAL_UNAVAILABLE", resultCode: "credential_unavailable" })
+        : intent?.lastErrorCode === "codex_profile_configuration_changed"
+          ? Object.freeze({ code: "PROJECT_IDENTITY_CHANGED", resultCode: "configuration_changed" })
+          : intent?.lastErrorCode === "codex_driver_construction_failed"
+            ? Object.freeze({ code: "CODEX_ADAPTER_FAILURE", resultCode: "adapter_failure" })
+            : null;
+      return expected !== null && error.code === expected.code && operation.resultCode === expected.resultCode;
+    }
+    const member = state.dispatcherMembers.find((candidate) => candidate.memberId === operation.memberId);
+    if (error.code === "CODEX_CREDENTIAL_UNAVAILABLE") {
+      return operation.resultCode === "credential_unavailable" && member === undefined;
+    }
+    if (error.code === "AUTHORIZATION_DENIED") {
+      return operation.resultCode === "authorization_denied" ||
+        (member?.lifecycle === "terminal" && member.outcome === "authorization_denied" &&
+          operation.resultCode === member.code);
+    }
+    return error.code === "TASK_NOT_ELIGIBLE" && member?.lifecycle === "terminal" &&
+      member.outcome !== "claimed" && operation.resultCode === member.code;
+  }
+  if (operation.lifecycle !== "finalized" || resultKeys.join("\u0000") !== "ok\u0000value" || result.ok !== true ||
+    typeof result.value !== "object" || result.value === null || Array.isArray(result.value)) return false;
+  const value = result.value as Record<string, unknown>;
+  if (value.replayed !== false) return false;
+  const task = state.domain.tasks.find((candidate) => candidate.id === operation.taskId);
+  const execution = state.executions.find((candidate) => candidate.executionId === operation.executionId);
+  const intent = state.executionIntents.find((candidate) => candidate.intentId === operation.intentId);
+  const observation = intent === undefined ? undefined : state.executionObservations
+    .filter((candidate) => candidate.intentId === intent.intentId)
+    .sort((left, right) => right.observationNumber - left.observationNumber)[0];
+  const finalization = intent === undefined ? undefined : state.executionFinalizations.find(
+    (candidate) => candidate.intentId === intent.intentId,
+  );
+  if (task === undefined || execution === undefined || intent === undefined || intent.state !== "finalized" ||
+    finalization === undefined) return false;
+  const terminalTaskState = finalization.outcome === "waiting" ? "waiting" :
+    finalization.outcome === "interrupted" ? "cancelled" : "running";
+  if (operation.commandKind === "codex.dispatch-run") {
+    const run = state.dispatcherRuns.find((candidate) => candidate.runId === operation.runId);
+    const workspace = operation.workspaceGeneration === null ? undefined : state.workspaceGenerations.find(
+      (candidate) => candidate.workspaceId === operation.workspaceId && candidate.generation === operation.workspaceGeneration,
+    );
+    if (run === undefined || workspace === undefined) return false;
+    const expected = Object.freeze({
+      runId: run.runId,
+      status: run.status,
+      memberId: operation.memberId,
+      profileId: operation.profileId,
+      profileRevision: operation.profileRevision,
+      destination: "openai-codex-api",
+      baseReference: operation.baseReference,
+      taskId: task.id,
+      taskState: terminalTaskState,
+      taskRevision: finalization.taskRevision,
+      executionId: execution.executionId,
+      executionRevision: finalization.executionRevision,
+      attemptNumber: execution.attemptNumber,
+      fencingToken: execution.fencingToken,
+      workspaceId: workspace.workspaceId,
+      workspaceGeneration: workspace.generation,
+      workspaceRevision: operation.workspaceRevision,
+      workspaceStatus: "ready",
+      lifecycle: observation?.lifecycle ?? intent.state,
+      replayed: false,
+    });
+    return compactCanonicalJson(value) === compactCanonicalJson(expected);
+  }
+  const expected = Object.freeze({
+    executionId: execution.executionId,
+    taskId: task.id,
+    taskState: terminalTaskState,
+    taskRevision: finalization.taskRevision,
+    executionRevision: finalization.executionRevision,
+    attemptNumber: execution.attemptNumber,
+    fencingToken: execution.fencingToken,
+    lifecycle: observation?.lifecycle ?? "ambiguous",
+    observationNumber: observation?.observationNumber ?? null,
+    waiting: storedWaitingProjection(intent, observation, finalization),
+    replayed: false,
+  });
+  return compactCanonicalJson(value) === compactCanonicalJson(expected);
+}
+
+function expectedCodexProductCommandJson(
+  operation: ApplicationState["codexProductOperations"][number],
+): string {
+  return operation.commandKind === "codex.dispatch-run"
+    ? compactCanonicalJson({
+      apiVersion: "ato.api/v1",
+      command: operation.commandKind,
+      actorId: operation.actorId,
+      projectId: operation.projectId,
+      expectedProjectResourceRevision: operation.expectedProjectResourceRevision,
+      expectedProjectConfigRevision: operation.expectedProjectConfigRevision,
+      profileId: operation.profileId,
+      expectedProfileRevision: operation.profileRevision,
+      taskId: operation.taskId,
+      expectedTaskRevision: operation.expectedTaskRevision,
+      baseReference: operation.baseReference,
+      idempotencyKey: operation.publicIdempotencyKey,
+      leaseDurationSeconds: operation.leaseDurationSeconds,
+      confirmationAction: "codex.execution.invoke",
+    })
+    : compactCanonicalJson({
+      apiVersion: "ato.api/v1",
+      command: operation.commandKind,
+      actorId: operation.actorId,
+      projectId: operation.projectId,
+      expectedProjectResourceRevision: operation.expectedProjectResourceRevision,
+      expectedProjectConfigRevision: operation.expectedProjectConfigRevision,
+      taskId: operation.taskId,
+      expectedTaskRevision: operation.expectedTaskRevision,
+      executionId: operation.sourceExecutionId,
+      expectedExecutionRevision: operation.sourceExecutionRevision,
+      expectedAttemptNumber: operation.sourceAttemptNumber,
+      expectedFencingToken: operation.sourceFencingToken,
+      idempotencyKey: operation.publicIdempotencyKey,
+      continuationReference: operation.continuationReference,
+      requiredActionReceiptId: operation.requiredActionReceiptId,
+      confirmationAction: "codex.execution.invoke",
+    });
+}
+
+const CODEX_GRANT_WITNESS_KEYS = Object.freeze([
+  "action", "allowed", "configRevision", "grantId", "grantRevision", "owner",
+  "policy", "projectId", "reason", "resourceRevision",
+] as const);
+const CODEX_GRANT_WITNESS_REASONS = new Set([
+  "allowed", "actor_mismatch", "action_mismatch", "scope_mismatch", "scope_revision_stale",
+  "grant_expired", "grant_not_yet_valid", "grant_revoked", "grant_missing", "policy_denied",
+  "confirmation_required",
+]);
+const CODEX_GRANT_WITNESS_POLICIES = new Set(["allow", "deny", "read_not_applicable"]);
+
+function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean {
+  return Object.keys(value).sort((left, right) => left.localeCompare(right, "en")).join("\u0000") ===
+    [...expected].sort((left, right) => left.localeCompare(right, "en")).join("\u0000");
+}
+
+function codexRequiredGrantSetIsValid(
+  state: ApplicationState,
+  operation: ApplicationState["codexProductOperations"][number],
+  authorization: ApplicationState["codexEffectAuthorizations"][number],
+): boolean {
+  if (authorization.requiredGrantSetVersion !== 1 ||
+    codexRequiredGrantSetSha256(authorization.requiredGrantSetJson) !== authorization.requiredGrantSetSha256) return false;
+  let decoded: unknown;
+  try { decoded = JSON.parse(authorization.requiredGrantSetJson); } catch { return false; }
+  if (compactCanonicalJson(decoded) !== authorization.requiredGrantSetJson ||
+    typeof decoded !== "object" || decoded === null || Array.isArray(decoded)) return false;
+  const root = decoded as Record<string, unknown>;
+  if (!exactKeys(root, ["conjuncts", "version"]) || root.version !== 1 || !Array.isArray(root.conjuncts)) return false;
+  const action = operation.commandKind === "codex.dispatch-run" ? "execution.start" : operation.commandKind;
+  const expected = authorization.phase === "prepare"
+    ? Object.freeze([
+      Object.freeze({ owner: "codex-product", action: "codex.execution.invoke", project: true }),
+    ])
+    : Object.freeze([
+      Object.freeze({ owner: "codex-product", action: "codex.execution.invoke", project: true }),
+      Object.freeze({ owner: "execution-core", action, project: true }),
+      Object.freeze({ owner: "dispatcher", action: "dispatch.run", project: false }),
+      Object.freeze({ owner: "execution-claim", action: "execution.claim", project: true }),
+      Object.freeze({ owner: "execution-claim", action, project: true }),
+      ...(operation.commandKind === "codex.dispatch-run" ? [] : [
+        Object.freeze({ owner: "execution-claim", action: "execution.lease.takeover", project: true }),
+      ]),
+      Object.freeze({ owner: "workspace", action: "workspace.reserve", project: true }),
+      Object.freeze({ owner: "workspace", action: "workspace.create", project: true }),
+    ]);
+  if (root.conjuncts.length !== expected.length) return false;
+  const grants = new Map(state.grants.map((grant) => [grant.grantId, grant]));
+  const coreDecision = authorization.coreAuthorizationDecisionId === null ? undefined
+    : state.executionAuthorizationDecisions.find(
+      (candidate) => candidate.decisionId === authorization.coreAuthorizationDecisionId,
+    );
+  return root.conjuncts.every((candidate, index) => {
+    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) return false;
+    const witness = candidate as Record<string, unknown>;
+    const specification = expected[index];
+    if (specification === undefined || !exactKeys(witness, CODEX_GRANT_WITNESS_KEYS) ||
+      witness.owner !== specification.owner || witness.action !== specification.action ||
+      typeof witness.allowed !== "boolean" || typeof witness.reason !== "string" || typeof witness.policy !== "string" ||
+      !CODEX_GRANT_WITNESS_REASONS.has(witness.reason) || !CODEX_GRANT_WITNESS_POLICIES.has(witness.policy) ||
+      (witness.allowed ? witness.reason !== "allowed" || witness.policy !== "allow" : witness.reason === "allowed")) return false;
+    const projectFieldsMatch = specification.project
+      ? witness.projectId === operation.projectId &&
+        witness.resourceRevision === operation.expectedProjectResourceRevision &&
+        witness.configRevision === operation.expectedProjectConfigRevision
+      : witness.projectId === null && witness.resourceRevision === null && witness.configRevision === null;
+    if (!projectFieldsMatch) return false;
+    if ((witness.grantId === null) !== (witness.grantRevision === null)) return false;
+    if (witness.grantId !== null) {
+      if (typeof witness.grantId !== "string" || typeof witness.grantRevision !== "number" ||
+        !Number.isSafeInteger(witness.grantRevision) || witness.grantRevision <= 0) return false;
+      const grant = grants.get(witness.grantId);
+      if (grant === undefined || !grantRevisionWasUsableAt(
+        grant, authorization.actorId, specification.action as AuthorizationAction,
+        authorization.createdAt, witness.grantRevision,
+      )) return false;
+      if (specification.project && grant.scope.kind === "project" && (
+        grant.scope.projectId !== operation.projectId ||
+        grant.scope.resourceRevision !== operation.expectedProjectResourceRevision ||
+        grant.scope.configRevision !== operation.expectedProjectConfigRevision
+      )) return false;
+    } else if (witness.allowed) return false;
+    if (index === 0 && authorization.result === "allow" && (
+      witness.allowed !== true || witness.reason !== authorization.reason || witness.policy !== authorization.policy ||
+      witness.grantId !== authorization.grantId || witness.grantRevision !== authorization.grantRevision
+    )) return false;
+    if (index === 1 && authorization.phase === "act" && coreDecision !== undefined && (
+      coreDecision.action !== witness.action || coreDecision.actorId !== authorization.actorId ||
+      (coreDecision.result === "allow") !== witness.allowed || coreDecision.reason !== witness.reason ||
+      coreDecision.policy !== witness.policy || coreDecision.grantId !== witness.grantId ||
+      coreDecision.grantRevision !== witness.grantRevision || coreDecision.projectId !== witness.projectId ||
+      coreDecision.resourceRevision !== witness.resourceRevision || coreDecision.configRevision !== witness.configRevision
+    )) return false;
+    return true;
+  });
+}
+
+function validateCodexProductState(state: ApplicationState): void {
+  const profileById = new Map(state.codexProfiles.map((record) => [record.profileId, record]));
+  const profileByProject = new Map(state.codexProfiles.map((record) => [record.projectId, record]));
+  const operationById = new Map(state.codexProductOperations.map((record) => [record.operationId, record]));
+  const operationByKey = new Map(state.codexProductOperations.map((record) => [record.publicIdempotencyKey, record]));
+  const executionById = new Map(state.executions.map((record) => [record.executionId, record]));
+  const intentById = new Map(state.executionIntents.map((record) => [record.intentId, record]));
+  const workspaceById = new Map(state.workspaceGenerations.map((record) => [`${record.workspaceId}\u0000${record.generation}`, record]));
+  const runById = new Map(state.dispatcherRuns.map((record) => [record.runId, record]));
+  const memberById = new Map(state.dispatcherMembers.map((record) => [record.memberId, record]));
+  const grantById = new Map(state.grants.map((record) => [record.grantId, record]));
+  if (
+    profileById.size !== state.codexProfiles.length || profileByProject.size !== state.codexProfiles.length ||
+    operationById.size !== state.codexProductOperations.length || operationByKey.size !== state.codexProductOperations.length
+  ) throw persistenceFailure("CORRUPT_ROW", "Codex profile or product identity inventory is not unique");
+  for (const profile of state.codexProfiles) {
+    const project = state.projects.find((candidate) => candidate.projectId === profile.projectId);
+    if (
+      project === undefined || project.resourceRevision < profile.projectResourceRevision ||
+      project.configRevision < profile.projectConfigRevision || profile.updatedAt < profile.createdAt ||
+      profile.creatorOperationId.length === 0 || profile.actorId.length === 0 ||
+      project.rootKey !== profile.projectRootKey ||
+      profile.workspacePlatform !== profile.codexHomePlatform ||
+      profile.workspacePlatform !== profile.gitExecutablePlatform ||
+      profile.workspaceRootKey === profile.codexHomeKey || profile.workspaceRootKey === project.rootKey ||
+      profile.codexHomeKey === project.rootKey || codexProfileConfigurationSha256(profile) !== profile.constructorConfigSha256
+    ) throw persistenceFailure("CORRUPT_ROW", "Codex profile binding or constructor digest is inconsistent");
+  }
+  const profileOperationIds = new Set<string>();
+  for (const operation of state.codexProfileOperations) {
+    const key = `${operation.requestId}\u0000${operation.decisionId}\u0000${operation.auditId}\u0000${operation.confirmationId}`;
+    if (profileOperationIds.has(key)) throw persistenceFailure("CORRUPT_ROW", "Codex profile operation lineage is repeated");
+    profileOperationIds.add(key);
+    const grant = operation.grantId === null ? undefined : grantById.get(operation.grantId);
+    const profile = profileById.get(operation.profileId);
+    const project = state.projects.find((candidate) => candidate.projectId === operation.projectId);
+    const allowIsValid = operation.result === "allow" && operation.reason === "allowed" && grant !== undefined &&
+      grantRevisionWasUsableAt(grant, operation.actorId, operation.action, operation.createdAt, operation.grantRevision) &&
+      profile !== undefined && profile.projectId === operation.projectId &&
+      profile.actorId === operation.actorId && operation.confirmationId !== null &&
+      operation.configurationSha256 === profile.constructorConfigSha256 &&
+      operation.resultingProfileRevision !== null && profile.revision >= operation.resultingProfileRevision &&
+      operation.resultingStatus === (operation.action === "codex.profile.activate" ? "active" : "deactivated");
+    const denyIsValid = operation.result === "deny" && operation.reason !== "allowed" &&
+      operation.configurationSha256 === null && operation.resultingProfileRevision === null &&
+      operation.resultingStatus === null && (operation.reason === "confirmation_required"
+        ? operation.confirmationId === null
+        : operation.confirmationId !== null);
+    if (
+      project === undefined || project.resourceRevision < operation.expectedProjectResourceRevision ||
+      project.configRevision < operation.expectedProjectConfigRevision || (!allowIsValid && !denyIsValid)
+    ) throw persistenceFailure("CORRUPT_ROW", "Codex profile authorization lineage is inconsistent");
+  }
+  for (const profile of state.codexProfiles) {
+    const history = state.codexProfileOperations.filter((candidate) =>
+      candidate.profileId === profile.profileId && candidate.projectId === profile.projectId && candidate.result === "allow"
+    ).sort((left, right) => (left.resultingProfileRevision ?? 0) - (right.resultingProfileRevision ?? 0));
+    if (history.length !== profile.revision || history[0]?.operationId !== profile.creatorOperationId ||
+      history[0]?.createdAt !== profile.createdAt || history.at(-1)?.createdAt !== profile.updatedAt ||
+      history.at(-1)?.resultingStatus !== profile.status || history.some((item, index) => {
+        const revision = index + 1;
+        const expectedAction = revision % 2 === 1 ? "codex.profile.activate" : "codex.profile.deactivate";
+        const expectedStatus = expectedAction === "codex.profile.activate" ? "active" : "deactivated";
+        const previous = index === 0 ? undefined : history[index - 1];
+        return item.actorId !== profile.actorId || item.configurationSha256 !== profile.constructorConfigSha256 ||
+          item.expectedProfileRevision !== revision - 1 || item.resultingProfileRevision !== revision ||
+          item.action !== expectedAction || item.resultingStatus !== expectedStatus ||
+          (previous !== undefined && item.createdAt <= previous.createdAt);
+      })) {
+      throw persistenceFailure("CORRUPT_ROW", "Codex profile lifecycle history is incomplete or non-contiguous");
+    }
+  }
+  for (const operation of state.codexProductOperations) {
+    let decoded: unknown;
+    try { decoded = JSON.parse(operation.commandJson); } catch {
+      throw persistenceFailure("CORRUPT_ROW", "Codex product public command is not JSON");
+    }
+    if (compactCanonicalJson(decoded) !== operation.commandJson || sha256(operation.commandJson) !== operation.commandSha256 ||
+      expectedCodexProductCommandJson(operation) !== operation.commandJson) {
+      throw persistenceFailure("CORRUPT_ROW", "Codex product public command digest is inconsistent");
+    }
+    const profile = profileById.get(operation.profileId);
+    const project = state.projects.find((candidate) => candidate.projectId === operation.projectId);
+    const task = state.domain.tasks.find((candidate) => candidate.id === operation.taskId);
+    const run = runById.get(operation.runId);
+    const member = memberById.get(operation.memberId);
+    const execution = executionById.get(operation.executionId);
+    const intent = intentById.get(operation.intentId);
+    const authorizations = state.codexEffectAuthorizations
+      .filter((candidate) => candidate.productOperationId === operation.operationId)
+      .sort((left, right) => left.bindingRevision - right.bindingRevision);
+    const prepare = authorizations.find((candidate) => candidate.phase === "prepare");
+    const allowedAct = authorizations.filter((candidate) => candidate.phase === "act" && candidate.result === "allow");
+    const coreActBindings = intent === undefined ? [] : state.executionIntentAuthorizationBindings
+      .filter((candidate) => candidate.intentId === intent.intentId && candidate.phase === "act")
+      .sort((left, right) => left.bindingRevision - right.bindingRevision);
+    const exactActConsumers = allowedAct.length === coreActBindings.length && allowedAct.every((authorization, index) => {
+      const binding = coreActBindings[index];
+      return binding !== undefined && authorization.coreAuthorizationDecisionId === binding.decisionId &&
+        authorization.coreAuthorizationBindingRevision === binding.bindingRevision;
+    });
+    const stageOrder = [
+      "prepared", "member_bound", "workspace_ready", "intent_prepared",
+      "effect_possible", "effect_terminal", "workspace_refreshed",
+    ] as const;
+    const stageIndex = stageOrder.indexOf(operation.stage);
+    const workspace = operation.workspaceGeneration === null ? undefined
+      : workspaceById.get(`${operation.workspaceId}\u0000${operation.workspaceGeneration}`);
+    const workspaceReceipt = operation.workspaceGeneration === null ? undefined : state.workspaceReceipts.find((candidate) =>
+      candidate.workspaceId === operation.workspaceId &&
+      candidate.generation === operation.workspaceGeneration &&
+      readyWorkspaceRevisionForReceipt(state, candidate) === operation.workspaceRevision &&
+      candidate.headObjectId === operation.workspaceHeadObjectId
+    );
+    if (
+      profile === undefined || project === undefined || task === undefined || task.projectId !== operation.projectId ||
+      profile.projectId !== operation.projectId || profile.constructorConfigSha256 !== operation.constructorConfigSha256 ||
+      operation.updatedAt < operation.createdAt || prepare === undefined || prepare.phase !== "prepare" ||
+      authorizations.filter((candidate) => candidate.phase === "prepare").length !== 1 ||
+      prepare.bindingRevision !== 1 || prepare.result !== "allow" || stageIndex < 0 ||
+      (stageIndex >= 1 && (run === undefined || run.productOperationId !== operation.operationId ||
+        run.routeKind !== (operation.commandKind === "codex.dispatch-run" ? "codex-start" : "codex-continuation"))) ||
+      (stageIndex >= 1 && (member === undefined || member.productOperationId !== operation.operationId ||
+        member.ownerKind !== "codex-product-operation" || member.outcome !== "claimed" ||
+        member.executionId !== operation.executionId || execution === undefined)) ||
+      (stageIndex >= 2 && (workspace === undefined || workspace.runId !== operation.runId ||
+        workspace.memberId !== operation.memberId || workspace.executionId !== operation.executionId ||
+        operation.workspaceRevision === null || workspace.revision < operation.workspaceRevision || workspaceReceipt === undefined)) ||
+      (stageIndex >= 3 && (intent === undefined || intent.backendKind !== "codex-sdk" ||
+        intent.executionId !== operation.executionId || intent.workspaceId !== operation.workspaceId ||
+        intent.workspaceGeneration !== operation.workspaceGeneration)) ||
+      (stageIndex < 4 && (allowedAct.length !== 0 || coreActBindings.length !== 0)) ||
+      (stageIndex >= 4 && (allowedAct.length === 0 || !exactActConsumers ||
+        allowedAct.some((candidate) => candidate.intentId !== operation.intentId) || intent?.state === "pending" ||
+        (intent?.state === "executing" && intent.currentAuthorizationDecisionId !== allowedAct.at(-1)?.coreAuthorizationDecisionId))) ||
+      (stageIndex >= 5 && intent?.state !== "finalized") ||
+      (operation.stage === "workspace_refreshed" && workspace?.revision !== operation.workspaceRevision) ||
+      !codexTerminalResultIsValid(state, operation) ||
+      (operation.lifecycle === "finalized" && (operation.stage !== "workspace_refreshed" || intent?.state !== "finalized" ||
+        !state.dispatcherRunSummaries.some((summary) => summary.runId === operation.runId))) ||
+      (operation.lifecycle === "refused" && (operation.stage !== "prepared" || execution !== undefined ||
+        (member !== undefined && (member.lifecycle !== "terminal" || member.outcome === "claimed")))) ||
+      (operation.lifecycle === "recovery_required" && state.dispatcherRunSummaries.some((summary) => summary.runId === operation.runId))
+    ) throw persistenceFailure("CORRUPT_ROW", "Codex product operation lineage is inconsistent");
+  }
+  for (const authorization of state.codexEffectAuthorizations) {
+    const operation = operationById.get(authorization.productOperationId);
+    const profile = profileById.get(authorization.profileId);
+    const grant = authorization.grantId === null ? undefined : grantById.get(authorization.grantId);
+    const profileRevision = state.codexProfileOperations.find((candidate) =>
+      candidate.profileId === authorization.profileId && candidate.result === "allow" &&
+      candidate.resultingProfileRevision === authorization.profileRevision
+    );
+    const coreBinding = authorization.coreAuthorizationDecisionId === null ? undefined
+      : state.executionIntentAuthorizationBindings.find((candidate) =>
+        candidate.intentId === authorization.intentId &&
+        candidate.decisionId === authorization.coreAuthorizationDecisionId &&
+        candidate.bindingRevision === authorization.coreAuthorizationBindingRevision && candidate.phase === "act"
+      );
+    const sameOperation = operation !== undefined && authorization.actorId === operation.actorId &&
+      authorization.profileId === operation.profileId && authorization.constructorConfigSha256 === operation.constructorConfigSha256 &&
+      authorization.runId === operation.runId && authorization.memberId === operation.memberId &&
+      authorization.executionId === operation.executionId && authorization.workspaceId === operation.workspaceId;
+    const allowIsValid = authorization.result === "allow" && authorization.reason === "allowed" && grant !== undefined &&
+      grantRevisionWasUsableAt(grant, authorization.actorId, "codex.execution.invoke", authorization.createdAt, authorization.grantRevision);
+    const denyIsValid = authorization.result === "deny" && authorization.reason !== "allowed";
+    const confirmationIsValid = authorization.reason === "confirmation_required"
+      ? authorization.confirmationId === null
+      : authorization.confirmationId !== null;
+    if (
+      !sameOperation || profile === undefined || profile.constructorConfigSha256 !== authorization.constructorConfigSha256 ||
+      authorization.profileRevision > profile.revision || profileRevision?.resultingStatus !== "active" ||
+      !confirmationIsValid || !codexRequiredGrantSetIsValid(state, operation!, authorization) ||
+      (!allowIsValid && !denyIsValid) ||
+      (authorization.phase === "prepare" && (authorization.bindingRevision !== 1 || authorization.intentId !== null ||
+        authorization.profileRevision !== operation?.profileRevision || authorization.workspaceGeneration !== null ||
+        authorization.workspaceRevision !== null || authorization.coreAuthorizationDecisionId !== null ||
+        authorization.coreAuthorizationBindingRevision !== null)) ||
+      (authorization.phase === "act" && (authorization.bindingRevision <= 1 || authorization.intentId !== operation?.intentId ||
+        authorization.workspaceGeneration !== operation?.workspaceGeneration ||
+        authorization.workspaceRevision !== operation?.workspaceRevision ||
+        (authorization.result === "allow" && coreBinding === undefined) ||
+        (authorization.result === "deny" && coreBinding !== undefined) ||
+        ((authorization.coreAuthorizationDecisionId === null) !==
+          (authorization.coreAuthorizationBindingRevision === null))))
+    ) throw persistenceFailure("CORRUPT_ROW", "Codex effect authorization lineage is inconsistent");
+  }
+  for (const operation of state.codexProductOperations) {
+    const revisions = state.codexEffectAuthorizations.filter((item) => item.productOperationId === operation.operationId)
+      .map((item) => item.bindingRevision).sort((left, right) => left - right);
+    if (revisions.some((revision, index) => revision !== index + 1)) {
+      throw persistenceFailure("CORRUPT_ROW", "Codex effect authorization revisions are not contiguous");
+    }
   }
 }
 
@@ -2748,6 +3247,10 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
   const codexBackendOperations = readCodexBackendOperations(database);
   const completionDecisions = readCompletionDecisions(database);
   const manualCompletionDecisions = readManualCompletionDecisions(database);
+  const codexProfiles = readCodexProfiles(database);
+  const codexProfileOperations = readCodexProfileOperations(database);
+  const codexProductOperations = readCodexProductOperations(database);
+  const codexEffectAuthorizations = readCodexEffectAuthorizations(database);
   const dispatcherTriggerRequests = readDispatcherTriggerRequests(database);
   const dispatcherAuthorizationDecisions = readDispatcherAuthorizationDecisions(database);
   const dispatcherRuns = readDispatcherRuns(database);
@@ -3281,7 +3784,8 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
         )) ||
         (attempt.operationKind === "takeover" && (
           index === 0 ||
-          attempt.postTaskRevision !== attempt.preTaskRevision ||
+          (attempt.postTaskRevision < attempt.preTaskRevision ||
+            attempt.postTaskRevision > attempt.preTaskRevision + 1) ||
           attempt.supersedesExecutionId !== previous?.executionId ||
           attempt.predecessorExecutionRevision !== (previous?.revision ?? 0) - 1 ||
           attempt.predecessorLeaseRevision !== previous?.leaseRevision ||
@@ -3827,6 +4331,7 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     const terminalSummary = dispatcherRunSummaries.find((summary) => summary.runId === run.runId);
     if (
       run.requestedLeaseSeconds < 30 || run.requestedLeaseSeconds > 3600 ||
+      ((run.routeKind === "manual" || run.routeKind === "scheduled") !== (run.productOperationId === null)) ||
       run.leaseExpiresAt !== expectedExpiry || run.updatedAt < run.createdAt || run.heartbeatAt > run.updatedAt ||
       (run.status === "starting" && (reconciliation !== undefined || membership !== undefined || terminalSummary !== undefined)) ||
       (run.status === "reconciling" && (membership !== undefined || terminalSummary !== undefined)) ||
@@ -3864,17 +4369,24 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
       const project = projects.find((candidate) => candidate.projectId === member.projectId);
       const execution = member.executionId === null ? undefined : executionById.get(member.executionId);
       const intent = member.intentId === null ? undefined : intentById.get(member.intentId);
+      const productOperation = member.productOperationId === null ? undefined
+        : codexProductOperations.find((candidate) => candidate.operationId === member.productOperationId);
+      const claimedManual = member.ownerKind === "execution-start-intent" && member.productOperationId === null &&
+        execution !== undefined && intent !== undefined && intent.executionId === execution.executionId &&
+        execution.taskId === member.taskId && intent.taskId === member.taskId && intent.operationKind === "start";
+      const claimedCodex = member.ownerKind === "codex-product-operation" && member.intentId === null &&
+        productOperation !== undefined && execution !== undefined && productOperation.executionId === execution.executionId &&
+        productOperation.memberId === member.memberId && productOperation.runId === member.runId &&
+        execution.taskId === member.taskId && productOperation.taskId === member.taskId;
       if (
         task === undefined || project === undefined || task.projectId !== member.projectId ||
         task.revision < member.taskRevision || project.resourceRevision < member.projectResourceRevision ||
         project.configRevision < member.projectConfigRevision || member.updatedAt < member.createdAt ||
         (member.lifecycle === "pending" && (member.outcome !== null || member.revision !== 1)) ||
         (member.lifecycle === "terminal" && (member.outcome === null || member.revision !== 2)) ||
-        (member.outcome === "claimed" && (
-          execution === undefined || intent === undefined || intent.executionId !== execution.executionId ||
-          execution.taskId !== member.taskId || intent.taskId !== member.taskId || intent.operationKind !== "start"
-        )) ||
-        (member.outcome !== "claimed" && (member.executionId !== null || member.intentId !== null))
+        (member.outcome === "claimed" && !claimedManual && !claimedCodex) ||
+        (member.outcome !== "claimed" && (member.executionId !== null || member.intentId !== null ||
+          member.productOperationId !== null || member.ownerKind !== null))
       ) throw persistenceFailure("CORRUPT_ROW", "Dispatcher member binding is inconsistent");
     }
   }
@@ -3926,6 +4438,7 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
       member === undefined || run === undefined || project === undefined || request.runId !== member.runId ||
       member.lifecycle !== "terminal" || member.outcome !== "authorization_denied" ||
       member.code !== "execution_start_denied" || member.executionId !== null || member.intentId !== null ||
+      member.ownerKind !== null ||
       request.actorId !== run.actorId || request.createdAt > member.updatedAt ||
       request.action !== "execution.start" || request.targetRevision !== 1 || request.result !== "deny" ||
       executionById.has(request.targetExecutionId) ||
@@ -3965,7 +4478,14 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     if (
       run === undefined || membership === undefined || summary.membershipRevision !== membership.membershipRevision ||
       summary.expectedMemberCount !== members.length || members.some((member) => member.lifecycle !== "terminal") ||
-      members.some((member) => member.outcome === "claimed" && intentById.get(member.intentId ?? "")?.state !== "finalized") ||
+      members.some((member) => member.outcome === "claimed" && (
+        member.ownerKind === "execution-start-intent"
+          ? intentById.get(member.intentId ?? "")?.state !== "finalized"
+          : !codexProductOperations.some((operation) =>
+            operation.operationId === member.productOperationId && operation.stage === "workspace_refreshed" &&
+            (operation.lifecycle === "active" || operation.lifecycle === "finalized")
+          )
+      )) ||
       summary.claimedCount !== (counts.get("claimed") ?? 0) ||
       summary.alreadyClaimedCount !== (counts.get("already_claimed") ?? 0) ||
       summary.ineligibleCount !== (counts.get("ineligible_at_cas") ?? 0) ||
@@ -3987,6 +4507,7 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
     executionReceipts, executionFinalizations, executionTerminalStates,
     manualTurns, manualBackendOperations, codexTurns, codexBackendOperations,
     completionDecisions, manualCompletionDecisions,
+    codexProfiles, codexProfileOperations, codexProductOperations, codexEffectAuthorizations,
     dispatcherTriggerRequests, dispatcherAuthorizationDecisions, dispatcherRuns, dispatcherAudit,
     dispatcherReconciliationItems, dispatcherReconciliationSummaries,
     dispatcherMemberships, dispatcherMembers,
@@ -4015,6 +4536,7 @@ export function readApplicationStateUntransactional(database: SqliteDatabase): A
   validateWorkspaceState(stateWithoutLifecycle);
   validateCleanupAttestationState(stateWithoutLifecycle);
   validateSchedulerState(stateWithoutLifecycle, grantRelations);
+  validateCodexProductState(stateWithoutLifecycle);
   for (const authorization of lifecycle) {
     const request = requestById.get(authorization.requestId);
     const decision = decisions.find((candidate) => candidate.decisionId === authorization.decisionId);

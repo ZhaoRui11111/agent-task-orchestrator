@@ -3,17 +3,17 @@
 ## Status and authority
 
 This document is the normative owner of the implemented local runtime
-authorization model through the sole current `ato.api/v1` Manual product facade,
-reconcile-first Manual dispatcher, workspace foundation, and injected Phase 3
+authorization model through the sole current `ato.api/v1` Manual and authorized
+Codex product facade, reconcile-first dispatcher, workspace foundation, and injected Phase 3
 library. The implementation is deliberately limited to nineteen base local
 application/lifecycle actions, four database-local execution claim/lease
 actions, six Manual-loop actions, one dispatcher action, five workspace actions,
 and twelve completion/integration actions plus three scheduler lifecycle
-actions across contiguous vocabulary versions 1 through 7. It is not an operating-system
+actions plus five Codex actions across contiguous vocabulary versions 1 through
+8. It is not an operating-system
 account system, team identity service, RBAC product, cloud identity provider,
-or authorization for development and external actions. The package-private
-Codex SDK implementation does not add an action or reinterpret any existing
-grant.
+or authorization for development and external actions. Codex never
+reinterprets an existing Manual, dispatcher, workspace, or scheduler grant.
 
 Runtime grants never authorize repository development, network or secret
 access, pull requests, release, deployment, arbitrary filesystem access, or any action outside the finite
@@ -25,9 +25,8 @@ below; they grant no network, Project filesystem, Codex, Git, workspace,
 scheduler or completion-gate authority. In particular, the existence of the
 internal `ato.execution/v2` Codex branch creates no authority to select its
 destination, resolve a credential, disclose Task input, or perform a Project/
-workspace effect. No supported package-root or product factory can construct
-that branch; operational composition requires a later explicit authorization
-result. `dispatch.run` authorizes only one
+workspace effect. Operational composition additionally requires the closed
+Codex profile and invocation decisions below. `dispatch.run` authorizes only one
 bounded dispatcher trigger/run ownership and continuation; it does not imply
 execution claim/start/takeover, adapter, Project, filesystem, network, or
 completion authority. The `runtime.backup` and `runtime.restore`
@@ -61,6 +60,18 @@ derives a trusted scheduler actor and independently requires current
 `dispatch.run` authority before creating a scheduled tuple or dispatcher run.
 The default product runtime and CLI expose generic grant management for these
 labels but no scheduler operation route.
+
+The five `codex.*` actions authorize only the closed Project-profile and
+targeted execution paths. Profile activation/deactivation and execution invoke
+are high risk and require fresh named confirmation. A profile binds the fixed
+`openai-codex-api` product destination, the opaque
+`process-env:CODEX_API_KEY` reference, and exact trusted filesystem/executable
+identities; it is configuration, not effect authority. Every start/resume/retry
+requires `codex.execution.invoke` plus the exact current dispatcher, execution,
+claim/takeover, and workspace grants for that operation, a fresh confirmation,
+and one persisted Act consumed by one pending intent before credential value or
+Task input access. Cancellation separately requires
+`codex.execution.cancel`. Manual and scheduled routes cannot select a profile.
 
 Project content, Task text, repository files, prompts, tool output, Agent text,
 Domain state, persisted audit, a prior authorization decision, and an approved
@@ -139,6 +150,19 @@ Inspect obtains its own fresh read decision and cannot create a mutation intent.
 trusted identity/time and current `dispatch.run` decision without accepting an
 actor or authorization from trigger content. No trusted callback or injected
 backend runs inside a writer transaction.
+
+The Codex product owner uses `CodexProductIngress` for the same trusted actor,
+principal, runtime-root identity, time, fresh bounded identities, dispatcher/
+workspace trusted facts, and named profile/invocation/cancellation
+confirmations. It parses the complete public command first. Profile inspection
+uses a fresh `codex.profile.inspect` read decision. Activation/deactivation
+persist one immutable request/decision/audit/operation unit. Each execution
+first persists a Prepare decision; after the exact pending core intent exists,
+the point-of-use transaction obtains a distinct fresh Act, recomputes every
+required grant conjunct, binds that Act as the intent's sole consumer, and
+advances it to `executing`. A denial is immutable history and leaves the intent
+pending. Credential resolution, Task disclosure, SDK work, and every adapter or
+workspace call occur outside writer transactions.
 
 The combined decoder reproduces every scheduler authorization decision through
 the sole current authorization evaluator. Because the schema records timestamps
@@ -226,11 +250,21 @@ plus the three scheduler lifecycle actions:
 - `scheduler.inspect`
 - `scheduler.remove`
 
+plus the five Codex profile/effect actions:
+
+- `codex.profile.activate`
+- `codex.profile.inspect`
+- `codex.profile.deactivate`
+- `codex.execution.invoke`
+- `codex.execution.cancel`
+
 There is no wildcard and no prefix expansion. Unknown actions and unimplemented
 commands are invalid input; they are not mapped to a similar action. These
-actions do not imply a concrete scheduler adapter, real scheduled task, Codex,
-arbitrary Git, filesystem or network, secret, arbitrary diagnostic, MCP, release, or
-deployment capability. `execution.completion.accept` accepts only exact current
+actions do not imply a concrete scheduler adapter, real scheduled task,
+arbitrary Git/filesystem/network access, arbitrary secret source, diagnostic,
+MCP, release, or deployment capability. The five Codex labels grant only the
+closed product route and do not attest administrator-managed effective
+configuration or platform support. `execution.completion.accept` accepts only exact current
 verified Manual-turn evidence; it is distinct from Phase 3
 `completion.accept` and grants no CompletionBackend or gate authority.
 `authorization.capability.renew` and `authorization.capability.upgrade` are
@@ -287,8 +321,9 @@ twenty-nine Manual-capable actions, version 3 to 4 appends one origin grant for
 each of the thirty dispatcher-capable actions, version 4 to 5 appends one
 origin grant for each of the thirty-five workspace-capable actions, version
 5 to 6 appends one origin grant for each of the forty-seven Phase 3-capable
-actions, and version 6 to 7 appends one origin grant for each of all fifty
-current actions. A runtime cannot skip
+actions, version 6 to 7 appends one origin grant for each of the fifty
+scheduler-capable actions, and version 7 to 8 appends one origin grant for each
+of all fifty-five current actions. A runtime cannot skip
 any intermediate version or combine two upgrades in one ceremony.
 The epoch, exact grant set, request/allow-decision/audit unit, and terminal
 readback commit together. Migration, bootstrap, an earlier decision, Task
@@ -304,7 +339,7 @@ the exact vocabulary/version digest, a request/decision/audit unit, and one new
 finite origin grant for every action in the already-current vocabulary:
 nineteen for vocabulary version 1, twenty-three for version 2, twenty-nine for
 version 3, thirty for version 4, thirty-five for version 5, forty-seven for
-version 6, or fifty for version 7. Every epoch and current origin grant
+version 6, fifty for version 7, or fifty-five for version 8. Every epoch and current origin grant
 uses the single `authorization_capability_epochs` and `authorization_grants`
 relations with direct `capability_epoch_id` provenance. Renewal never changes a vocabulary version. Previous epochs and
 grants remain immutable history.
@@ -377,6 +412,9 @@ ingress after a matching grant is found:
 - `workspace.cleanup`
 - `scheduler.register`
 - `scheduler.remove`
+- `codex.profile.activate`
+- `codex.profile.deactivate`
+- `codex.execution.invoke`
 
 Capability renewal and each capability upgrade also require a fresh
 high-risk confirmation even though they are deliberately not grantable actions.
@@ -599,7 +637,7 @@ data-loss acknowledgement before requesting authorization. An accepted
 decision atomically appends one immutable lifecycle authorization bound to the
 exact operation, proposed backup generation ID, actor, runtime-root key,
 matching grant and revision, request/decision/audit IDs and counts, application
-state digest version 3 from the sole complete non-lifecycle
+state digest version 4 from the sole complete non-lifecycle
 `applicationStateProjection`, and short finite validity interval. Terminal output reads back the
 exact newly allocated lifecycle authorization ID; operation/generation matching
 is never used as a non-unique substitute, including on a retry.
@@ -629,15 +667,17 @@ Application requests, bootstrap, local identity, capability epochs, lifecycle
 authorizations, execution attempts, operation evidence, generic/Manual/
 policy-gated completion decisions, dispatcher trigger/decision/audit/
 reconciliation/membership/summary evidence, scheduler configuration/
-registration/operation/delivery/tuple evidence, workspace generations/
+registration/operation/delivery/tuple evidence, Codex profile/product/effect-
+authorization evidence, workspace generations/
 authorization/intent/observation/verified-receipt/finalization/event evidence,
 ProjectPolicy receipts, completion-gate evidence, integration reservations/
 effects/events, cleanup attestations, authorization decisions, and audit rows
 are append-only apart from
 the narrowly constrained lease/attempt, intent-state, and Manual-turn CAS
-transitions. Package-private Codex turn/terminal rows are subject to the same
-immutable intent/authorization and narrow revision-CAS rules, but their presence
-is evidence rather than a new capability. Grant rows are
+transitions. Package-private Codex turn/terminal rows and product-composed
+profile/operation/Act rows are subject to the same immutable authorization and
+narrow revision-CAS rules; their presence is evidence rather than reusable
+authority. Grant rows are
 insert-only except for the single CAS revocation transition. ProjectRegistry
 rows cannot be deleted. SQLite constraints, foreign keys, triggers, combined
 typed decoding, and terminal readback enforce these shapes.
@@ -662,14 +702,18 @@ confirmed version-6 step and the twelve completion/integration actions above.
 The scheduler stage adds one separately confirmed version-7 step and the three
 exact lifecycle actions above; register/remove are high risk, while inbound
 delivery still consumes `dispatch.run`.
+The Codex stage adds one separately confirmed version-8 step and the five exact
+actions above. Profile activation/deactivation and invoke are high risk; an
+invoke decision is usable only as the one-consumer Act for its exact pending
+intent and required grant conjunction.
 The listed high-risk actions each require their own fresh confirmation. The
-current product API continues to expose only the existing Manual/dispatcher
-decisions through `ato.api/v1`; workspace, Phase 3, and scheduler operation
-services remain package-library-only. The CLI upgrade command may reach
-vocabulary version 7 and manage all fifty finite grants, but adds no Phase 3 or
-scheduler operation command, error, or
-alternate authorization owner. This implementation does not provide login,
-credentials, team accounts, RBAC, cloud identity, concrete SchedulerBackend or
-real scheduled task, MCP, operational/product-wired Codex or scheduler, general network effects,
-release, deployment, or a
-platform-support claim.
+current product API exposes the existing Manual/dispatcher decisions and the
+closed Codex profile/targeted-execution subset through `ato.api/v1`; Phase 3
+and scheduler operation services remain package-library-only. The CLI upgrade
+command may reach vocabulary version 8 and manage all fifty-five finite grants,
+but adds no Phase 3 or scheduler operation command or alternate authorization
+owner. This implementation does not provide login, a general credential
+broker, team accounts, RBAC, cloud identity, concrete SchedulerBackend or real
+scheduled task, MCP, product-wired scheduler, general network effects, release,
+deployment, administrator-managed effective-policy attestation, real Codex
+account E2E, or a platform-support claim.

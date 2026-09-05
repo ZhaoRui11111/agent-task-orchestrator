@@ -71,8 +71,11 @@ Windows adapter tests establish local development evidence for canonical path,
 Git registration, HEAD, inventory, ownership, and path safety; they do not
 establish a supported platform or any cleanup claim.
 
-A package-private Codex execution backend may consume one such current `ready`
-generation only through the exact `ato.execution/v2` owned-workspace tuple. It
+A product-selected package-private Codex execution backend consumes one such
+current `ready` generation only through the exact `ato.execution/v2` owned-
+workspace tuple. The targeted Codex product route first binds one dispatcher
+member and execution, then invokes the workspace owner to reserve/create that
+exact generation before creating the execution intent. It
 requires the configured Project `rootKey` to match ProjectRegistry, reopens the
 trusted workspace/root identities, and uses the same `windows-git-local`
 physical inspection owner to verify the complete ownership manifest,
@@ -80,17 +83,18 @@ authoritative worktree registration, repository identity, ownership receipt,
 detached HEAD, and clean inventory before using the canonical generation
 directory as the SDK working directory. It compares the inspected repository
 identity with the current durable ready receipt on both sides of the check.
-This consumer neither creates nor cleans a workspace, cannot
-select a caller path, and does not turn Codex turn success into Task completion.
-It is absent from every supported package-root/product/dispatcher/API/CLI
-factory; current vocabulary-version-7 grants supply no Codex destination,
-credential, disclosure, or workspace-effect authority.
+The backend itself neither creates nor cleans a workspace, cannot select a
+caller path, and does not turn Codex turn success into Task completion. The
+Codex product owner requires current vocabulary-version-8 profile/invoke
+authority in addition to the existing dispatcher/execution/workspace grants;
+resume/retry allocates a new successor execution and generation from an
+authoritative clean predecessor HEAD while retaining the predecessor.
 
 ## Run and workspace topology
 
 The durable identity/generation rules and the Windows adapter path layout in
-this list are current library behavior. They are not evidence that the product
-constructs a workspace or that another host is supported.
+this list are current product/library behavior. Their disposable-fixture
+validation is not evidence that another host is supported.
 
 - A trusted configured `workspace_root` contains the exact adapter-owned path
   `ato-workspaces/w-<lowercase SHA-256(workspace_id)>-g<generation>`.

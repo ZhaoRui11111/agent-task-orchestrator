@@ -71,7 +71,55 @@ export type {
   ReliableExecutionTestHooks,
   ReliableExecutionView,
 } from "./execution-loop.ts";
-export * from "./dispatcher-application.ts";
+export {
+  CODEX_PRODUCT_ERROR_CODES,
+  createCodexProductApplication,
+} from "./codex-product-application.ts";
+export type {
+  CodexDispatchRunCommand,
+  CodexDispatchView,
+  CodexProductApplicationService,
+  CodexProductConfirmationRequest,
+  CodexProductError,
+  CodexProductErrorCode,
+  CodexProductFailure,
+  CodexProductIngress,
+  CodexProductResult,
+  CodexProductSuccess,
+  CodexProfileActivateCommand,
+  CodexProfileDeactivateCommand,
+  CodexProfileInspectCommand,
+  CodexProfileView,
+} from "./codex-product-application.ts";
+export {
+  DISPATCHER_ERROR_CODES,
+  createDispatcherApplicationService,
+  createDispatcherApplicationServiceWithHooks,
+} from "./dispatcher-application.ts";
+export type {
+  DispatcherApplicationOptions,
+  DispatcherApplicationService,
+  DispatcherApplicationTestHooks,
+  DispatcherBeginReconciliationCommand,
+  DispatcherClaimMemberCommand,
+  DispatcherCommitReconciliationCommand,
+  DispatcherError,
+  DispatcherErrorCode,
+  DispatcherFailure,
+  DispatcherFinalizeCommand,
+  DispatcherHeartbeatCommand,
+  DispatcherIngress,
+  DispatcherMemberView,
+  DispatcherReconciliationResolution,
+  DispatcherReconciliationResource,
+  DispatcherResult,
+  DispatcherRunCommand,
+  DispatcherRunView,
+  DispatcherSealCandidatesCommand,
+  DispatcherStartCommand,
+  DispatcherSuccess,
+  DispatcherTakeoverCommand,
+} from "./dispatcher-application.ts";
 export * from "./dispatcher.ts";
 export {
   SCHEDULER_CONTRACT_ID,

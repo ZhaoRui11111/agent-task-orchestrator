@@ -38,7 +38,13 @@ export interface LocalIngressOptions {
   readonly nextId?: () => string;
 }
 
-export type LocalProductConfirmationAction = "manual.turn.report" | "execution.completion.accept";
+export type LocalProductConfirmationAction =
+  | "manual.turn.report"
+  | "execution.completion.accept"
+  | "codex.profile.activate"
+  | "codex.profile.deactivate"
+  | "codex.execution.invoke"
+  | "codex.execution.cancel";
 
 export interface LocalProductIngressOptions extends LocalIngressOptions {
   readonly expectedProductAction: LocalProductConfirmationAction | null;

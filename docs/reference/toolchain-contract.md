@@ -107,8 +107,8 @@ first reproduce the frozen dependency install in an empty disposable project
 and generation-local store, then pack the declared distribution, install it
 into a disposable consumer without registry access, typecheck the public
   declarations without undeclared Node type dependencies, import the library
-  entry, exercise trusted bootstrap plus Project/Task commands and six
-  sequential explicit capability upgrades through vocabulary version 7, an atomic
+  entry, exercise trusted bootstrap plus Project/Task commands and seven
+  sequential explicit capability upgrades through vocabulary version 8, an atomic
   execution claim, the local Manual start/inspect/outcome/finalization/
   completion library loop after restart, the typed product facade's Manual
   dispatch-to-completion restart path, and a fresh persistence backup; verify
@@ -116,16 +116,18 @@ into a disposable consumer without registry access, typecheck the public
   scheduler and Phase 3 port kits, typed injected scheduler and Phase 3
   application/product-library declarations, and the
   local ProjectPolicy, completion, integration, and Windows Git workspace
-  adapter factories, constants, and narrow configuration types without wiring
-  or invoking those adapters through the default product; and
+  adapter factories, constants, and narrow configuration types; verify the
+  exported Codex product factory/types while keeping constructor, credential,
+  backend, targeted-dispatcher, and test seams private; and
   invoke the console entry. The console portion compares source, built, and
   packed-installed CLI behavior for omitted and explicit current `ato.api/v1`
   JSON/human responses, retired-major refusal, invalid input, public exits, and
   absence of read-only doctor side effects. Packed declarations must contain one
   product API major, one public error table/type, the current schema-1
   backup/restore declarations, and no synthetic scaffold/capability-status
-  registry. The exact packed inventory is 240 files, including the compiled
-  package-private Codex modules but exposing them through no package export.
+  registry. The exact packed inventory is 252 files, including the compiled
+  Codex modules while exposing only the product application factory and bounded
+  public types through the package root.
 
 The package-root library export is the explicit operational facade. It exposes
 the pure TypeScript Domain Core including its canonical cancellation-reason predicate,
@@ -135,11 +137,12 @@ kit, production local Manual backend/control, public Manual reliable-loop
 surface, reconcile-first dispatcher and exact scheduler port/application, the exact ProjectPolicy/completion/
 integration/workspace port kits, typed durable workspace and Phase 3 application
 services, the explicitly injected Phase 3 product-library facade, local
-ProjectPolicy/completion/Git-integration adapters, the product-unwired Windows
-Git workspace adapter, typed local Manual product facade, current
+ProjectPolicy/completion/Git-integration adapters, the Codex-product-selected
+Windows Git workspace adapter, typed local Manual product facade, the bounded
+Codex product application factory/types, current
 schema-version-1 persistence foundation, local lifecycle surfaces, and
-versioned product CLI API; it exports no Codex factory, configuration, driver,
-or injected Codex service and does not maintain a parallel hand-synchronized
+versioned product CLI API; it exports no Codex backend/configuration/credential/
+driver/targeted-dispatcher/test seam and does not maintain a parallel hand-synchronized
 capability-status registry. The packed inventory includes the
 single immutable SQL file under `migrations/`. The source and compiled migration
 registry consume either a uniform LF or CRLF transport of that file and
@@ -147,11 +150,11 @@ reconstruct the same frozen canonical bytes before checksum
 verification and execution. `.gitattributes` declares an explicit historical
 checkout EOL for the shipped baseline; a future migration requires its own
 reviewed registry identity and per-file attribute rather than inheriting a
-wildcard. The `ato` console is the local Phase 1 and explicit-Manual Phase 2
-product CLI defined by the
+wildcard. The `ato` console is the local Phase 1, explicit-Manual Phase 2, and
+authorized-Codex-subset product CLI defined by the
 [CLI/API contract](cli-contract.md).
 
-Production source is exactly these 60 files:
+Production source is exactly these 63 files:
 
 - `src/index.ts`, `src/domain.ts`, `src/cli.ts`, `src/cli-api.ts`,
   `src/cli-api-model.ts`, `src/cli-api-parser.ts`,
@@ -162,7 +165,8 @@ Production source is exactly these 60 files:
   `src/application-domain.ts`, `src/application-service.ts`,
   `src/execution-application.ts`, `src/execution-port.ts`,
   `src/execution-loop.ts`, `src/manual-execution-backend.ts`,
-  `src/codex-execution-backend.ts`, `src/codex-sdk-worker.ts`,
+  `src/codex-execution-backend.ts`, `src/codex-product-application.ts`,
+  `src/codex-product-configuration.ts`, `src/codex-sdk-worker.ts`,
   `src/dispatcher-application.ts`, `src/dispatcher.ts`,
   `src/scheduler-application.ts`, `src/scheduler-port.ts`,
   `src/project-policy-port.ts`, `src/local-project-policy.ts`,
@@ -184,6 +188,7 @@ Production source is exactly these 60 files:
   `src/persistence/index.ts`, `src/persistence/local-ingress.ts`,
   `src/persistence/manual-backend-repository.ts`,
   `src/persistence/codex-backend-repository.ts`,
+  `src/persistence/codex-product-digest.ts`,
   `src/persistence/codex-receipt-digest.ts`,
   `src/persistence/scheduler-receipt-digest.ts`,
   `src/persistence/migrations.ts`, `src/persistence/repository.ts`,
@@ -204,13 +209,15 @@ backend imports exactly `node:child_process`, `node:crypto`, `node:fs`, and
 `node:path`; and the local Git integration backend imports exactly those same
 four built-ins. They use no shell, package dependency, or wildcard built-in
 exception. The package-private Codex backend imports exactly `node:crypto`,
-`node:fs`, and `node:path`; the SDK worker
+`node:fs`, and `node:path`; profile configuration imports exactly `node:fs` and
+`node:path`, while the product application and product digest import no Node
+built-in. The SDK worker
 is the sole production importer of `@openai/codex-sdk`, and the Codex journal
 imports no Node built-in. No other source may mention a Codex/OpenAI boundary
 without entering the exact audited allowlist. The scheduler port imports no
 Node built-in and the application accepts only an injected backend. The package
-must not acquire a concrete scheduler adapter, MCP, product-wired Codex or
-scheduler operation route, credential broker, daemon, general
+must not acquire a concrete scheduler adapter, MCP, product-wired scheduler
+operation route, generic credential broker, daemon, general
 remote service effect, or default product/CLI Phase 3 composition as part of
 this boundary. The four
 Phase 3 adapters are explicitly injected library surfaces; their effects are
@@ -226,13 +233,13 @@ The following package scripts are the public local entry points:
 | `pnpm lint` | Repository hygiene, frozen configuration, source-boundary, and diff checks |
 | `pnpm typecheck` | Strict TypeScript checking without output |
 | `pnpm build` | Produce the ESM package and declarations |
-| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop/package-private-Codex/dispatcher/scheduler/workspace/Phase-3/product-facade atomicity and security, exact port/adapter contracts, scheduler duplicate/restart/corruption, Codex SDK-driver/workspace/failpoint restart, gate/completion/integration/cleanup crash/restart recovery, persistence, versioned CLI, doctor, and real local disposable-fixture contracts |
-| `pnpm test:persistence` | Run the targeted current schema-version-1 baseline, repository/decoder, Manual and Codex journal/evidence, dispatcher/scheduler/workspace/Phase-3 durable records, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
+| `pnpm test` | Run the Node test suite through the success-only artifact-baseline gate, including Domain, ProjectRegistry, authorization, application/claim/Manual-loop/Codex-product-backend/dispatcher/scheduler/workspace/Phase-3/product-facade atomicity and security, exact port/adapter contracts, scheduler duplicate/restart/corruption, Codex profile/T1-T6/C19/successor/SDK-driver/workspace/failpoint restart, gate/completion/integration/cleanup crash/restart recovery, persistence, versioned CLI, doctor, and real local disposable-fixture contracts |
+| `pnpm test:persistence` | Run the targeted current schema-version-1 baseline, repository/decoder, Manual and Codex profile/product/journal evidence, dispatcher/scheduler/workspace/Phase-3 durable records, concurrency, path-security, backup, restore, and doctor suite through the same artifact-baseline gate |
 | `pnpm docs:check` | Resolve exact-case repository-relative Markdown links, validate same-file and cross-file heading fragments, and reject forbidden evidence artifacts |
 | `pnpm dependency:check` | Verify the frozen dependency and lockfile shape without using the network |
 | `pnpm package:smoke` | Pack and consume the declared package boundary offline |
 | `pnpm spike:sqlite` | Run the local Windows SQLite feasibility procedure |
-| `pnpm spike:codex` | Check exact official/pinned-package Codex capability evidence, package-private isolation, `externalE2E=not_run`, and `supportClaim=false` |
+| `pnpm spike:codex` | Check exact official/pinned-package Codex capability evidence, bounded product composition, private implementation seams, `administratorPolicyAttestation=not_run`, `externalE2E=not_run`, and `supportClaim=false` |
 | `pnpm spike:scheduler` | Check the exact library-only scheduler port/application/ingress and package/default-product boundary, including `adapterImplemented=false`, `externalE2E=not_run`, and `supportClaim=false` |
 | `pnpm verify:offline` | Run every local gate above that does not require a registry vulnerability query |
 | `pnpm dependency:audit` | Query the configured package registry vulnerability service for production dependencies |

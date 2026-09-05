@@ -24,7 +24,7 @@ import {
   expectPersistenceError,
 } from "./persistence-test-helpers.mjs";
 
-const BASELINE_CHECKSUM = "D7CDF784C090773CC846D484A8208A0D78FB8F640D8BA37A5827122AB70A4C3A";
+const BASELINE_CHECKSUM = "6F336B76BFA2A526A69D66B8A8FF554FE45E3415F4852A259EB4345455935E67";
 
 const CURRENT_TABLES = Object.freeze([
   "application_audit",
@@ -37,6 +37,10 @@ const CURRENT_TABLES = Object.freeze([
   "authorization_local_identity",
   "codex_backend_operations",
   "codex_backend_turns",
+  "codex_effect_authorizations",
+  "codex_product_operations",
+  "codex_profile_operations",
+  "codex_profiles",
   "completion_decisions",
   "completion_gate_authorization_decisions",
   "completion_gate_events",
@@ -113,6 +117,7 @@ const CURRENT_INDEXES = Object.freeze([
   "authorization_grants_actor_action_index",
   "authorization_grants_project_index",
   "codex_backend_operations_turn_order",
+  "codex_product_operations_recovery",
   "dispatcher_authorization_decisions_request_index",
   "dispatcher_runs_status_lease_index",
   "execution_attempts_one_active_per_task",
@@ -152,6 +157,14 @@ const CURRENT_TRIGGERS = Object.freeze([
   "codex_backend_operations_no_update",
   "codex_backend_turns_no_delete",
   "codex_backend_turns_update_guard",
+  "codex_effect_authorizations_no_delete",
+  "codex_effect_authorizations_no_update",
+  "codex_product_operations_no_delete",
+  "codex_product_operations_update_guard",
+  "codex_profile_operations_no_delete",
+  "codex_profile_operations_no_update",
+  "codex_profiles_no_delete",
+  "codex_profiles_update_guard",
   "completion_decisions_no_delete",
   "completion_decisions_no_update",
   "completion_gate_authorization_decisions_no_delete",
@@ -407,7 +420,7 @@ test("fresh initialization atomically creates the exact current schema", async (
       });
       assert.match(
         database.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name='application_lifecycle_authorizations'").get().sql,
-        /state_digest_version\s*=\s*3/u,
+        /state_digest_version\s*=\s*4/u,
       );
       const executionIntentGuard = database.prepare(
         "SELECT sql FROM sqlite_schema WHERE type='trigger' AND name='execution_operation_intents_transition_guard'",

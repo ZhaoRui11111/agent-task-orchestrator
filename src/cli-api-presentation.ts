@@ -1,5 +1,6 @@
 import type { AuthorizationGrant } from "./authorization.ts";
 import type { ApplicationFailure } from "./application.ts";
+import type { CodexProductError } from "./codex-product-application.ts";
 import type { Task } from "./domain.ts";
 import type { DoctorResult } from "./persistence/doctor.ts";
 import type { PersistenceError } from "./persistence/errors.ts";
@@ -167,6 +168,29 @@ export function mapProductFailureToPublicCode(error: ProductRuntimeError): Publi
     case "PERSISTENCE_FAILURE": return "PERSISTENCE_UNAVAILABLE";
   }
   return "INTERNAL_ERROR";
+}
+
+export function mapCodexProductFailureToPublicCode(error: CodexProductError): PublicErrorCode {
+  switch (error.code) {
+    case "INVALID_INPUT": return "CLI_INVALID_INPUT";
+    case "AUTHORIZATION_DENIED": return "AUTHORIZATION_DENIED";
+    case "CONFIRMATION_REQUIRED": return "CONFIRMATION_REQUIRED";
+    case "PROJECT_NOT_FOUND": return "PROJECT_NOT_FOUND";
+    case "PROJECT_DISABLED":
+    case "TASK_NOT_ELIGIBLE": return "DOMAIN_REJECTED";
+    case "PROJECT_IDENTITY_CHANGED": return "PROJECT_REGISTRY_REJECTED";
+    case "TASK_NOT_FOUND": return "TASK_NOT_FOUND";
+    case "CODEX_PROFILE_NOT_FOUND": return "CODEX_PROFILE_NOT_FOUND";
+    case "CODEX_PROFILE_INACTIVE": return "CODEX_PROFILE_INACTIVE";
+    case "CODEX_CREDENTIAL_UNAVAILABLE": return "CODEX_CREDENTIAL_UNAVAILABLE";
+    case "IDEMPOTENCY_CONFLICT": return "OPERATION_CONFLICT";
+    case "STALE_REVISION": return "STALE_REVISION";
+    case "STALE_FENCE": return "STALE_FENCE";
+    case "LEASE_EXPIRED": return "LEASE_EXPIRED";
+    case "RECONCILIATION_REQUIRED": return "RECONCILIATION_REQUIRED";
+    case "CODEX_ADAPTER_FAILURE": return "CODEX_ADAPTER_FAILURE";
+    case "PERSISTENCE_FAILURE": return "PERSISTENCE_UNAVAILABLE";
+  }
 }
 
 export function mapPersistenceFailure(error: PersistenceError): PublicErrorCode {

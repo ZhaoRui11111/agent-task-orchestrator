@@ -551,7 +551,7 @@ function commandCausation(command: WorkspaceCommand): string | null {
 
 function bindingFailure(
   state: ApplicationState,
-  command: WorkspaceOwnerCommand,
+  command: WorkspaceCommand,
   now: string,
 ): OwnerBinding | WorkspaceApplicationFailure {
   const project = state.projects.find((candidate) => candidate.projectId === command.projectId);
@@ -581,10 +581,13 @@ function bindingFailure(
   ) return failed("STALE_REVISION", "Dispatcher member binding is stale");
   const execution = state.executions.find((candidate) => candidate.executionId === command.executionId);
   if (execution === undefined || execution.taskId !== task.id) return failed("EXECUTION_NOT_FOUND", "Execution attempt is not registered");
+  const terminalWaitingInspection = command.kind === "workspace.inspect" && task.state === "waiting" &&
+    task.revision === execution.postTaskRevision + 1 && task.waiting?.executionId === execution.executionId &&
+    task.waiting.waitingTaskRevision === task.revision;
   if (
     execution.revision !== command.expectedExecutionRevision || execution.attemptNumber !== command.expectedAttemptNumber ||
     execution.projectResourceRevision !== project.resourceRevision || execution.projectConfigRevision !== project.configRevision ||
-    execution.postTaskRevision !== task.revision
+    (execution.postTaskRevision !== task.revision && !terminalWaitingInspection)
   ) return failed("STALE_REVISION", "Execution binding is stale");
   if (
     execution.status !== "active" || execution.fencingToken !== command.expectedFencingToken ||

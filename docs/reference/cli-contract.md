@@ -11,9 +11,9 @@ restore, or doctor judgments.
 Every Project, Task, dependency, grant, status, and policy operation invokes the
 typed application service. Backup and restore consume the application service's
 typed lifecycle authorization and then invoke the persistence lifecycle owner.
-Doctor invokes the persistence-owned read-only classifier. Phase 2 commands
-invoke one typed product facade, which derives non-public durable tuples and
-calls the existing dispatcher or reliable execution owner. The CLI does not open
+Doctor invokes the persistence-owned read-only classifier. Phase 2 and Codex
+commands invoke typed product owners, which derive non-public durable tuples and
+call the existing dispatcher, workspace, or reliable execution owners. The CLI does not open
 SQLite, parse SQL, copy Domain rules, inspect arbitrary files, or accept an actor
 or authority from command content.
 
@@ -26,9 +26,9 @@ and performs a parsed command. `src/cli.ts` remains the byte-stable console
 entrypoint and contains no product judgment.
 
 This is a local single-user surface, not a released compatibility or
-platform-support promise. The sole current `ato.api/v1` exposes only the local
-explicit-Manual control/recovery subset documented below. It exposes no
-scheduler, scheduled trigger, daemon, MCP, Codex or Phase 3 adapter route,
+platform-support promise. The sole current `ato.api/v1` exposes the local
+explicit-Manual control/recovery subset plus the closed authorized Codex subset
+documented below. It exposes no scheduler, scheduled trigger, daemon, MCP, or Phase 3 adapter route,
 workspace/policy/gate/integration operation command, network service, secret
 operation, release, deployment, repair, cleanup, or arbitrary shell/filesystem
 operation. The independently exported injected Phase 3 and scheduler libraries
@@ -67,9 +67,9 @@ different trust root or a lifecycle descendant.
 
 ## Command tree
 
-The sole current `ato.api/v1` contains exactly 33 command IDs. The following
-table contains its 24 base and lifecycle IDs; the nine product-facade IDs are
-listed in [Current Manual product commands](#current-manual-product-commands).
+The sole current `ato.api/v1` contains exactly 37 command IDs. The following
+table contains its 24 base and lifecycle IDs; the thirteen product-facade IDs are
+listed in [Current product commands](#current-product-commands).
 Required options are shown without brackets; bracketed options are optional.
 
 | Command ID | Invocation after globals |
@@ -126,7 +126,7 @@ There is no alias for a command or option. In particular there is no Task
   JavaScript UTF-16 code units.
   Project root is an absolute traversal-free path of at most 1,024 UTF-8 bytes
   before persistence identity checks.
-- `ACTION` is one exact member of the current finite fifty-action vocabulary owned by the
+- `ACTION` is one exact member of the current finite fifty-five-action vocabulary owned by the
   [authorization contract](authorization-contract.md#exact-action-vocabulary).
   There is no extension field or caller-defined action. Runtime scope rejects
   Project fields; Project scope requires all three Project fields.
@@ -143,8 +143,9 @@ data rewrite; a persisted current Task that violates it is typed corruption.
 
 `init`, capability renewal, grant issue, grant revoke, Project register,
 Project update, Project disable, capability upgrade, trusted Manual outcome
-reporting, separately accepted Manual completion, and restore require the exact
-current phrase in the command tables. Restore additionally requires the exact data-loss phrase.
+reporting, separately accepted Manual completion, Codex profile activation/
+deactivation, Codex dispatch, and Codex continuation require the exact current
+phrase in the command tables. Restore additionally requires the exact data-loss phrase.
 Phrases are case-sensitive, request-local values bound by trusted local ingress;
 Project/Task text, prompts, repository files, tool output, environment values,
 errors, persisted content, and prior confirmations cannot supply them.
@@ -204,6 +205,16 @@ Success objects have these closed shapes and field order:
   `verified`.
 - `restore`: `backupGenerationId`, `targetSchemaVersion`, `restoredAt`,
   `dataLossAcknowledged`.
+- `codex.profile.activate`, `codex.profile.inspect`, and
+  `codex.profile.deactivate`: `profileId`, `projectId`,
+  `projectResourceRevision`, `projectConfigRevision`, `profileRevision`,
+  `status`, `destination`, `credentialConfigured`, `configurationSha256`,
+  `replayed`.
+- `codex.dispatch-run`: `runId`, `status`, `memberId`, `profileId`,
+  `profileRevision`, `destination`, `baseReference`, `taskId`, `taskState`,
+  `taskRevision`, `executionId`, `executionRevision`, `attemptNumber`,
+  `fencingToken`, `workspaceId`, `workspaceGeneration`, `workspaceRevision`,
+  `workspaceStatus`, `lifecycle`, `replayed`.
 
 Task body, cancellation reason, Project/runtime path or filesystem identity,
 actor/principal, request/correlation/decision/audit/lifecycle/restore identifier,
@@ -245,6 +256,7 @@ The following table is exhaustive. Exit `0` is success only.
 | 5 | `BACKUP_NOT_FOUND` | `The backup generation was not found.` |
 | 5 | `EXECUTION_NOT_FOUND` | `The execution was not found.` |
 | 5 | `DISPATCH_RUN_NOT_FOUND` | `The dispatcher run was not found.` |
+| 5 | `CODEX_PROFILE_NOT_FOUND` | `The Codex profile was not found.` |
 | 6 | `STALE_REVISION` | `The expected revision is stale.` |
 | 6 | `DOMAIN_REJECTED` | `The requested Task operation was rejected.` |
 | 6 | `PROJECT_ALREADY_REGISTERED` | `The Project is already registered.` |
@@ -254,6 +266,7 @@ The following table is exhaustive. Exit `0` is success only.
 | 6 | `STALE_FENCE` | `The execution or dispatcher ownership fence is stale.` |
 | 6 | `LEASE_EXPIRED` | `The execution or dispatcher lease has expired.` |
 | 6 | `RECONCILIATION_REQUIRED` | `Durable reconciliation is required before the operation can continue.` |
+| 6 | `CODEX_PROFILE_INACTIVE` | `The Codex profile is not active.` |
 | 7 | `RUNTIME_UNSAFE` | `The local runtime identity or topology is unsafe.` |
 | 7 | `RUNTIME_ACTIVE` | `The local runtime is active.` |
 | 7 | `SCHEMA_UNSUPPORTED` | `The runtime schema is unsupported.` |
@@ -262,6 +275,8 @@ The following table is exhaustive. Exit `0` is success only.
 | 7 | `BACKUP_INVALID` | `The backup generation is invalid.` |
 | 7 | `PERSISTENCE_UNAVAILABLE` | `Local persistence is unavailable.` |
 | 7 | `ADAPTER_FAILURE` | `The Manual execution adapter failed.` |
+| 7 | `CODEX_CREDENTIAL_UNAVAILABLE` | `The configured Codex credential is unavailable.` |
+| 7 | `CODEX_ADAPTER_FAILURE` | `The Codex execution adapter failed.` |
 | 8 | `DATA_LOSS_ACK_REQUIRED` | `The exact data-loss acknowledgement is required.` |
 | 8 | `RESTORE_CONFLICT` | `Restore conflicts with current state.` |
 | 8 | `RESTORE_BLOCKED` | `Restore is blocked.` |
@@ -277,18 +292,19 @@ or impossible value becomes `INTERNAL_ERROR`, and internal text is discarded.
 ## Capability boundary
 
 `ato.api/v1` is provisional and implemented only by this local development
-package. It does not create a release or support claim. The current tree includes
-the closed local explicit-Manual Phase 2 product, but it does not execute Task
-content or perform a Project/workspace effect. Unknown fields remain rejected;
+package. It does not create a release or support claim. The current tree retains
+the closed local explicit-Manual Phase 2 product and adds one explicit Codex
+route that may disclose Task content only after its profile, workspace,
+authorization, confirmation, and Act boundary. Unknown fields remain rejected;
 changing a field's meaning, requiredness, error meaning, authorization, or state
 effect after this unreleased baseline requires a new API major under the
 [versioning contract](versioning-compatibility-contract.md#public-api-evolution).
 `task.cancel` cannot bypass an active execution or act as verified interruption;
 the dedicated cancellation route retains request/observation/finalization rules.
 
-## Current Manual product commands
+## Current product commands
 
-The following nine product-facade IDs complete the sole current 33-command
+The following thirteen product-facade IDs complete the sole current 37-command
 `ato.api/v1` tree. Omitting `--api-version` and passing the exact pair
 `--api-version ato.api/v1` are identical. A retired `ato.api/v2` or any other
 unsupported major for a recognized command returns `CLI_UNSUPPORTED_VERSION`
@@ -296,14 +312,14 @@ in an `ato.api/v1` failure envelope before runtime-root selection, trusted
 ingress, doctor, runtime creation/loading, persistence, authorization, or Domain
 evaluation. Unknown majors and commands never fall back, coerce, or guess
 another major. `authorization issue` and `authorization evaluate` accept exactly
-the current finite fifty actions. The independently exported exact
+the current finite fifty-five actions. The independently exported exact
 `ato.project-policy/v1`, `ato.completion/v1`, `ato.integration/v1`, and
 `ato.workspace/v2` ports, their local adapters, and the injected Phase 3
 product-library facade add no command ID, public result, or error to this closed
 tree. The independently exported exact `ato.scheduler/v1` port and injected
 scheduler application owner likewise add no scheduler operation route.
 
-The nine product-facade IDs are exhaustive:
+The thirteen product-facade IDs are exhaustive:
 
 | Command ID | Invocation after globals |
 | --- | --- |
@@ -311,11 +327,15 @@ The nine product-facade IDs are exhaustive:
 | `dispatch.run` | `dispatch run --idempotency-key ID --lease-duration-seconds N` |
 | `dispatch.resume` | `dispatch resume --run-id ID` |
 | `execution.inspect` | `execution inspect COMMON` |
-| `execution.resume` | `execution resume COMMON --continuation-reference ID --required-action-receipt-id ID` |
-| `execution.retry` | `execution retry COMMON --continuation-reference ID --required-action-receipt-id ID` |
+| `execution.resume` | `execution resume COMMON --continuation-reference ID --required-action-receipt-id ID [--confirm "INVOKE CODEX CONTINUATION"]` |
+| `execution.retry` | `execution retry COMMON --continuation-reference ID --required-action-receipt-id ID [--confirm "INVOKE CODEX CONTINUATION"]` |
 | `execution.request-cancel` | `execution request-cancel COMMON --reason-code ID` |
 | `manual.outcome-report` | `manual outcome-report COMMON --report-id ID --outcome OP --code ID [--evidence-reference ID] --confirm "RECORD MANUAL OUTCOME"` |
 | `execution.accept-manual-completion` | `execution accept-manual-completion COMMON --confirm "ACCEPT MANUAL COMPLETION"` |
+| `codex.profile.activate` | `codex profile activate --project-id ID --expected-project-resource-revision REV --expected-project-config-revision REV --profile-id ID --expected-profile-revision REV0 --workspace-root-key ID --workspace-root PATH --codex-home-key ID --codex-home PATH --git-executable PATH --idempotency-key ID --confirm "ACTIVATE CODEX PROFILE"` |
+| `codex.profile.inspect` | `codex profile inspect --project-id ID --expected-project-resource-revision REV --expected-project-config-revision REV --profile-id ID --expected-profile-revision REV` |
+| `codex.profile.deactivate` | `codex profile deactivate --project-id ID --expected-project-resource-revision REV --expected-project-config-revision REV --profile-id ID --expected-profile-revision REV --idempotency-key ID --confirm "DEACTIVATE CODEX PROFILE"` |
+| `codex.dispatch-run` | `codex dispatch-run --project-id ID --expected-project-resource-revision REV --expected-project-config-revision REV --profile-id ID --expected-profile-revision REV --task-id ID --expected-task-revision REV --base-reference SHA1 --idempotency-key ID --lease-duration-seconds N --confirm "INVOKE CODEX TASK"` |
 
 `COMMON` is exactly, in any option order after the command:
 
@@ -336,11 +356,18 @@ Every current product ID and reference is ASCII
 `[A-Za-z0-9][A-Za-z0-9._:-]{0,127}`. The `--reason-code` and Manual outcome
 `--code` values use the closed execution-code bound
 `[A-Za-z0-9][A-Za-z0-9._:-]{0,63}`. `REV` is a canonical positive safe integer.
-`N` is a canonical whole safe integer from `30` through `3600`.
+`REV0` is zero only for a first profile activation and otherwise is a positive
+safe integer naming the current deactivated revision. Profile IDs,
+workspace-root keys, Codex-home keys, and all other product IDs use the same
+1..128 ASCII operational bound. `PATH` in the Codex commands is absolute NFC,
+control-free, and at most 4,096 UTF-8 bytes before identity inspection. `SHA1`
+is exactly lowercase 40-hex. `N` is a canonical whole safe integer from `30` through `3600`.
 `OP` is exactly `activate`, `wait`, `succeed`, `fail`, or
 `confirm_cancelled`. Upgrade `TIME` is canonical UTC, strictly more than seven
 and no more than thirty-one days after the trusted current time. There are no
 aliases, implicit fields, alternate confirmation phrases, or extension maps.
+The optional continuation confirmation must be absent for Manual and must equal
+`INVOKE CODEX CONTINUATION` for Codex as determined from durable state.
 
 ### Product-command ownership and effects
 
@@ -348,7 +375,7 @@ The current OS/runtime ingress alone supplies actor, principal, runtime-root
 identity, Manual dispatcher owner, and execution lease owner. Command text
 cannot supply them. `authorization.upgrade` performs exactly one eligible,
 confirmed contiguous vocabulary transition (`1` to `2`, `2` to `3`, `3` to
-`4`, or `4` to `5`) and never dispatches work. Migration and renewal never upgrade a
+`4`, `4` to `5`, `5` to `6`, `6` to `7`, or `7` to `8`) and never dispatches work. Migration and renewal never upgrade a
 vocabulary.
 
 The product facade reads the current schema-version-1 state, validates the complete
@@ -356,9 +383,23 @@ caller CAS tuple, derives backend/thread/input/policy/deadline/observation,
 receipt, and finalization data, then invokes the existing owner. `dispatch.run`
 and `dispatch.resume` invoke only the reconcile-first Manual dispatcher; the
 CLI never enumerates candidates or computes completeness. Execution operations
-invoke only the reliable execution owner. An exact idempotency replay returns
-the durable result without another effect; a key bound to another tuple is a
-conflict.
+invoke the Manual or Codex reliable owner only after durable backend
+discrimination. After hostile parsing and trusted actor/runtime validation,
+resume/retry first lookup the exact Codex product idempotency tuple before live
+profile/Task/execution reads and before Manual fallback. Exact match resumes the
+recorded stage; mismatch is `OPERATION_CONFLICT`; absence alone permits ordinary
+backend discrimination. `codex.dispatch-run` creates exactly one targeted
+member and never changes Manual or scheduled candidate selection. An exact
+terminal replay returns only the stored bounded result without another effect.
+
+Profile activation/inspection/deactivation expose no credential value, path,
+filesystem identity, constructor internals, or administrator-policy claim.
+Codex dispatch persists Prepare before checking credential availability and
+binds a fresh confirmed Act to the exact pending intent before credential
+resolution or Task disclosure. Its fixed destination is `openai-codex-api` and
+the only credential reference is `process-env:CODEX_API_KEY`; neither value is a
+caller option. Execution inspect and request-cancel derive every Codex profile,
+thread, workspace, and backend field from durable state.
 
 Manual `succeed` records `turn_succeeded` and leaves the Task `running`. Only a
 separate current `execution.completion.accept` authorization, exact `ACCEPT
@@ -380,6 +421,9 @@ exact field orders:
 - Every execution or Manual command: `executionId`, `taskId`, `taskState`,
   `taskRevision`, `executionRevision`, `attemptNumber`, `fencingToken`,
   `lifecycle`, `observationNumber`, `waiting`, `replayed`.
+- Codex profile and dispatch results use the exact shapes listed in
+  [Machine-readable output](#machine-readable-output); execution continuation,
+  inspect, and cancellation retain the same execution projection as Manual.
 
 `waiting` is null or exactly `reason`, `phase`, `requiredAction`,
 `lastErrorCode`, `lastErrorSummary`, `retryable`, `retryCount`, `retryAfter`,
@@ -394,8 +438,8 @@ rules above.
 
 ### Product-facade error mapping
 
-The one public table above includes all 37 current codes, including the seven
-execution/dispatcher-specific codes. Application and persistence mappings remain exhaustive;
+The one public table above includes all 41 current codes, including the seven
+execution/dispatcher-specific and four Codex-specific codes. Application and persistence mappings remain exhaustive;
 capability-upgrade ineligibility is `AUTHORIZATION_DENIED`. Reliable-loop
 `INVALID_INPUT` maps to `CLI_INVALID_INPUT`; `AUTHORIZATION_DENIED`,
 `CONFIRMATION_REQUIRED`, `PROJECT_NOT_FOUND`, `TASK_NOT_FOUND`, and
@@ -407,6 +451,13 @@ capability-upgrade ineligibility is `AUTHORIZATION_DENIED`. Reliable-loop
 `IDEMPOTENCY_CONFLICT` maps to `OPERATION_CONFLICT`;
 `PROJECT_IDENTITY_CHANGED` maps to `PROJECT_REGISTRY_REJECTED`; and
 `PERSISTENCE_FAILURE` maps to `PERSISTENCE_UNAVAILABLE`.
+
+Codex `CODEX_PROFILE_NOT_FOUND`, `CODEX_PROFILE_INACTIVE`,
+`CODEX_CREDENTIAL_UNAVAILABLE`, and `CODEX_ADAPTER_FAILURE` map to their same
+public codes. Its common authorization, confirmation, Project/Task, revision,
+fence, lease, reconciliation, idempotency, identity, and persistence failures
+map to the existing corresponding public codes; impossible values remain
+`INTERNAL_ERROR`.
 
 Dispatcher `INVALID_INPUT` maps to `CLI_INVALID_INPUT`;
 `AUTHORIZATION_DENIED` and `STALE_REVISION` map to the same public codes;

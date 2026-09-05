@@ -11,7 +11,6 @@ import type { LocalRuntimeSelection } from "./persistence/local-ingress.ts";
 import {
   CLI_API_VERSION,
   COMMAND_SPECS,
-  ONE_TOKEN_COMMANDS,
   PRODUCT_COMMAND_IDS,
   type CliFormat,
   type CommandSpec,
@@ -63,8 +62,8 @@ function domainId(value: string): boolean {
   return safeToken(value) && bytes(value) >= 1 && bytes(value) <= 128;
 }
 
-function absolutePath(value: string): boolean {
-  if (!safeToken(value) || bytes(value) > 1024 || !path.isAbsolute(value)) return false;
+function absolutePath(value: string, maximumBytes = 1024): boolean {
+  if (!safeToken(value) || bytes(value) > maximumBytes || !path.isAbsolute(value)) return false;
   const parsed = path.parse(value);
   return !value.slice(parsed.root.length).split(/[\\/]+/u).some((segment) => segment === "." || segment === "..");
 }
@@ -93,6 +92,12 @@ function validateOptions(
   for (const name of revisionOptions) {
     const value = options[name];
     if (value !== undefined && canonicalRevision(value) === null) return "CLI_INVALID_INPUT";
+  }
+  const expectedProfileRevision = options["expected-profile-revision"];
+  if (expectedProfileRevision !== undefined) {
+    if (!DECIMAL.test(expectedProfileRevision) || String(Number(expectedProfileRevision)) !== expectedProfileRevision ||
+      !Number.isSafeInteger(Number(expectedProfileRevision)) || Number(expectedProfileRevision) < 0 ||
+      (spec.id !== "codex.profile.activate" && Number(expectedProfileRevision) === 0)) return "CLI_INVALID_INPUT";
   }
   for (const name of ["project-id", "task-id", "dependency-id", "parent-id", "supersedes-task-id"]) {
     const value = options[name];
@@ -161,6 +166,7 @@ function validateOptions(
     for (const name of [
       "project-id", "task-id", "execution-id", "idempotency-key", "continuation-reference",
       "required-action-receipt-id", "reason-code", "report-id", "code", "evidence-reference", "run-id",
+      "profile-id", "workspace-root-key", "codex-home-key",
     ]) {
       const value = options[name];
       if (value !== undefined && !OPERATIONAL_ID.test(value)) return "CLI_INVALID_INPUT";
@@ -170,6 +176,12 @@ function validateOptions(
       if (value !== undefined && !EXECUTION_CODE.test(value)) return "CLI_INVALID_INPUT";
     }
   }
+  for (const name of ["workspace-root", "codex-home", "git-executable"]) {
+    const value = options[name];
+    if (value !== undefined && !absolutePath(value, 4_096)) return "CLI_INVALID_INPUT";
+  }
+  const baseReference = options["base-reference"];
+  if (baseReference !== undefined && !/^[0-9a-f]{40}$/u.test(baseReference)) return "CLI_INVALID_INPUT";
   const leaseDuration = options["lease-duration-seconds"];
   if (leaseDuration !== undefined &&
     (!DECIMAL.test(leaseDuration) || String(Number(leaseDuration)) !== leaseDuration ||
@@ -224,17 +236,15 @@ export function parseCliArguments(args: readonly string[], now = new Date().toIS
   }
   const first = args[index];
   if (first === undefined || first.startsWith("-") || first.startsWith("@") || first.includes("=")) return parseFailure(format);
-  const pathLength = ONE_TOKEN_COMMANDS.has(first) ? 1 : 2;
-  const commandPath = args.slice(index, index + pathLength);
-  const spec = COMMAND_SPECS.find((candidate) =>
-    candidate.path.length === commandPath.length && candidate.path.every((part, partIndex) => part === commandPath[partIndex])
-  );
+  const spec = [...COMMAND_SPECS]
+    .sort((left, right) => right.path.length - left.path.length)
+    .find((candidate) => candidate.path.every((part, partIndex) => part === args[index + partIndex]));
   if (spec === undefined) return parseFailure(format);
   if (apiVersion !== CLI_API_VERSION) {
     return parseFailure(format, spec.id, "CLI_UNSUPPORTED_VERSION");
   }
   if (runtimeRoot !== null && !absolutePath(runtimeRoot)) return parseFailure(format, spec.id);
-  index += pathLength;
+  index += spec.path.length;
   const allowed = new Set([...spec.required, ...spec.optional]);
   const options: Record<string, string> = Object.create(null) as Record<string, string>;
   while (index < args.length) {
@@ -282,6 +292,14 @@ export function optionRevision(command: ParsedCliCommand, name: string): number 
   const value = canonicalRevision(option(command, name));
   if (value === null) throw new TypeError("Parsed revision is invalid");
   return value;
+}
+
+export function optionProfileRevision(command: ParsedCliCommand): number {
+  const value = option(command, "expected-profile-revision");
+  if (!DECIMAL.test(value) || !Number.isSafeInteger(Number(value)) || String(Number(value)) !== value) {
+    throw new TypeError("Parsed profile revision is invalid");
+  }
+  return Number(value);
 }
 
 export function applicationCommand(
@@ -361,7 +379,10 @@ export function applicationCommand(
 export function confirmationFor(command: ParsedCliCommand): Readonly<{
   phrase: string | null;
   action: AuthorizationAction | "authorization.capability.renew" | "authorization.capability.upgrade" | null;
-  productAction: "manual.turn.report" | "execution.completion.accept" | null;
+  productAction:
+    | "manual.turn.report" | "execution.completion.accept"
+    | "codex.profile.activate" | "codex.profile.deactivate" | "codex.execution.invoke" | "codex.execution.cancel"
+    | null;
 }> {
   switch (command.id) {
     case "init": return Object.freeze({ phrase: "INITIALIZE LOCAL RUNTIME", action: "authorization.grant.issue", productAction: null });
@@ -375,6 +396,13 @@ export function confirmationFor(command: ParsedCliCommand): Readonly<{
     case "restore": return Object.freeze({ phrase: "RESTORE LOCAL BACKUP", action: "runtime.restore", productAction: null });
     case "manual.outcome-report": return Object.freeze({ phrase: "RECORD MANUAL OUTCOME", action: null, productAction: "manual.turn.report" });
     case "execution.accept-manual-completion": return Object.freeze({ phrase: "ACCEPT MANUAL COMPLETION", action: null, productAction: "execution.completion.accept" });
+    case "codex.profile.activate": return Object.freeze({ phrase: "ACTIVATE CODEX PROFILE", action: null, productAction: "codex.profile.activate" });
+    case "codex.profile.deactivate": return Object.freeze({ phrase: "DEACTIVATE CODEX PROFILE", action: null, productAction: "codex.profile.deactivate" });
+    case "codex.dispatch-run": return Object.freeze({ phrase: "INVOKE CODEX TASK", action: null, productAction: "codex.execution.invoke" });
+    case "execution.resume":
+    case "execution.retry": return command.options.confirm === undefined
+      ? Object.freeze({ phrase: null, action: null, productAction: null })
+      : Object.freeze({ phrase: "INVOKE CODEX CONTINUATION", action: null, productAction: "codex.execution.invoke" });
     default: return Object.freeze({ phrase: null, action: null, productAction: null });
   }
 }

@@ -1129,7 +1129,7 @@ test("scheduler state survives exact backup, doctor, restore, and fresh reopen",
     });
     assert.equal(scheduler.register(registerCommand("backup-schedule")).ok, true);
     const generationId = randomUUID();
-    runtime.trusted.setNow("2026-09-04T19:04:00.000Z");
+    runtime.trusted.setNow(new Date(Date.now() + 60_000).toISOString());
     const backupAuthorization = runtime.application.execute(Object.freeze({
       kind: "runtime.backup",
       backupGenerationId: generationId,
@@ -1141,7 +1141,7 @@ test("scheduler state survives exact backup, doctor, restore, and fresh reopen",
     const backedUp = readApplicationStateForOwner(store);
     assert.equal(backedUp.schedulerRegistrations.at(-1).status, "active");
 
-    runtime.trusted.setNow("2026-09-04T19:05:00.000Z");
+    runtime.trusted.setNow(new Date(Date.now() + 120_000).toISOString());
     const restoreAuthorization = runtime.application.execute(Object.freeze({
       kind: "runtime.restore",
       backupGenerationId: generationId,

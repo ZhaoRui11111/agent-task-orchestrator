@@ -6,17 +6,20 @@ import test from "node:test";
 import {
   CLI_API_VERSION,
   PUBLIC_ERROR_TABLE,
+  mapCodexProductFailureToPublicCode,
   mapProductFailureToPublicCode,
   parseCliArguments,
   runCli,
 } from "../src/cli-api.ts";
 import { APPLICATION_ERROR_CODES } from "../src/application.ts";
 import { DISPATCHER_ERROR_CODES } from "../src/dispatcher-application.ts";
+import { CODEX_PRODUCT_ERROR_CODES } from "../src/codex-product-application.ts";
 import { RELIABLE_EXECUTION_ERROR_CODES } from "../src/execution-loop.ts";
 
 const NOW = "2026-08-30T00:00:00.000Z";
 const EXPIRY = "2026-09-20T00:00:00.000Z";
 const PROJECT_ROOT = path.resolve("test-cli-contract-project");
+const CODEX_HOME = path.resolve("test-cli-contract-codex-home");
 const GENERATION = "11111111-1111-4111-8111-111111111111";
 
 const CASES = Object.freeze([
@@ -65,7 +68,36 @@ const PRODUCT_CASES = Object.freeze([
   ["execution.accept-manual-completion", ["execution", "accept-manual-completion"], [...COMMON, "confirm", "ACCEPT MANUAL COMPLETION"]],
 ]);
 
-const CURRENT_CASES = Object.freeze([...CASES, ...PRODUCT_CASES]);
+const CODEX_CASES = Object.freeze([
+  ["codex.profile.activate", ["codex", "profile", "activate"], [
+    "project-id", "project", "expected-project-resource-revision", "1",
+    "expected-project-config-revision", "1", "profile-id", "profile-1",
+    "expected-profile-revision", "0", "workspace-root-key", "workspace-root-1",
+    "workspace-root", PROJECT_ROOT, "codex-home-key", "codex-home-1", "codex-home", CODEX_HOME,
+    "git-executable", process.execPath, "idempotency-key", "profile-activate-1", "confirm", "ACTIVATE CODEX PROFILE",
+  ]],
+  ["codex.profile.inspect", ["codex", "profile", "inspect"], [
+    "project-id", "project", "expected-project-resource-revision", "1",
+    "expected-project-config-revision", "1", "profile-id", "profile-1",
+    "expected-profile-revision", "1",
+  ]],
+  ["codex.profile.deactivate", ["codex", "profile", "deactivate"], [
+    "project-id", "project", "expected-project-resource-revision", "1",
+    "expected-project-config-revision", "1", "profile-id", "profile-1",
+    "expected-profile-revision", "1", "idempotency-key", "profile-deactivate-1",
+    "confirm", "DEACTIVATE CODEX PROFILE",
+  ]],
+  ["codex.dispatch-run", ["codex", "dispatch-run"], [
+    "project-id", "project", "expected-project-resource-revision", "1",
+    "expected-project-config-revision", "1", "profile-id", "profile-1",
+    "expected-profile-revision", "1", "task-id", "task", "expected-task-revision", "2",
+    "base-reference", "1111111111111111111111111111111111111111",
+    "idempotency-key", "codex-dispatch-1", "lease-duration-seconds", "300",
+    "confirm", "INVOKE CODEX TASK",
+  ]],
+]);
+
+const CURRENT_CASES = Object.freeze([...CASES, ...PRODUCT_CASES, ...CODEX_CASES]);
 
 function argsFor(commandPath, options) {
   const result = [...commandPath];
@@ -75,12 +107,13 @@ function argsFor(commandPath, options) {
   return result;
 }
 
-test("the sole ato.api/v1 has one exact 33-command tree and duplicate-free option sets", () => {
+test("the sole ato.api/v1 has one exact 37-command tree and duplicate-free option sets", () => {
   assert.equal(CLI_API_VERSION, "ato.api/v1");
   assert.equal(CASES.length, 24);
   assert.equal(PRODUCT_CASES.length, 9);
-  assert.equal(CURRENT_CASES.length, 33);
-  assert.equal(new Set(CURRENT_CASES.map(([id]) => id)).size, 33);
+  assert.equal(CODEX_CASES.length, 4);
+  assert.equal(CURRENT_CASES.length, 37);
+  assert.equal(new Set(CURRENT_CASES.map(([id]) => id)).size, 37);
   for (const [id, commandPath, options] of CURRENT_CASES) {
     const parsed = parseCliArguments(argsFor(commandPath, options), NOW);
     assert.equal(parsed.ok, true, `${id} did not parse`);
@@ -157,6 +190,20 @@ test("confirmation, acknowledgement, list bounds, and issuance scope have dedica
   assert.equal(parseCliArguments(["authorization", "list", "--limit", "01"], NOW).code, "CLI_INVALID_INPUT");
   assert.equal(parseCliArguments(["init", "--expires-at", EXPIRY], NOW).code, "CONFIRMATION_REQUIRED");
   assert.equal(parseCliArguments(["init", "--expires-at", EXPIRY, "--confirm", "wrong"], NOW).code, "CONFIRMATION_REQUIRED");
+  const continuation = argsFor(["execution", "retry"], [
+    ...COMMON,
+    "continuation-reference", "continuation-1",
+    "required-action-receipt-id", "required-1",
+  ]);
+  assert.equal(parseCliArguments(continuation, NOW).ok, true);
+  assert.equal(
+    parseCliArguments([...continuation, "--confirm", "wrong"], NOW).code,
+    "CONFIRMATION_REQUIRED",
+  );
+  assert.equal(
+    parseCliArguments([...continuation, "--confirm", "INVOKE CODEX CONTINUATION"], NOW).ok,
+    true,
+  );
   assert.equal(parseCliArguments([
     "restore", "--generation-id", GENERATION, "--confirm", "RESTORE LOCAL BACKUP",
   ], NOW).code, "DATA_LOSS_ACK_REQUIRED");
@@ -209,8 +256,12 @@ test("the public code, exit, and fixed-message table is exact", () => {
     RESTORE_RECOVERY_REQUIRED: { exitCode: 8, message: "Restore requires manual recovery." },
     AMBIGUOUS_EXTERNAL_STATE: { exitCode: 8, message: "The external execution state is ambiguous." },
     INTERNAL_ERROR: { exitCode: 9, message: "The operation failed internally." },
+    CODEX_PROFILE_NOT_FOUND: { exitCode: 5, message: "The Codex profile was not found." },
+    CODEX_PROFILE_INACTIVE: { exitCode: 6, message: "The Codex profile is not active." },
+    CODEX_CREDENTIAL_UNAVAILABLE: { exitCode: 7, message: "The configured Codex credential is unavailable." },
+    CODEX_ADAPTER_FAILURE: { exitCode: 7, message: "The Codex execution adapter failed." },
   });
-  assert.equal(Object.keys(PUBLIC_ERROR_TABLE).length, 37);
+  assert.equal(Object.keys(PUBLIC_ERROR_TABLE).length, 41);
 });
 
 test("every application, reliable-loop, and dispatcher error has the exact current public mapping", () => {
@@ -268,9 +319,30 @@ test("every application, reliable-loop, and dispatcher error has the exact curre
     INTEGRITY_FAILURE: "STATE_CORRUPT",
     PERSISTENCE_FAILURE: "PERSISTENCE_UNAVAILABLE",
   };
+  const codex = {
+    INVALID_INPUT: "CLI_INVALID_INPUT",
+    AUTHORIZATION_DENIED: "AUTHORIZATION_DENIED",
+    CONFIRMATION_REQUIRED: "CONFIRMATION_REQUIRED",
+    PROJECT_NOT_FOUND: "PROJECT_NOT_FOUND",
+    PROJECT_DISABLED: "DOMAIN_REJECTED",
+    PROJECT_IDENTITY_CHANGED: "PROJECT_REGISTRY_REJECTED",
+    TASK_NOT_FOUND: "TASK_NOT_FOUND",
+    TASK_NOT_ELIGIBLE: "DOMAIN_REJECTED",
+    CODEX_PROFILE_NOT_FOUND: "CODEX_PROFILE_NOT_FOUND",
+    CODEX_PROFILE_INACTIVE: "CODEX_PROFILE_INACTIVE",
+    CODEX_CREDENTIAL_UNAVAILABLE: "CODEX_CREDENTIAL_UNAVAILABLE",
+    IDEMPOTENCY_CONFLICT: "OPERATION_CONFLICT",
+    STALE_REVISION: "STALE_REVISION",
+    STALE_FENCE: "STALE_FENCE",
+    LEASE_EXPIRED: "LEASE_EXPIRED",
+    RECONCILIATION_REQUIRED: "RECONCILIATION_REQUIRED",
+    CODEX_ADAPTER_FAILURE: "CODEX_ADAPTER_FAILURE",
+    PERSISTENCE_FAILURE: "PERSISTENCE_UNAVAILABLE",
+  };
   assert.deepEqual(Object.keys(application), [...APPLICATION_ERROR_CODES]);
   assert.deepEqual(Object.keys(reliable), [...RELIABLE_EXECUTION_ERROR_CODES]);
   assert.deepEqual(Object.keys(dispatcher), [...DISPATCHER_ERROR_CODES]);
+  assert.deepEqual(Object.keys(codex), [...CODEX_PRODUCT_ERROR_CODES]);
   for (const code of APPLICATION_ERROR_CODES) {
     assert.equal(mapProductFailureToPublicCode({ owner: "application", code, confirmationRequired: false }), application[code]);
   }
@@ -282,6 +354,9 @@ test("every application, reliable-loop, and dispatcher error has the exact curre
   }
   for (const code of DISPATCHER_ERROR_CODES) {
     assert.equal(mapProductFailureToPublicCode({ owner: "dispatcher", code }), dispatcher[code]);
+  }
+  for (const code of CODEX_PRODUCT_ERROR_CODES) {
+    assert.equal(mapCodexProductFailureToPublicCode({ code, message: "bounded" }), codex[code]);
   }
   assert.equal(mapProductFailureToPublicCode({ owner: "reliable", code: "UNCLASSIFIED" }), "INTERNAL_ERROR");
   assert.equal(mapProductFailureToPublicCode({ owner: "unclassified", code: "UNCLASSIFIED" }), "INTERNAL_ERROR");

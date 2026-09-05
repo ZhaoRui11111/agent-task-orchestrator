@@ -37,11 +37,38 @@ for (const required of [
   'event.type === "turn.failed"',
 ]) invariant(worker.includes(required), `pinned Codex SDK driver surface drifted: ${required}`);
 const publicIndex = readFileSync(path.join(repoRoot, "src", "index.ts"), "utf8");
-invariant(
-  !/CodexExecution|CodexSdk|PinnedCodex|createCodex|createInjectedCodex|createPinnedCodex|CodexWorkspace|VerifiedCodex/u.test(
-    publicIndex,
-  ),
-  "Codex implementation escaped the package-private boundary",
-);
+for (const required of [
+  "CODEX_PRODUCT_ERROR_CODES",
+  "createCodexProductApplication",
+  "CodexDispatchRunCommand",
+  "CodexDispatchView",
+  "CodexProductApplicationService",
+  "CodexProductConfirmationRequest",
+  "CodexProductError",
+  "CodexProductErrorCode",
+  "CodexProductFailure",
+  "CodexProductIngress",
+  "CodexProductResult",
+  "CodexProductSuccess",
+  "CodexProfileActivateCommand",
+  "CodexProfileDeactivateCommand",
+  "CodexProfileInspectCommand",
+  "CodexProfileView",
+]) invariant(publicIndex.includes(required), `supported Codex product export is absent: ${required}`);
+for (const forbidden of [
+  "CodexCredentialResolver",
+  "CodexExecutionBackendConfiguration",
+  "CodexProductApplicationDependencies",
+  "CodexProductApplicationHooks",
+  "CodexProfileConfigurationInput",
+  "CodexSdkDriver",
+  "createCodexExecutionBackend",
+  "createCodexProductApplicationWithDependencies",
+  "createCodexTargetedDispatcherService",
+  "createInjectedCodexReliableExecutionService",
+  "createProcessEnvironmentCodexCredentialResolver",
+  "createProductCodexSdkDriver",
+  "lookupCodexContinuationReplayForCli",
+]) invariant(!publicIndex.includes(forbidden), `Codex private seam escaped the package root: ${forbidden}`);
 
 console.log(process.argv.includes("--json") ? JSON.stringify(result) : JSON.stringify(result, null, 2));

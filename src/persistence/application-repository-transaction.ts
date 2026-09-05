@@ -28,6 +28,10 @@ import type {
   CodexBackendOperationRecord,
   CompletionDecisionRecord,
   ManualCompletionDecisionRecord,
+  CodexProfileRecord,
+  CodexProfileOperationRecord,
+  CodexProductOperationRecord,
+  CodexEffectAuthorizationRecord,
   DispatcherTriggerRequestRecord,
   DispatcherAuthorizationDecisionRecord,
   DispatcherRunStatus,
@@ -700,6 +704,133 @@ export class ApplicationTransaction {
       record.verifiedReceiptId, record.finalizationId, record.preTaskRevision,
       record.postTaskRevision, record.requestId, record.decisionId, record.auditId,
       record.confirmationId, record.createdAt,
+    );
+  }
+
+  insertCodexProfile(record: CodexProfileRecord): void {
+    this.#database.prepare(
+      `INSERT INTO codex_profiles(
+        profile_id, project_id, creator_operation_id, actor_id, revision, status,
+        project_resource_revision, project_config_revision, project_root_key,
+        destination, credential_reference, workspace_root, workspace_root_key, workspace_platform,
+        workspace_device, workspace_inode, workspace_mode, codex_home, codex_home_key, codex_home_platform,
+        codex_home_device, codex_home_inode, codex_home_mode, git_executable, git_executable_key,
+        git_executable_platform, git_executable_device, git_executable_inode, git_executable_mode,
+        constructor_config_sha256, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.profileId, record.projectId, record.creatorOperationId, record.actorId, record.revision, record.status,
+      record.projectResourceRevision, record.projectConfigRevision, record.projectRootKey,
+      record.destination, record.credentialReference,
+      record.workspaceRoot, record.workspaceRootKey, record.workspacePlatform, record.workspaceDevice,
+      record.workspaceInode, record.workspaceMode, record.codexHome, record.codexHomeKey,
+      record.codexHomePlatform, record.codexHomeDevice, record.codexHomeInode, record.codexHomeMode,
+      record.gitExecutable, record.gitExecutableKey, record.gitExecutablePlatform, record.gitExecutableDevice,
+      record.gitExecutableInode, record.gitExecutableMode, record.constructorConfigSha256,
+      record.createdAt, record.updatedAt,
+    );
+  }
+
+  updateCodexProfile(record: CodexProfileRecord, expectedRevision: number): void {
+    const result = this.#database.prepare(
+      `UPDATE codex_profiles
+       SET revision=revision+1, status=?, project_resource_revision=?, project_config_revision=?, project_root_key=?, updated_at=?
+       WHERE profile_id=? AND project_id=? AND revision=? AND status<>?`,
+    ).run(
+      record.status, record.projectResourceRevision, record.projectConfigRevision, record.projectRootKey, record.updatedAt,
+      record.profileId, record.projectId, expectedRevision, record.status,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Codex profile revision/status CAS failed", { profileId: record.profileId });
+    }
+  }
+
+  insertCodexProfileOperation(record: CodexProfileOperationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO codex_profile_operations(
+        operation_id, idempotency_key, request_id, decision_id, audit_id, confirmation_id, actor_id,
+        action, project_id, expected_project_resource_revision, expected_project_config_revision,
+        profile_id, expected_profile_revision, result, reason, policy_result, grant_id, grant_revision,
+        configuration_sha256, resulting_profile_revision, resulting_status, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.operationId, record.idempotencyKey, record.requestId, record.decisionId, record.auditId,
+      record.confirmationId, record.actorId, record.action, record.projectId,
+      record.expectedProjectResourceRevision, record.expectedProjectConfigRevision, record.profileId,
+      record.expectedProfileRevision, record.result, record.reason, record.policy, record.grantId,
+      record.grantRevision, record.configurationSha256, record.resultingProfileRevision,
+      record.resultingStatus, record.createdAt,
+    );
+  }
+
+  insertCodexProductOperation(record: CodexProductOperationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO codex_product_operations(
+        operation_id, public_idempotency_key, command_kind, command_json, command_sha256, actor_id,
+        profile_id, profile_revision, constructor_config_sha256, project_id,
+        expected_project_resource_revision, expected_project_config_revision, task_id, expected_task_revision,
+        base_reference, lease_duration_seconds, source_execution_id, source_execution_revision,
+        source_attempt_number, source_fencing_token, source_backend_execution_id, source_thread_id,
+        source_observation_number, source_verified_receipt_id, source_workspace_id, source_workspace_generation,
+        source_workspace_revision, source_workspace_root_key, source_workspace_ownership_binding_sha256,
+        source_workspace_head_object_id, source_workspace_verified_receipt_id,
+        continuation_reference, required_action_receipt_id,
+        run_id, member_id, execution_id, workspace_id, intent_id, stage, lifecycle, revision,
+        workspace_generation, workspace_revision, workspace_head_object_id, result_code, result_json, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.operationId, record.publicIdempotencyKey, record.commandKind, record.commandJson,
+      record.commandSha256, record.actorId, record.profileId, record.profileRevision,
+      record.constructorConfigSha256, record.projectId, record.expectedProjectResourceRevision,
+      record.expectedProjectConfigRevision, record.taskId, record.expectedTaskRevision,
+      record.baseReference, record.leaseDurationSeconds, record.sourceExecutionId,
+      record.sourceExecutionRevision, record.sourceAttemptNumber, record.sourceFencingToken,
+      record.sourceBackendExecutionId, record.sourceThreadId, record.sourceObservationNumber,
+      record.sourceVerifiedReceiptId, record.sourceWorkspaceId, record.sourceWorkspaceGeneration,
+      record.sourceWorkspaceRevision, record.sourceWorkspaceRootKey,
+      record.sourceWorkspaceOwnershipBindingSha256, record.sourceWorkspaceHeadObjectId,
+      record.sourceWorkspaceVerifiedReceiptId,
+      record.continuationReference, record.requiredActionReceiptId, record.runId, record.memberId,
+      record.executionId, record.workspaceId, record.intentId, record.stage, record.lifecycle,
+      record.revision, record.workspaceGeneration, record.workspaceRevision, record.workspaceHeadObjectId,
+      record.resultCode, record.resultJson, record.createdAt, record.updatedAt,
+    );
+  }
+
+  updateCodexProductOperation(record: CodexProductOperationRecord, expectedRevision: number): void {
+    const result = this.#database.prepare(
+      `UPDATE codex_product_operations
+       SET stage=?, lifecycle=?, revision=revision+1, workspace_generation=?, workspace_revision=?,
+           workspace_head_object_id=?, result_code=?, result_json=?, updated_at=?
+       WHERE operation_id=? AND revision=?`,
+    ).run(
+      record.stage, record.lifecycle, record.workspaceGeneration, record.workspaceRevision,
+      record.workspaceHeadObjectId, record.resultCode, record.resultJson, record.updatedAt, record.operationId, expectedRevision,
+    );
+    if (changes(result.changes) !== 1) {
+      throw persistenceFailure("REVISION_CONFLICT", "Codex product operation stage CAS failed", { operationId: record.operationId });
+    }
+  }
+
+  insertCodexEffectAuthorization(record: CodexEffectAuthorizationRecord): void {
+    this.#database.prepare(
+      `INSERT INTO codex_effect_authorizations(
+        authorization_id, product_operation_id, phase, binding_revision, request_id, decision_id, audit_id,
+        confirmation_id, actor_id, action, result, reason, policy_result, grant_id, grant_revision,
+        required_grant_set_version, required_grant_set_json, required_grant_set_sha256,
+        core_authorization_decision_id, core_authorization_binding_revision,
+        profile_id, profile_revision, constructor_config_sha256, run_id, member_id, execution_id,
+        intent_id, workspace_id, workspace_generation, workspace_revision, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      record.authorizationId, record.productOperationId, record.phase, record.bindingRevision,
+      record.requestId, record.decisionId, record.auditId, record.confirmationId, record.actorId,
+      record.action, record.result, record.reason, record.policy, record.grantId, record.grantRevision,
+      record.requiredGrantSetVersion, record.requiredGrantSetJson, record.requiredGrantSetSha256,
+      record.coreAuthorizationDecisionId, record.coreAuthorizationBindingRevision,
+      record.profileId, record.profileRevision, record.constructorConfigSha256, record.runId,
+      record.memberId, record.executionId, record.intentId, record.workspaceId,
+      record.workspaceGeneration, record.workspaceRevision, record.createdAt,
     );
   }
 
@@ -1579,12 +1710,13 @@ export class ApplicationTransaction {
   insertDispatcherRun(record: DispatcherRunRecord): void {
     this.#database.prepare(
       `INSERT INTO dispatcher_runs(
-        run_id, observation_id, request_id, decision_id, actor_id, owner_id, owner_revision,
+        run_id, observation_id, request_id, decision_id, actor_id, route_kind, product_operation_id, owner_id, owner_revision,
         run_revision, requested_lease_seconds, heartbeat_at, lease_expires_at, status, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       record.runId, record.observationId, record.requestId, record.decisionId, record.actorId,
-      record.ownerId, record.ownerRevision, record.runRevision, record.requestedLeaseSeconds,
+      record.routeKind, record.productOperationId, record.ownerId, record.ownerRevision,
+      record.runRevision, record.requestedLeaseSeconds,
       record.heartbeatAt, record.leaseExpiresAt, record.status, record.createdAt, record.updatedAt,
     );
   }
@@ -1686,12 +1818,13 @@ export class ApplicationTransaction {
       `INSERT INTO dispatcher_members(
         member_id, run_id, membership_revision, ordinal, project_id, project_resource_revision,
         project_config_revision, task_id, task_revision, lifecycle, outcome, execution_id,
-        intent_id, code, revision, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        intent_id, product_operation_id, owner_kind, code, revision, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     ).run(
       record.memberId, record.runId, record.membershipRevision, record.ordinal, record.projectId,
       record.projectResourceRevision, record.projectConfigRevision, record.taskId, record.taskRevision,
-      record.lifecycle, record.outcome, record.executionId, record.intentId, record.code,
+      record.lifecycle, record.outcome, record.executionId, record.intentId,
+      record.productOperationId, record.ownerKind, record.code,
       record.revision, record.createdAt, record.updatedAt,
     );
   }
@@ -1746,14 +1879,17 @@ export class ApplicationTransaction {
     intentId: string | null,
     code: string,
     updatedAt: string,
+    productOperationId: string | null = null,
+    ownerKind: DispatcherMemberRecord["ownerKind"] = outcome === "claimed" && intentId !== null
+      ? "execution-start-intent" : null,
   ): void {
     const result = this.#database.prepare(
       `UPDATE dispatcher_members
-       SET lifecycle='terminal', outcome=?, execution_id=?, intent_id=?, code=?,
+       SET lifecycle='terminal', outcome=?, execution_id=?, intent_id=?, product_operation_id=?, owner_kind=?, code=?,
            revision=revision+1, updated_at=?
        WHERE member_id=? AND run_id=? AND membership_revision=? AND revision=? AND lifecycle='pending'`,
     ).run(
-      outcome, executionId, intentId, code, updatedAt, memberId, runId,
+      outcome, executionId, intentId, productOperationId, ownerKind, code, updatedAt, memberId, runId,
       expectedMembershipRevision, expectedRevision,
     );
     if (changes(result.changes) !== 1) {

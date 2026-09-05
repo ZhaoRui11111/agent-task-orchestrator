@@ -360,7 +360,7 @@ const durableAuthorizationFormatCorruptions = Object.freeze([
   Object.freeze({
     name: "unsupported bootstrap vocabulary",
     setup: "bootstrap",
-    value: 4,
+    value: 3,
     trigger: "authorization_bootstrap_no_update",
     update: "UPDATE authorization_bootstrap SET vocabulary_version=?",
     select: "SELECT vocabulary_version AS value FROM authorization_bootstrap",
@@ -384,7 +384,7 @@ const durableAuthorizationFormatCorruptions = Object.freeze([
   Object.freeze({
     name: "unsupported lifecycle digest version",
     setup: "lifecycle",
-    value: 4,
+    value: 3,
     trigger: "application_lifecycle_authorizations_no_update",
     update: "UPDATE application_lifecycle_authorizations SET state_digest_version=?",
     select: "SELECT state_digest_version AS value FROM application_lifecycle_authorizations",

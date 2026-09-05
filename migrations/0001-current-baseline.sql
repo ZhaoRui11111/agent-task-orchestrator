@@ -200,7 +200,7 @@ CREATE TABLE authorization_capability_epochs (
   epoch_revision INTEGER NOT NULL UNIQUE CHECK (epoch_revision > 0),
   actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
   runtime_root_key TEXT NOT NULL CHECK (length(runtime_root_key) > 0),
-  vocabulary_version INTEGER NOT NULL CHECK (vocabulary_version IN (1, 2, 3, 4, 5, 6, 7)),
+  vocabulary_version INTEGER NOT NULL CHECK (vocabulary_version IN (1, 2, 3, 4, 5, 6, 7, 8)),
   action_set_sha256 TEXT NOT NULL CHECK (length(action_set_sha256) = 64 AND action_set_sha256 NOT GLOB '*[^0-9A-F]*'),
   request_id TEXT NOT NULL UNIQUE,
   created_at TEXT NOT NULL CHECK (length(created_at) > 0),
@@ -226,7 +226,9 @@ CREATE TABLE authorization_grants (
     'completion.gate.run', 'completion.gate.inspect', 'completion.gate.cancel', 'completion.accept',
     'integration.reserve', 'integration.inspect', 'integration.lease.renew', 'integration.lease.takeover',
     'integration.apply', 'integration.push', 'integration.recover', 'integration.release',
-    'scheduler.register', 'scheduler.inspect', 'scheduler.remove'
+    'scheduler.register', 'scheduler.inspect', 'scheduler.remove',
+    'codex.profile.activate', 'codex.profile.inspect', 'codex.profile.deactivate',
+    'codex.execution.invoke', 'codex.execution.cancel'
   )),
   scope_kind TEXT NOT NULL CHECK (scope_kind IN ('runtime', 'project')),
   scope_project_id TEXT,
@@ -346,7 +348,7 @@ CREATE TABLE application_lifecycle_authorizations (
   decision_id TEXT NOT NULL UNIQUE,
   audit_id TEXT NOT NULL UNIQUE,
   authorized_state_sha256 TEXT NOT NULL CHECK (length(authorized_state_sha256) = 64 AND authorized_state_sha256 NOT GLOB '*[^0-9A-F]*'),
-  state_digest_version INTEGER NOT NULL CHECK (state_digest_version = 3),
+  state_digest_version INTEGER NOT NULL CHECK (state_digest_version = 4),
   expected_request_count INTEGER NOT NULL CHECK (expected_request_count >= 1),
   expected_decision_count INTEGER NOT NULL CHECK (expected_decision_count >= 1),
   expected_audit_count INTEGER NOT NULL CHECK (expected_audit_count >= 1),
@@ -402,7 +404,8 @@ CREATE TABLE execution_attempts (
       AND supersedes_execution_id IS NULL AND predecessor_execution_revision IS NULL
       AND predecessor_lease_revision IS NULL AND predecessor_fencing_token IS NULL)
     OR
-    (operation_kind = 'takeover' AND attempt_number > 1 AND post_task_revision = pre_task_revision
+    (operation_kind = 'takeover' AND attempt_number > 1
+      AND post_task_revision IN (pre_task_revision, pre_task_revision + 1)
       AND supersedes_execution_id IS NOT NULL AND predecessor_execution_revision IS NOT NULL
       AND predecessor_lease_revision IS NOT NULL AND predecessor_fencing_token IS NOT NULL)
   ),
@@ -958,8 +961,11 @@ CREATE TABLE codex_backend_turns (
   task_id TEXT NOT NULL CHECK (length(task_id) > 0),
   task_revision INTEGER NOT NULL CHECK (task_revision > 0),
   input_reference TEXT NOT NULL CHECK (
-    length(input_reference) = 76 AND substr(input_reference, 1, 12) = 'task-sha256:'
-    AND substr(input_reference, 13) NOT GLOB '*[^0-9a-f]*'
+    (length(input_reference) = 76 AND substr(input_reference, 1, 12) = 'task-sha256:'
+      AND substr(input_reference, 13) NOT GLOB '*[^0-9a-f]*')
+    OR
+    (length(input_reference) = 83 AND substr(input_reference, 1, 19) = 'codex-task-binding:'
+      AND substr(input_reference, 20) NOT GLOB '*[^0-9A-F]*')
   ),
   execution_id TEXT NOT NULL UNIQUE CHECK (length(execution_id) BETWEEN 1 AND 128),
   execution_revision INTEGER NOT NULL CHECK (execution_revision > 0),
@@ -1436,6 +1442,8 @@ CREATE TABLE dispatcher_runs (
   request_id TEXT NOT NULL UNIQUE,
   decision_id TEXT NOT NULL UNIQUE,
   actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  route_kind TEXT NOT NULL CHECK (route_kind IN ('manual', 'scheduled', 'codex-start', 'codex-continuation')),
+  product_operation_id TEXT,
   owner_id TEXT NOT NULL CHECK (length(owner_id) BETWEEN 1 AND 128),
   owner_revision INTEGER NOT NULL CHECK (owner_revision > 0),
   run_revision INTEGER NOT NULL CHECK (run_revision > 0),
@@ -1447,7 +1455,8 @@ CREATE TABLE dispatcher_runs (
   updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
   FOREIGN KEY (observation_id) REFERENCES dispatcher_trigger_requests(observation_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (request_id) REFERENCES dispatcher_trigger_requests(request_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
-  FOREIGN KEY (decision_id) REFERENCES dispatcher_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+  FOREIGN KEY (decision_id) REFERENCES dispatcher_authorization_decisions(decision_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (product_operation_id) REFERENCES codex_product_operations(operation_id) ON UPDATE RESTRICT ON DELETE RESTRICT
 ) STRICT;
 
 CREATE INDEX dispatcher_runs_status_lease_index ON dispatcher_runs(status, lease_expires_at, run_id);
@@ -1539,19 +1548,25 @@ CREATE TABLE dispatcher_members (
   )),
   execution_id TEXT,
   intent_id TEXT,
+  product_operation_id TEXT,
+  owner_kind TEXT CHECK (owner_kind IS NULL OR owner_kind IN ('execution-start-intent', 'codex-product-operation')),
   code TEXT CHECK (code IS NULL OR code IN (
     'dispatch_denied', 'binding_absent', 'project_identity_changed', 'project_revision_changed', 'project_disabled',
     'execution_sequence_exists', 'task_revision_changed', 'domain_ineligible', 'resource_reconciliation_incomplete',
-    'execution_claim_denied', 'execution_start_denied', 'domain_claim_rejected', 'claimed_and_prepared'
+    'execution_claim_denied', 'execution_start_denied', 'domain_claim_rejected', 'claimed_and_prepared',
+    'claimed_for_codex', 'codex_profile_inactive', 'codex_product_stale', 'codex_source_not_ready',
+    'execution_continuation_denied', 'execution_takeover_denied'
   )),
   revision INTEGER NOT NULL CHECK (revision > 0),
   created_at TEXT NOT NULL CHECK (length(created_at) > 0),
   updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
-  CHECK ((lifecycle='pending' AND outcome IS NULL AND execution_id IS NULL AND intent_id IS NULL AND code IS NULL)
+  CHECK ((lifecycle='pending' AND outcome IS NULL AND execution_id IS NULL AND intent_id IS NULL AND owner_kind IS NULL AND code IS NULL)
     OR (lifecycle='terminal' AND outcome IS NOT NULL AND code IS NOT NULL AND length(code) BETWEEN 1 AND 64)),
-  CHECK ((outcome='claimed' AND execution_id IS NOT NULL AND intent_id IS NOT NULL)
+  CHECK ((outcome='claimed' AND execution_id IS NOT NULL AND
+      ((owner_kind='execution-start-intent' AND intent_id IS NOT NULL AND product_operation_id IS NULL)
+        OR (owner_kind='codex-product-operation' AND intent_id IS NULL AND product_operation_id IS NOT NULL)))
     OR outcome IS NULL OR outcome<>'claimed'),
-  CHECK (outcome='claimed' OR (execution_id IS NULL AND intent_id IS NULL)),
+  CHECK (outcome='claimed' OR (execution_id IS NULL AND intent_id IS NULL AND product_operation_id IS NULL AND owner_kind IS NULL)),
   UNIQUE(member_id, run_id),
   UNIQUE(run_id, ordinal),
   UNIQUE(run_id, task_id),
@@ -1559,7 +1574,8 @@ CREATE TABLE dispatcher_members (
   FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
   FOREIGN KEY (execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
-  FOREIGN KEY (intent_id) REFERENCES execution_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+  FOREIGN KEY (intent_id) REFERENCES execution_operation_intents(intent_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (product_operation_id) REFERENCES codex_product_operations(operation_id) ON UPDATE RESTRICT ON DELETE RESTRICT
 ) STRICT;
 
 CREATE TABLE dispatcher_member_denial_requests (
@@ -1706,6 +1722,7 @@ CREATE TRIGGER dispatcher_runs_update_guard
 BEFORE UPDATE ON dispatcher_runs
 WHEN NEW.run_id<>OLD.run_id OR NEW.observation_id<>OLD.observation_id OR NEW.request_id<>OLD.request_id
   OR NEW.decision_id<>OLD.decision_id OR NEW.actor_id<>OLD.actor_id
+  OR NEW.route_kind<>OLD.route_kind OR NEW.product_operation_id IS NOT OLD.product_operation_id
   OR NEW.requested_lease_seconds<>OLD.requested_lease_seconds OR NEW.created_at<>OLD.created_at
   OR NEW.run_revision<>OLD.run_revision+1 OR NEW.updated_at<=OLD.updated_at
   OR NEW.heartbeat_at<=OLD.heartbeat_at OR NEW.lease_expires_at<=OLD.lease_expires_at
@@ -1808,10 +1825,44 @@ WHEN NEW.expected_member_count<>(SELECT expected_member_count FROM dispatcher_me
   OR EXISTS (
     SELECT 1 FROM dispatcher_members AS member
     WHERE member.run_id=NEW.run_id AND member.outcome='claimed'
-      AND (member.execution_id IS NULL OR member.intent_id IS NULL
-        OR NOT EXISTS (SELECT 1 FROM execution_attempts WHERE execution_id=member.execution_id)
-        OR NOT EXISTS (SELECT 1 FROM execution_operation_intents
-          WHERE intent_id=member.intent_id AND execution_id=member.execution_id AND state='finalized'))
+      AND (member.execution_id IS NULL
+        OR (member.owner_kind='execution-start-intent' AND (
+          member.intent_id IS NULL OR member.product_operation_id IS NOT NULL
+          OR NOT EXISTS (SELECT 1 FROM execution_attempts WHERE execution_id=member.execution_id)
+          OR NOT EXISTS (SELECT 1 FROM execution_operation_intents
+            WHERE intent_id=member.intent_id AND execution_id=member.execution_id AND state='finalized')
+        ))
+        OR (member.owner_kind='codex-product-operation' AND (
+          member.intent_id IS NOT NULL OR member.product_operation_id IS NULL
+          OR NOT EXISTS (
+            SELECT 1 FROM codex_product_operations AS product
+            JOIN execution_attempts AS execution ON execution.execution_id=product.execution_id
+            JOIN execution_operation_intents AS intent ON intent.intent_id=product.intent_id
+            JOIN workspace_generations AS workspace
+              ON workspace.workspace_id=product.workspace_id AND workspace.generation=product.workspace_generation
+            WHERE product.operation_id=member.product_operation_id
+              AND product.run_id=member.run_id AND product.member_id=member.member_id
+              AND product.execution_id=member.execution_id AND product.lifecycle IN ('active','finalized')
+              AND product.stage='workspace_refreshed' AND intent.execution_id=product.execution_id
+              AND intent.state='finalized' AND workspace.execution_id=product.execution_id
+              AND workspace.status='ready' AND workspace.revision=product.workspace_revision
+              AND EXISTS (
+                SELECT 1 FROM workspace_operation_intents AS inspect_intent
+                JOIN workspace_verified_receipts AS receipt ON receipt.intent_id=inspect_intent.intent_id
+                JOIN workspace_finalizations AS finalization
+                  ON finalization.intent_id=inspect_intent.intent_id
+                  AND finalization.verified_receipt_id=receipt.verified_receipt_id
+                WHERE inspect_intent.operation_kind='inspect' AND inspect_intent.state='finalized'
+                  AND inspect_intent.workspace_id=product.workspace_id
+                  AND inspect_intent.generation=product.workspace_generation
+                  AND receipt.outcome='succeeded' AND receipt.external_state='complete'
+                  AND receipt.head_object_id=product.workspace_head_object_id
+                  AND finalization.outcome='succeeded'
+                  AND finalization.resulting_generation_status='ready'
+                  AND finalization.resulting_generation_revision=product.workspace_revision
+              )
+          )
+        )))
   )
   OR EXISTS (
     SELECT 1 FROM dispatcher_members AS member
@@ -3128,4 +3179,296 @@ CREATE TRIGGER scheduler_scheduled_tuples_no_update BEFORE UPDATE ON scheduler_s
 END;
 CREATE TRIGGER scheduler_scheduled_tuples_no_delete BEFORE DELETE ON scheduler_scheduled_tuples BEGIN
   SELECT RAISE(ABORT, 'scheduler tuples are immutable');
+END;
+
+CREATE TABLE codex_profiles (
+  profile_id TEXT PRIMARY KEY NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
+  project_id TEXT NOT NULL UNIQUE,
+  creator_operation_id TEXT NOT NULL UNIQUE CHECK (length(creator_operation_id) BETWEEN 1 AND 128),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  status TEXT NOT NULL CHECK (status IN ('active', 'deactivated')),
+  project_resource_revision INTEGER NOT NULL CHECK (project_resource_revision > 0),
+  project_config_revision INTEGER NOT NULL CHECK (project_config_revision > 0),
+  project_root_key TEXT NOT NULL CHECK (length(project_root_key) BETWEEN 1 AND 128),
+  destination TEXT NOT NULL CHECK (destination='openai-codex-api'),
+  credential_reference TEXT NOT NULL CHECK (credential_reference='process-env:CODEX_API_KEY'),
+  workspace_root TEXT NOT NULL CHECK (length(workspace_root) BETWEEN 1 AND 4096),
+  workspace_root_key TEXT NOT NULL UNIQUE CHECK (length(workspace_root_key) BETWEEN 1 AND 4096),
+  workspace_platform TEXT NOT NULL CHECK (length(workspace_platform) BETWEEN 1 AND 32),
+  workspace_device TEXT NOT NULL CHECK (length(workspace_device) > 0),
+  workspace_inode TEXT NOT NULL CHECK (length(workspace_inode) > 0),
+  workspace_mode INTEGER NOT NULL CHECK (workspace_mode >= 0),
+  codex_home TEXT NOT NULL CHECK (length(codex_home) BETWEEN 1 AND 4096),
+  codex_home_key TEXT NOT NULL UNIQUE CHECK (length(codex_home_key) BETWEEN 1 AND 4096),
+  codex_home_platform TEXT NOT NULL CHECK (length(codex_home_platform) BETWEEN 1 AND 32),
+  codex_home_device TEXT NOT NULL CHECK (length(codex_home_device) > 0),
+  codex_home_inode TEXT NOT NULL CHECK (length(codex_home_inode) > 0),
+  codex_home_mode INTEGER NOT NULL CHECK (codex_home_mode >= 0),
+  git_executable TEXT NOT NULL CHECK (length(git_executable) BETWEEN 1 AND 4096),
+  git_executable_key TEXT NOT NULL CHECK (length(git_executable_key) BETWEEN 1 AND 4096),
+  git_executable_platform TEXT NOT NULL CHECK (length(git_executable_platform) BETWEEN 1 AND 32),
+  git_executable_device TEXT NOT NULL CHECK (length(git_executable_device) > 0),
+  git_executable_inode TEXT NOT NULL CHECK (length(git_executable_inode) > 0),
+  git_executable_mode INTEGER NOT NULL CHECK (git_executable_mode >= 0),
+  constructor_config_sha256 TEXT NOT NULL CHECK (length(constructor_config_sha256)=64 AND constructor_config_sha256 NOT GLOB '*[^0-9A-F]*'),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+  CHECK (workspace_root_key<>codex_home_key),
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE codex_profile_operations (
+  operation_id TEXT PRIMARY KEY NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 128),
+  idempotency_key TEXT NOT NULL UNIQUE CHECK (length(idempotency_key) BETWEEN 1 AND 128),
+  request_id TEXT NOT NULL UNIQUE CHECK (length(request_id) BETWEEN 1 AND 128),
+  decision_id TEXT NOT NULL UNIQUE CHECK (length(decision_id) BETWEEN 1 AND 128),
+  audit_id TEXT NOT NULL UNIQUE CHECK (length(audit_id) BETWEEN 1 AND 128),
+  confirmation_id TEXT UNIQUE CHECK (confirmation_id IS NULL OR length(confirmation_id) BETWEEN 1 AND 128),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  action TEXT NOT NULL CHECK (action IN ('codex.profile.activate', 'codex.profile.deactivate')),
+  project_id TEXT NOT NULL,
+  expected_project_resource_revision INTEGER NOT NULL CHECK (expected_project_resource_revision > 0),
+  expected_project_config_revision INTEGER NOT NULL CHECK (expected_project_config_revision > 0),
+  profile_id TEXT NOT NULL CHECK (length(profile_id) BETWEEN 1 AND 128),
+  expected_profile_revision INTEGER NOT NULL CHECK (expected_profile_revision >= 0),
+  result TEXT NOT NULL CHECK (result IN ('allow', 'deny')),
+  reason TEXT NOT NULL CHECK (reason IN (
+    'allowed', 'actor_mismatch', 'action_mismatch', 'scope_mismatch', 'scope_revision_stale',
+    'grant_expired', 'grant_not_yet_valid', 'grant_revoked', 'grant_missing', 'policy_denied',
+    'confirmation_required'
+  )),
+  policy_result TEXT NOT NULL CHECK (policy_result IN ('allow', 'deny', 'read_not_applicable')),
+  grant_id TEXT,
+  grant_revision INTEGER,
+  configuration_sha256 TEXT CHECK (configuration_sha256 IS NULL OR (length(configuration_sha256)=64 AND configuration_sha256 NOT GLOB '*[^0-9A-F]*')),
+  resulting_profile_revision INTEGER,
+  resulting_status TEXT CHECK (resulting_status IS NULL OR resulting_status IN ('active', 'deactivated')),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  CHECK ((grant_id IS NULL AND grant_revision IS NULL) OR (length(grant_id)>0 AND grant_revision>0)),
+  CHECK ((result='allow' AND reason='allowed' AND grant_id IS NOT NULL AND confirmation_id IS NOT NULL
+      AND configuration_sha256 IS NOT NULL AND resulting_profile_revision=expected_profile_revision+1
+      AND ((action='codex.profile.activate' AND resulting_status='active')
+        OR (action='codex.profile.deactivate' AND resulting_status='deactivated')))
+    OR (result='deny' AND reason<>'allowed' AND configuration_sha256 IS NULL
+      AND resulting_profile_revision IS NULL AND resulting_status IS NULL
+      AND ((reason='confirmation_required' AND confirmation_id IS NULL)
+        OR (reason<>'confirmation_required' AND confirmation_id IS NOT NULL)))),
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (grant_id) REFERENCES authorization_grants(grant_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TABLE codex_product_operations (
+  operation_id TEXT PRIMARY KEY NOT NULL CHECK (length(operation_id) BETWEEN 1 AND 128),
+  public_idempotency_key TEXT NOT NULL UNIQUE CHECK (length(public_idempotency_key) BETWEEN 1 AND 128),
+  command_kind TEXT NOT NULL CHECK (command_kind IN ('codex.dispatch-run', 'execution.resume', 'execution.retry')),
+  command_json TEXT NOT NULL CHECK (length(command_json) BETWEEN 2 AND 16384),
+  command_sha256 TEXT NOT NULL CHECK (length(command_sha256)=64 AND command_sha256 NOT GLOB '*[^0-9A-F]*'),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  profile_id TEXT NOT NULL,
+  profile_revision INTEGER NOT NULL CHECK (profile_revision > 0),
+  constructor_config_sha256 TEXT NOT NULL CHECK (length(constructor_config_sha256)=64 AND constructor_config_sha256 NOT GLOB '*[^0-9A-F]*'),
+  project_id TEXT NOT NULL,
+  expected_project_resource_revision INTEGER NOT NULL CHECK (expected_project_resource_revision > 0),
+  expected_project_config_revision INTEGER NOT NULL CHECK (expected_project_config_revision > 0),
+  task_id TEXT NOT NULL,
+  expected_task_revision INTEGER NOT NULL CHECK (expected_task_revision > 0),
+  base_reference TEXT CHECK (base_reference IS NULL OR (length(base_reference)=40 AND base_reference NOT GLOB '*[^0-9a-f]*')),
+  lease_duration_seconds INTEGER CHECK (lease_duration_seconds IS NULL OR lease_duration_seconds BETWEEN 30 AND 3600),
+  source_execution_id TEXT,
+  source_execution_revision INTEGER,
+  source_attempt_number INTEGER,
+  source_fencing_token INTEGER,
+  source_backend_execution_id TEXT,
+  source_thread_id TEXT,
+  source_observation_number INTEGER,
+  source_verified_receipt_id TEXT,
+  source_workspace_id TEXT,
+  source_workspace_generation INTEGER,
+  source_workspace_revision INTEGER,
+  source_workspace_root_key TEXT,
+  source_workspace_ownership_binding_sha256 TEXT,
+  source_workspace_head_object_id TEXT,
+  source_workspace_verified_receipt_id TEXT,
+  continuation_reference TEXT,
+  required_action_receipt_id TEXT,
+  run_id TEXT NOT NULL UNIQUE CHECK (length(run_id) BETWEEN 1 AND 128),
+  member_id TEXT NOT NULL UNIQUE CHECK (length(member_id) BETWEEN 1 AND 128),
+  execution_id TEXT NOT NULL UNIQUE CHECK (length(execution_id) BETWEEN 1 AND 128),
+  workspace_id TEXT NOT NULL UNIQUE CHECK (length(workspace_id) BETWEEN 1 AND 128),
+  intent_id TEXT NOT NULL UNIQUE CHECK (length(intent_id) BETWEEN 1 AND 128),
+  stage TEXT NOT NULL CHECK (stage IN (
+    'prepared', 'member_bound', 'workspace_ready', 'intent_prepared',
+    'effect_possible', 'effect_terminal', 'workspace_refreshed'
+  )),
+  lifecycle TEXT NOT NULL CHECK (lifecycle IN ('active', 'finalized', 'refused', 'recovery_required')),
+  revision INTEGER NOT NULL CHECK (revision > 0),
+  workspace_generation INTEGER,
+  workspace_revision INTEGER,
+  workspace_head_object_id TEXT,
+  result_code TEXT CHECK (result_code IS NULL OR length(result_code) BETWEEN 1 AND 64),
+  result_json TEXT CHECK (result_json IS NULL OR length(result_json) BETWEEN 2 AND 16384),
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  updated_at TEXT NOT NULL CHECK (length(updated_at) > 0),
+  CHECK ((command_kind='codex.dispatch-run' AND base_reference IS NOT NULL AND lease_duration_seconds IS NOT NULL
+      AND source_execution_id IS NULL AND source_execution_revision IS NULL AND source_attempt_number IS NULL
+      AND source_fencing_token IS NULL AND source_backend_execution_id IS NULL AND source_thread_id IS NULL
+      AND source_observation_number IS NULL AND source_verified_receipt_id IS NULL AND source_workspace_id IS NULL
+      AND source_workspace_generation IS NULL AND source_workspace_revision IS NULL AND source_workspace_root_key IS NULL
+      AND source_workspace_ownership_binding_sha256 IS NULL AND source_workspace_head_object_id IS NULL
+      AND source_workspace_verified_receipt_id IS NULL AND continuation_reference IS NULL AND required_action_receipt_id IS NULL)
+    OR (command_kind IN ('execution.resume','execution.retry') AND base_reference IS NULL AND lease_duration_seconds IS NULL
+      AND source_execution_id IS NOT NULL AND source_execution_revision>0 AND source_attempt_number>0
+      AND source_fencing_token>0 AND length(source_backend_execution_id) BETWEEN 1 AND 128
+      AND length(source_thread_id) BETWEEN 1 AND 128 AND source_observation_number>0
+      AND length(source_verified_receipt_id) BETWEEN 1 AND 128 AND length(source_workspace_id) BETWEEN 1 AND 128
+      AND source_workspace_generation>0 AND source_workspace_revision>0
+      AND length(source_workspace_root_key) BETWEEN 1 AND 128
+      AND length(source_workspace_ownership_binding_sha256)=64
+      AND source_workspace_ownership_binding_sha256 NOT GLOB '*[^0-9A-F]*'
+      AND length(source_workspace_head_object_id)=40 AND source_workspace_head_object_id NOT GLOB '*[^0-9a-f]*'
+      AND length(source_workspace_verified_receipt_id) BETWEEN 1 AND 128
+      AND continuation_reference IS NOT NULL AND required_action_receipt_id IS NOT NULL)),
+  CHECK ((workspace_generation IS NULL AND workspace_revision IS NULL AND workspace_head_object_id IS NULL)
+    OR (workspace_generation>0 AND workspace_revision>0 AND length(workspace_head_object_id)=40
+      AND workspace_head_object_id NOT GLOB '*[^0-9a-f]*')),
+  CHECK ((lifecycle='active' AND result_code IS NULL AND result_json IS NULL)
+    OR (lifecycle='finalized' AND stage='workspace_refreshed' AND result_code IS NOT NULL AND result_json IS NOT NULL)
+    OR (lifecycle='refused' AND stage='prepared' AND result_code IS NOT NULL AND result_json IS NOT NULL)
+    OR (lifecycle='recovery_required' AND stage<>'workspace_refreshed' AND result_code IS NOT NULL AND result_json IS NULL)),
+  FOREIGN KEY (profile_id) REFERENCES codex_profiles(profile_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (project_id) REFERENCES project_registry(project_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (task_id) REFERENCES tasks(task_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (source_execution_id) REFERENCES execution_attempts(execution_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (source_verified_receipt_id) REFERENCES execution_verified_receipts(verified_receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (source_workspace_verified_receipt_id) REFERENCES workspace_verified_receipts(verified_receipt_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE INDEX codex_product_operations_recovery
+  ON codex_product_operations(lifecycle, updated_at, operation_id)
+  WHERE lifecycle IN ('active', 'recovery_required');
+
+CREATE TABLE codex_effect_authorizations (
+  authorization_id TEXT PRIMARY KEY NOT NULL CHECK (length(authorization_id) BETWEEN 1 AND 128),
+  product_operation_id TEXT NOT NULL,
+  phase TEXT NOT NULL CHECK (phase IN ('prepare', 'act')),
+  binding_revision INTEGER NOT NULL CHECK (binding_revision > 0),
+  request_id TEXT NOT NULL UNIQUE CHECK (length(request_id) BETWEEN 1 AND 128),
+  decision_id TEXT NOT NULL UNIQUE CHECK (length(decision_id) BETWEEN 1 AND 128),
+  audit_id TEXT NOT NULL UNIQUE CHECK (length(audit_id) BETWEEN 1 AND 128),
+  confirmation_id TEXT UNIQUE CHECK (confirmation_id IS NULL OR length(confirmation_id) BETWEEN 1 AND 128),
+  actor_id TEXT NOT NULL CHECK (length(actor_id) BETWEEN 1 AND 128),
+  action TEXT NOT NULL CHECK (action='codex.execution.invoke'),
+  result TEXT NOT NULL CHECK (result IN ('allow', 'deny')),
+  reason TEXT NOT NULL CHECK (reason IN (
+    'allowed', 'actor_mismatch', 'action_mismatch', 'scope_mismatch', 'scope_revision_stale',
+    'grant_expired', 'grant_not_yet_valid', 'grant_revoked', 'grant_missing', 'policy_denied',
+    'confirmation_required'
+  )),
+  policy_result TEXT NOT NULL CHECK (policy_result IN ('allow', 'deny', 'read_not_applicable')),
+  grant_id TEXT,
+  grant_revision INTEGER,
+  required_grant_set_version INTEGER NOT NULL CHECK (required_grant_set_version=1),
+  required_grant_set_json TEXT NOT NULL CHECK (length(required_grant_set_json) BETWEEN 2 AND 16384),
+  required_grant_set_sha256 TEXT NOT NULL CHECK (length(required_grant_set_sha256)=64 AND required_grant_set_sha256 NOT GLOB '*[^0-9A-F]*'),
+  core_authorization_decision_id TEXT,
+  core_authorization_binding_revision INTEGER,
+  profile_id TEXT NOT NULL,
+  profile_revision INTEGER NOT NULL CHECK (profile_revision > 0),
+  constructor_config_sha256 TEXT NOT NULL CHECK (length(constructor_config_sha256)=64 AND constructor_config_sha256 NOT GLOB '*[^0-9A-F]*'),
+  run_id TEXT NOT NULL CHECK (length(run_id) BETWEEN 1 AND 128),
+  member_id TEXT NOT NULL CHECK (length(member_id) BETWEEN 1 AND 128),
+  execution_id TEXT NOT NULL CHECK (length(execution_id) BETWEEN 1 AND 128),
+  intent_id TEXT,
+  workspace_id TEXT NOT NULL CHECK (length(workspace_id) BETWEEN 1 AND 128),
+  workspace_generation INTEGER,
+  workspace_revision INTEGER,
+  created_at TEXT NOT NULL CHECK (length(created_at) > 0),
+  UNIQUE(product_operation_id, binding_revision),
+  CHECK ((grant_id IS NULL AND grant_revision IS NULL) OR (length(grant_id)>0 AND grant_revision>0)),
+  CHECK ((core_authorization_decision_id IS NULL AND core_authorization_binding_revision IS NULL)
+    OR (length(core_authorization_decision_id) BETWEEN 1 AND 128 AND core_authorization_binding_revision>1)),
+  CHECK ((result='allow' AND reason='allowed' AND grant_id IS NOT NULL AND confirmation_id IS NOT NULL)
+    OR (result='deny' AND reason<>'allowed'
+      AND ((reason='confirmation_required' AND confirmation_id IS NULL)
+        OR (reason<>'confirmation_required' AND confirmation_id IS NOT NULL)))),
+  CHECK ((phase='prepare' AND binding_revision=1 AND intent_id IS NULL
+      AND workspace_generation IS NULL AND workspace_revision IS NULL
+      AND core_authorization_decision_id IS NULL AND core_authorization_binding_revision IS NULL)
+    OR (phase='act' AND binding_revision>1 AND intent_id IS NOT NULL
+      AND workspace_generation>0 AND workspace_revision>0
+      AND (result='deny' OR core_authorization_decision_id IS NOT NULL))),
+  FOREIGN KEY (product_operation_id) REFERENCES codex_product_operations(operation_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (profile_id) REFERENCES codex_profiles(profile_id) ON UPDATE RESTRICT ON DELETE RESTRICT,
+  FOREIGN KEY (grant_id) REFERENCES authorization_grants(grant_id) ON UPDATE RESTRICT ON DELETE RESTRICT
+) STRICT;
+
+CREATE TRIGGER codex_profiles_update_guard
+BEFORE UPDATE ON codex_profiles
+WHEN NEW.profile_id<>OLD.profile_id OR NEW.project_id<>OLD.project_id
+  OR NEW.creator_operation_id<>OLD.creator_operation_id OR NEW.actor_id<>OLD.actor_id
+  OR NEW.project_root_key<>OLD.project_root_key
+  OR NEW.destination<>OLD.destination OR NEW.credential_reference<>OLD.credential_reference
+  OR NEW.workspace_root<>OLD.workspace_root OR NEW.workspace_root_key<>OLD.workspace_root_key
+  OR NEW.workspace_platform<>OLD.workspace_platform OR NEW.workspace_device<>OLD.workspace_device
+  OR NEW.workspace_inode<>OLD.workspace_inode OR NEW.workspace_mode<>OLD.workspace_mode
+  OR NEW.codex_home<>OLD.codex_home OR NEW.codex_home_key<>OLD.codex_home_key
+  OR NEW.codex_home_platform<>OLD.codex_home_platform OR NEW.codex_home_device<>OLD.codex_home_device
+  OR NEW.codex_home_inode<>OLD.codex_home_inode OR NEW.codex_home_mode<>OLD.codex_home_mode
+  OR NEW.git_executable<>OLD.git_executable OR NEW.git_executable_key<>OLD.git_executable_key
+  OR NEW.git_executable_platform<>OLD.git_executable_platform OR NEW.git_executable_device<>OLD.git_executable_device
+  OR NEW.git_executable_inode<>OLD.git_executable_inode OR NEW.git_executable_mode<>OLD.git_executable_mode
+  OR NEW.constructor_config_sha256<>OLD.constructor_config_sha256 OR NEW.created_at<>OLD.created_at
+  OR NEW.revision<>OLD.revision+1 OR NEW.updated_at<=OLD.updated_at OR NEW.status=OLD.status
+BEGIN
+  SELECT RAISE(ABORT, 'Codex profile update violates identity, revision or lifecycle');
+END;
+CREATE TRIGGER codex_profiles_no_delete BEFORE DELETE ON codex_profiles BEGIN
+  SELECT RAISE(ABORT, 'Codex profiles cannot be deleted');
+END;
+CREATE TRIGGER codex_profile_operations_no_update BEFORE UPDATE ON codex_profile_operations BEGIN
+  SELECT RAISE(ABORT, 'Codex profile operations are immutable');
+END;
+CREATE TRIGGER codex_profile_operations_no_delete BEFORE DELETE ON codex_profile_operations BEGIN
+  SELECT RAISE(ABORT, 'Codex profile operations are immutable');
+END;
+CREATE TRIGGER codex_product_operations_update_guard
+BEFORE UPDATE ON codex_product_operations
+WHEN NEW.operation_id<>OLD.operation_id OR NEW.public_idempotency_key<>OLD.public_idempotency_key
+  OR NEW.command_kind<>OLD.command_kind OR NEW.command_json<>OLD.command_json OR NEW.command_sha256<>OLD.command_sha256
+  OR NEW.actor_id<>OLD.actor_id OR NEW.profile_id<>OLD.profile_id OR NEW.profile_revision<>OLD.profile_revision
+  OR NEW.constructor_config_sha256<>OLD.constructor_config_sha256 OR NEW.project_id<>OLD.project_id
+  OR NEW.expected_project_resource_revision<>OLD.expected_project_resource_revision
+  OR NEW.expected_project_config_revision<>OLD.expected_project_config_revision OR NEW.task_id<>OLD.task_id
+  OR NEW.expected_task_revision<>OLD.expected_task_revision OR NEW.base_reference IS NOT OLD.base_reference
+  OR NEW.lease_duration_seconds IS NOT OLD.lease_duration_seconds OR NEW.source_execution_id IS NOT OLD.source_execution_id
+  OR NEW.source_execution_revision IS NOT OLD.source_execution_revision OR NEW.source_attempt_number IS NOT OLD.source_attempt_number
+  OR NEW.source_fencing_token IS NOT OLD.source_fencing_token
+  OR NEW.source_backend_execution_id IS NOT OLD.source_backend_execution_id
+  OR NEW.source_thread_id IS NOT OLD.source_thread_id
+  OR NEW.source_observation_number IS NOT OLD.source_observation_number
+  OR NEW.source_verified_receipt_id IS NOT OLD.source_verified_receipt_id
+  OR NEW.source_workspace_id IS NOT OLD.source_workspace_id
+  OR NEW.source_workspace_generation IS NOT OLD.source_workspace_generation
+  OR NEW.source_workspace_revision IS NOT OLD.source_workspace_revision
+  OR NEW.source_workspace_root_key IS NOT OLD.source_workspace_root_key
+  OR NEW.source_workspace_ownership_binding_sha256 IS NOT OLD.source_workspace_ownership_binding_sha256
+  OR NEW.source_workspace_head_object_id IS NOT OLD.source_workspace_head_object_id
+  OR NEW.source_workspace_verified_receipt_id IS NOT OLD.source_workspace_verified_receipt_id
+  OR NEW.continuation_reference IS NOT OLD.continuation_reference
+  OR NEW.required_action_receipt_id IS NOT OLD.required_action_receipt_id OR NEW.run_id<>OLD.run_id
+  OR NEW.member_id<>OLD.member_id OR NEW.execution_id<>OLD.execution_id OR NEW.workspace_id<>OLD.workspace_id
+  OR NEW.intent_id<>OLD.intent_id OR NEW.created_at<>OLD.created_at OR NEW.revision<>OLD.revision+1
+  OR NEW.updated_at<=OLD.updated_at OR OLD.lifecycle IN ('finalized','refused')
+BEGIN
+  SELECT RAISE(ABORT, 'Codex product operation update violates immutable identity or revision');
+END;
+CREATE TRIGGER codex_product_operations_no_delete BEFORE DELETE ON codex_product_operations BEGIN
+  SELECT RAISE(ABORT, 'Codex product operations cannot be deleted');
+END;
+CREATE TRIGGER codex_effect_authorizations_no_update BEFORE UPDATE ON codex_effect_authorizations BEGIN
+  SELECT RAISE(ABORT, 'Codex effect authorizations are immutable');
+END;
+CREATE TRIGGER codex_effect_authorizations_no_delete BEFORE DELETE ON codex_effect_authorizations BEGIN
+  SELECT RAISE(ABORT, 'Codex effect authorizations are immutable');
 END;

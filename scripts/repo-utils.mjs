@@ -33,6 +33,8 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/cli-api.ts",
   "src/cli.ts",
   "src/codex-execution-backend.ts",
+  "src/codex-product-application.ts",
+  "src/codex-product-configuration.ts",
   "src/codex-sdk-worker.ts",
   "src/completion-application.ts",
   "src/completion-port.ts",
@@ -58,6 +60,7 @@ export const EXPECTED_PRODUCTION_SOURCE_FILES = Object.freeze([
   "src/persistence/application-repository.ts",
   "src/persistence/backup.ts",
   "src/persistence/codex-backend-repository.ts",
+  "src/persistence/codex-product-digest.ts",
   "src/persistence/codex-receipt-digest.ts",
   "src/persistence/database.ts",
   "src/persistence/doctor.ts",
@@ -130,10 +133,20 @@ export const EXPECTED_PHASE3_NODE_BUILTINS = Object.freeze({
 });
 
 const ALLOWED_CODEX_SOURCE_FILES = new Set([
+  "src/authorization.ts",
+  "src/cli-api-model.ts",
+  "src/cli-api-parser.ts",
+  "src/cli-api-presentation.ts",
+  "src/cli-api-runtime.ts",
+  "src/cli-api.ts",
   "src/codex-execution-backend.ts",
+  "src/codex-product-application.ts",
+  "src/codex-product-configuration.ts",
   "src/codex-sdk-worker.ts",
+  "src/dispatcher-application.ts",
   "src/execution-loop.ts",
   "src/execution-port.ts",
+  "src/index.ts",
   "src/node-builtins.d.ts",
   "src/persistence/application-repository-digest.ts",
   "src/persistence/application-repository-model.ts",
@@ -142,12 +155,19 @@ const ALLOWED_CODEX_SOURCE_FILES = new Set([
   "src/persistence/application-repository-transaction.ts",
   "src/persistence/application-repository.ts",
   "src/persistence/codex-backend-repository.ts",
+  "src/persistence/codex-product-digest.ts",
   "src/persistence/codex-receipt-digest.ts",
+  "src/persistence/local-ingress.ts",
 ]);
 
 export const EXPECTED_CODEX_NODE_BUILTINS = Object.freeze({
   "src/codex-execution-backend.ts": Object.freeze([
     "node:crypto",
+    "node:fs",
+    "node:path",
+  ]),
+  "src/codex-product-application.ts": Object.freeze(["node:path"]),
+  "src/codex-product-configuration.ts": Object.freeze([
     "node:fs",
     "node:path",
   ]),

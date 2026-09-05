@@ -6,7 +6,7 @@ export function applicationStateSha256(state: ApplicationState): string {
   return sha256(canonicalJson(applicationStateProjection(state)));
 }
 
-export const APPLICATION_STATE_DIGEST_VERSION = 3 as const;
+export const APPLICATION_STATE_DIGEST_VERSION = 4 as const;
 
 export function applicationStateProjection(state: ApplicationState): Readonly<Record<string, unknown>> {
   return Object.freeze({
@@ -43,6 +43,10 @@ export function applicationStateProjection(state: ApplicationState): Readonly<Re
     manualBackendOperations: state.manualBackendOperations,
     codexBackendOperations: state.codexBackendOperations,
     codexTurns: state.codexTurns,
+    codexProfiles: state.codexProfiles,
+    codexProfileOperations: state.codexProfileOperations,
+    codexProductOperations: state.codexProductOperations,
+    codexEffectAuthorizations: state.codexEffectAuthorizations,
     completionDecisions: state.completionDecisions,
     manualCompletionDecisions: state.manualCompletionDecisions,
     manualTurns: state.manualTurns,

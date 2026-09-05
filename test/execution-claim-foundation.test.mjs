@@ -92,7 +92,7 @@ test("explicit capability upgrade gates claim, renewal, restart takeover, replay
     assert.equal(BASE_AUTHORIZATION_ACTIONS.length, 19);
     assert.equal(EXECUTION_AUTHORIZATION_ACTIONS.length, 4);
     assert.equal(CLAIM_AUTHORIZATION_ACTIONS.length, 23);
-    assert.equal(AUTHORIZATION_ACTIONS.length, 50);
+    assert.equal(AUTHORIZATION_ACTIONS.length, 55);
     assert.equal(state.bootstrap?.vocabularyVersion, 1);
     assert.equal(state.epochs.length, 0);
     assert.equal(state.grants.some((grant) => grant.action.startsWith("execution.")), false);

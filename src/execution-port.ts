@@ -375,7 +375,8 @@ function sha1(value: unknown): value is string {
 }
 
 function taskInputReference(value: unknown): value is string {
-  return typeof value === "string" && /^task-sha256:[0-9a-f]{64}$/u.test(value);
+  return typeof value === "string" &&
+    /^(?:task-sha256:[0-9a-f]{64}|codex-task-binding:[0-9A-F]{64})$/u.test(value);
 }
 
 function effectInput(value: unknown): value is string {

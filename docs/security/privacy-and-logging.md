@@ -5,7 +5,7 @@
 This file is the sole normative owner of data classification, prompt and secret
 handling, log-content redaction, retention, diagnostic disclosure, and default
 no telemetry. The current schema-version-1 application owners implement sanitized append-only
-Phase 1, claim, reliable Manual-loop, package-private Codex turn/terminal,
+Phase 1, claim, reliable Manual-loop, Codex profile/product/effect and package-private turn/terminal,
 explicit-Manual dispatcher, and dedicated
 workspace/ProjectPolicy/gate/completion/integration/cleanup and scheduler
 audit/evidence
@@ -42,8 +42,12 @@ secret data is treated as `secret`.
   authoritative application storage, if required, is access-controlled and
   explicitly classified.
 - Credentials are resolved from an external OS/process credential source at the
-  last responsible adapter boundary. Persistence stores a credential reference
-  name at most, never the value.
+  last responsible adapter boundary. The Codex product first stores Prepare,
+  checks only non-value availability, creates the exact pending intent, and
+  atomically consumes a fresh confirmed Act before resolving the value.
+  Persistence stores only the fixed opaque reference
+  `process-env:CODEX_API_KEY` in the authoritative profile, never the value or a
+  value-derived hash.
 - Secrets are not accepted through Task text, CLI/MCP free text, policy config,
   command arguments, receipt payloads, or diagnostic options. A detected secret
   is rejected or omitted and produces only a fixed redacted reason code.
@@ -86,10 +90,10 @@ category, bounded code, retryable/ambiguous booleans, nullable canonical retry
 time, and integer retry count. Raw adapter messages, payloads, stacks, SQL, and
 Task/source content are discarded before that projection.
 
-The package-private Codex path reuses the authoritative Task body only as
+The authorized Codex product path reuses the authoritative Task body only as
 bounded ephemeral effect input after recomputing its exact
 `task-sha256:<lowercase-64-hex>` reference. It does not duplicate those bytes,
-the working-directory path, repository content, environment, credential, SDK
+the working-directory path, repository content, environment, credential value, SDK
 item event, model/tool text, command, output, usage detail, or raw error in an
 intent, journal, receipt, audit row, result, feasibility record, or default
 diagnostic. The driver drops all item events. A completed event contributes only
@@ -98,7 +102,18 @@ are not persisted. `codex_backend_turns` retains the sensitive SDK thread ID
 only because same-thread continuity and restart verification require that
 authoritative identity. It remains inside typed persistence and is absent from
 application audit, the current product/CLI, compatibility evidence, and logs.
-No current supported route resolves a credential or discloses input to Codex.
+
+Only `codex_profiles` retains the trusted Project/workspace/private-home/Git
+path and filesystem identities needed to re-open configuration; public profile
+results expose only opaque Project/profile identities, revisions, status, the
+fixed `openai-codex-api` label, `credentialConfigured=true`, and configuration
+digest. Product-operation and effect-authorization rows retain the canonical
+public command, digests, opaque ownership IDs, stages, closed result codes, and
+bounded stored terminal result, never secret or Task bytes. The supported route
+may disclose Task input and the resolved credential only after the exact T6
+Act. The product-supplied fixed constructor inputs do not attest or constrain
+administrator-managed effective configuration; that trusted-computing-base
+boundary and any provider retention remain outside the product claim.
 
 The dispatcher stores only opaque trigger/request/run/resource/member/
 execution/intent identities, owner and revision facts, timestamps, bounded
@@ -178,8 +193,12 @@ identity, actor/principal/worker owner, request/correlation/decision/audit/
 lifecycle/restore identity, backend/thread/intent/receipt/finalization identity,
 confirmation or idempotency text, application-state digest, secret,
 environment value, raw adapter payload/error, SQL/page/error, cause, or stack.
-Required bounded operational Project, Task, execution, dispatcher-run, grant,
-and backup IDs may appear only in the documented workflow result shapes.
+Required bounded operational Project, Task, execution, dispatcher-run, Codex
+profile/member/workspace, grant, and backup IDs may appear only in the
+documented workflow result shapes. Codex profile output may additionally show
+the fixed destination label, active/deactivated status,
+`credentialConfigured=true`, and configuration digest; it never shows a
+credential reference/value or stored path.
 
 The current execution projection exposes only execution/Task revisions, attempt and
 fence numbers, closed lifecycle, observation number, and the exact bounded

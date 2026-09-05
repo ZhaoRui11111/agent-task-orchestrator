@@ -8,18 +8,19 @@ intent/receipt/finalization, publication, recovery, retry propagation, and
 observable fan-out. The current library implements execution claims, ordered
 attempts, leases, per-Task fencing, exact CAS, restart readback, the sole current
 `ato.execution/v2` port, one durable local Manual backend/control, one
-package-private non-composed Codex SDK backend/journal, and the
+product-composed package-private Codex SDK backend/journal, and the
 ordered intent/observation/verified-receipt/finalization protocol for start,
 inspect, resume, retry, cancellation, Manual outcome reporting, verified
 interruption, reconcile-first expired execution, and separately accepted Manual
-completion. The Codex branch adds exact owned-workspace/HEAD/cwd and verified
-ephemeral-input binding, durable thread/terminal evidence, and ambiguity without
-blind replay; it is not exposed through a supported package-root or product
-factory and does not add operational authorization. It also implements one
-explicit-Manual and scheduled-ingress dispatcher with
+completion. The Codex branch adds a Project-scoped profile, targeted one-member
+start/continuation runs, exact owned-workspace/HEAD/cwd and verified ephemeral-
+input binding, fresh one-consumer Prepare/Act authority, durable thread/terminal
+evidence, and ambiguity without blind replay. Its supported product factory and
+four CLI paths expose only the closed authorized subset. The dispatcher implements
+explicit-Manual, targeted Codex, and scheduled-ingress routes with
 durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
 immutable finite membership, one terminal outcome per member, and
-completeness-gated summaries. One typed product facade exposes only these
+completeness-gated summaries. Typed product owners expose these
 existing owners to the sole current `ato.api/v1`, deriving non-public operation
 lineage from current durable state. The fresh-only Phase 3 library additionally
 implements pure `ato.project-policy/v1`, `ato.completion/v1`,
@@ -34,9 +35,9 @@ read-only inspect, sanitized delivery, exact scheduled-tuple uniqueness, and
 canonical dispatcher-run attachment against an injected backend. The default
 product runtime and CLI construct none of these injected libraries. There is
 still no concrete SchedulerBackend, platform registration, real scheduled task,
-MCP, product-wired Codex or scheduler route, Codex credential/destination authority, general
-network integration, release, deployment, real Codex account E2E, or
-platform-support claim.
+MCP, product-wired scheduler route, general network integration, release,
+deployment, real Codex account E2E, administrator-managed effective-
+configuration attestation, or platform-support claim.
 
 Task-state meaning comes from the [domain contract](domain-contract.md), record
 layout from the [persistence contract](persistence-contract.md), permission from
@@ -110,6 +111,19 @@ the semantic key and idempotency key cannot hide drift. The implementation
 stores no workspace receipt, working directory, environment, prompt, source
 content, path, or credential value.
 
+Every Codex start/resume/retry first stores one product operation keyed by the
+public idempotency key. Its authoritative C19 identity is the complete original
+typed public command plus trusted actor and command kind in canonical JSON and
+SHA-256, together with preallocated run/member/execution/workspace/intent IDs.
+After hostile-shape parsing and trusted actor/runtime validation, replay lookup
+precedes live profile/Task/execution reads and Manual fallback. Exact match may
+resume only the stored `prepared`, `member_bound`, `workspace_ready`,
+`intent_prepared`, `effect_possible`, `effect_terminal`, or
+`workspace_refreshed` stage; mismatch is an idempotency conflict and absence
+alone permits first-call validation. `finalized` and `refused` return only the
+canonical stored terminal result. `recovery_required` never implies replay
+authority.
+
 Current package-private Codex intents bind the same common tuple plus
 `backend_kind=codex-sdk`, `workspace_mode=owned`, the exact current
 `ato.workspace/v2` workspace ID/generation/revision/root key, ownership-binding
@@ -117,7 +131,7 @@ digest and HEAD object, and `task-sha256` input reference. The raw Task body is
 rederived only at the effect boundary, bounded to 1 MiB, compared with that
 reference before intent/effect and again by the backend, and never stored in an
 intent, journal, receipt, audit row, or default result. Start/resume also bind
-the exact SDK backend/endpoint, and continuation binds the predecessor
+the exact SDK backend/product constructor identity, and continuation binds the predecessor
 execution/thread/receipt while requiring a new fenced successor execution.
 
 Current workspace intents bind the exact reserve/create/inspect/recover/cleanup
@@ -229,7 +243,7 @@ current state is reconciled explicitly.
 
 ## Intent, receipt, verification, and finalization
 
-The local Manual execution loop and package-private Codex execution service
+The local Manual execution loop and product-composed package-private Codex execution service
 implement the generic state set and ordered protocol in this section. Their
 backend journals remain distinct: Manual inspection reads the Manual control
 state, while Codex inspection reads only its locally durable thread/terminal
@@ -291,11 +305,52 @@ proves only what its verification verdict and bound identity say. An external
 effect is never performed before its durable intent, and a terminal domain
 result is never accepted before verified finalization.
 
-## Package-private Codex turn protocol
+## Authorized Codex product and turn protocol
 
-This section is implemented only by the internal injected Codex path. It adds no
-supported package-root factory, product/backend selector, dispatcher/API/CLI
-route, credential broker, or destination authority.
+The supported Codex product application composes the internal SDK path without
+adding a generic backend selector, credential broker, or arbitrary destination.
+The fixed product destination is `openai-codex-api`; the sole opaque credential
+reference is `process-env:CODEX_API_KEY`. A trusted Project profile binds those
+constants plus exact Project, Git executable, disjoint workspace-root, and
+private Codex-home identities. Activation is configuration, not effect
+authority, and the product does not attest administrator-managed effective
+configuration.
+
+Initial start follows this exact ownership sequence:
+
+1. T1 persists the full C19 product operation and a Codex Prepare decision
+   before even checking whether the opaque credential reference is configured.
+2. T2 creates one `codex-start` dispatcher run, membership, and member for the
+   requested ready Task. T4 atomically revalidates Prepare plus current
+   `dispatch.run`, `execution.claim`, and `execution.start`, claims the Task,
+   allocates the execution/fence, marks the member claimed, and binds it to the
+   product operation without yet creating an execution intent.
+   Unlike the ordinary Manual dispatcher worker, this targeted run uses the
+   stable actor/runtime-derived execution-owner identity so a later local CLI
+   process can reopen the exact product operation while the run lease remains
+   live. Run revision, member revision, product-operation stage, execution
+   fence, and T6's one-consumer Act CAS still reject competing progress.
+3. The workspace owner reserves and creates the exact member/execution-bound
+   generation and proves it `ready`. Only then does T5 create the preallocated
+   exact `pending` execution start intent, with no credential value or Task
+   bytes.
+4. T6 obtains a new invocation confirmation and atomically revalidates the
+   active profile/configuration, `codex.execution.invoke`, and every required
+   dispatcher/execution/claim/workspace grant; it inserts one immutable Act,
+   binds it as that intent's sole consumer, advances the intent to `executing`,
+   and marks product stage `effect_possible` before credential resolution,
+   Task disclosure, or SDK access. A denial records immutable denial evidence,
+   leaves the intent pending, and requires a fresh Act attempt.
+
+Resume/retry first reconcile the predecessor turn and require an authoritative
+complete clean predecessor workspace HEAD. Each continuation creates a fresh
+`codex-continuation` one-member run. Its atomic allocation revalidates current
+resume/retry and takeover authority, advances the Task back to running,
+supersedes the source attempt, and creates a higher-fence successor. A new
+generation-1 workspace is then created from the clean predecessor HEAD; the old
+execution/workspace remains immutable evidence. T5/T6 are repeated for the new
+same-thread continuation. No lease expiry or lost response authorizes replay of
+the predecessor effect.
 
 Before any SDK access, the reliable owner reopens the current Task and exact
 owned ready workspace tuple, verifies the Task body's SHA-256 reference, commits
@@ -350,16 +405,25 @@ Restart behavior is exact:
 | `verified` | Re-run only current-authorized finalization CAS. |
 | `finalized` | Revalidate trusted identity and return the bounded durable result without SDK access. |
 
+At the product layer, a crash immediately after T6 leaves both product stage
+`effect_possible` and core intent `executing`; recovery is observation-only and
+must not resolve the credential, reread Task input, or call the SDK until the
+locally durable backend journal proves the exact permitted next step. If the
+credential value disappears after T6 but before driver construction, the same
+executing intent records and finalizes one bounded no-effect
+`credential_unavailable` failure, performs final workspace inspection, and
+stores that terminal product result. Once backend evidence is terminal, the
+workspace owner always performs a final authoritative inspect/HEAD refresh
+before the one-member run and product result can finalize. Terminal product
+replay reads only the stored result JSON.
+
 Cancellation of an already terminal `turn_succeeded` or `failed` Codex turn is
 a verified no-effect result: the backend returns `already_terminal`, leaves the
 turn revision unchanged, and the reliable owner still records fresh inspect,
-receipt, and finalization evidence for that cancellation intent. If a future
-authorized composition can prepare a valid cancellation intent while
+receipt, and finalization evidence for that cancellation intent. If the current
+authorized composition prepares a valid cancellation intent while
 the same process still owns an active controller, the backend marks the turn's
-cancellation request before signaling its `AbortController`. The current
-non-composed harness does not admit a concurrent second intent while start is
-unfinished, so its cancellation surface normally reports the unavailable state
-as bounded ambiguity. In either case a signal is a request, not proof of
+cancellation request before signaling its `AbortController`. A signal is a request, not proof of
 interruption. Only subsequently durable SDK terminal evidence may terminalize
 the turn; absence after abort remains unknown/ambiguous, and the backend never
 fabricates `cancelled` or replays the effect to discover the answer.

@@ -37,6 +37,7 @@ import {
   type DispatcherReconciliationCode,
   type DispatcherRunRecord,
   type DispatcherRunStatus,
+  type CodexProductOperationRecord,
   type ExecutionAttempt,
   type ExecutionAuthorizationDecisionRecord,
   type ExecutionIntentAuthorizationBindingRecord,
@@ -210,6 +211,15 @@ export interface DispatcherApplicationService {
   heartbeat(command: DispatcherHeartbeatCommand): DispatcherResult<DispatcherRunView>;
   takeover(command: DispatcherTakeoverCommand): DispatcherResult<DispatcherRunView>;
   finalize(command: DispatcherFinalizeCommand): DispatcherResult<DispatcherRunView>;
+}
+
+/** Internal product-composition surface; intentionally omitted from the package root. */
+export interface CodexTargetedDispatcherService {
+  createStartRun(operationId: string): DispatcherResult<DispatcherRunView>;
+  claimStartMember(operationId: string): DispatcherResult<DispatcherMemberView>;
+  createContinuationRun(operationId: string): DispatcherResult<DispatcherRunView>;
+  claimContinuationMember(operationId: string): DispatcherResult<DispatcherMemberView>;
+  finalizeRun(operationId: string): DispatcherResult<DispatcherRunView>;
 }
 
 export interface DispatcherApplicationOptions {
@@ -442,7 +452,7 @@ function schedulerConfigurationIsCurrent(
 function projectEvaluation(
   state: ApplicationState,
   trusted: TrustedContext,
-  action: "execution.claim" | "execution.start",
+  action: "execution.claim" | "execution.start" | "execution.resume" | "execution.retry" | "execution.lease.takeover",
   project: RegisteredProject,
 ): AuthorizationEvaluation {
   const policy: AuthorizationPolicyResult = state.domain.projects.find((candidate) => candidate.id === project.projectId)?.enabled === true
@@ -968,6 +978,7 @@ function createDispatcherApplicationServiceInternal(
         const run: DispatcherRunRecord = Object.freeze({
           runId: runId!, observationId: observationId!, requestId: requestId!, decisionId: decisionId!,
           actorId: trusted.actor.actorId, ownerId: trusted.ownerId, ownerRevision: 1, runRevision: 1,
+          routeKind: "manual" as const, productOperationId: null,
           requestedLeaseSeconds: command.leaseDurationSeconds, heartbeatAt: trusted.now,
           leaseExpiresAt: leaseExpiry(trusted.now, command.leaseDurationSeconds), status: "starting" as const,
           createdAt: trusted.now, updatedAt: trusted.now,
@@ -1168,6 +1179,8 @@ function createDispatcherApplicationServiceInternal(
           ownerId: trusted.ownerId,
           ownerRevision: 1,
           runRevision: 1,
+          routeKind: "scheduled" as const,
+          productOperationId: null,
           requestedLeaseSeconds: executionLeaseSeconds,
           heartbeatAt: trusted.now,
           leaseExpiresAt: leaseExpiry(trusted.now, executionLeaseSeconds),
@@ -1388,7 +1401,8 @@ function createDispatcherApplicationServiceInternal(
           projectId: candidate.project.projectId, projectResourceRevision: candidate.project.resourceRevision,
           projectConfigRevision: candidate.project.configRevision, taskId: candidate.task.id,
           taskRevision: candidate.task.revision, lifecycle: "pending" as const, outcome: null,
-          executionId: null, intentId: null, code: null, revision: 1,
+          executionId: null, intentId: null, productOperationId: null, ownerKind: null,
+          code: null, revision: 1,
           createdAt: trusted.now, updatedAt: trusted.now,
         })));
         transaction.advanceDispatcherRun(
@@ -1756,8 +1770,14 @@ function createDispatcherApplicationServiceInternal(
             member.membershipRevision !== membership.membershipRevision || member.outcome === null)) {
           return failed("RECONCILIATION_INCOMPLETE", "Dispatcher terminal summary requires every sealed member terminal");
         }
-        if (members.some((member) => member.outcome === "claimed" &&
-          state.executionIntents.find((intent) => intent.intentId === member.intentId)?.state !== "finalized")) {
+        if (members.some((member) => member.outcome === "claimed" && (
+          member.ownerKind === "execution-start-intent"
+            ? state.executionIntents.find((intent) => intent.intentId === member.intentId)?.state !== "finalized"
+            : !state.codexProductOperations.some((operation) =>
+              operation.operationId === member.productOperationId && operation.stage === "workspace_refreshed" &&
+              (operation.lifecycle === "active" || operation.lifecycle === "finalized")
+            )
+        ))) {
           return failed("RECONCILIATION_INCOMPLETE", "Dispatcher terminal summary requires every claimed start intent finalized");
         }
         if (trusted.now <= run!.heartbeatAt || leaseExpiry(trusted.now, run!.requestedLeaseSeconds) <= run!.leaseExpiresAt) {
@@ -1829,4 +1849,840 @@ export function createDispatcherApplicationServiceWithHooks(
   hooks: DispatcherApplicationTestHooks,
 ): DispatcherApplicationService {
   return createDispatcherApplicationServiceInternal(store, ingress, options, hooks);
+}
+
+/** Internal product-composition factory; intentionally omitted from src/index.ts. */
+export function createCodexTargetedDispatcherService(
+  store: PersistenceStore,
+  ingress: DispatcherIngress,
+  options: Pick<DispatcherApplicationOptions, "executionLeaseSeconds"> = Object.freeze({}),
+): CodexTargetedDispatcherService {
+  const executionLeaseSeconds = options.executionLeaseSeconds ?? 300;
+  if (!exactPositiveRange(executionLeaseSeconds, 30, 3_600)) {
+    throw new TypeError("Codex targeted dispatcher lease is invalid");
+  }
+
+  const productOperation = (
+    state: ApplicationState,
+    operationId: string,
+  ): CodexProductOperationRecord | DispatcherFailure => {
+    if (!operationalIdentifier(operationId)) return failed("INVALID_INPUT", "Codex product operation identity is invalid");
+    const operation = state.codexProductOperations.find((candidate) => candidate.operationId === operationId);
+    if (operation === undefined) {
+      return failed("RUN_NOT_FOUND", "Codex product operation is absent");
+    }
+    return operation;
+  };
+
+  const targetedLeaseSeconds = (
+    state: ApplicationState,
+    operation: CodexProductOperationRecord,
+    routeKind: "codex-start" | "codex-continuation",
+  ): number | null => routeKind === "codex-start"
+    ? operation.commandKind === "codex.dispatch-run" ? operation.leaseDurationSeconds : null
+    : operation.commandKind === "execution.resume" || operation.commandKind === "execution.retry"
+      ? state.executions.find((candidate) => candidate.executionId === operation.sourceExecutionId)?.requestedLeaseSeconds ?? null
+      : null;
+
+  const createTargetedRun = (
+    operationId: string,
+    routeKind: "codex-start" | "codex-continuation",
+  ): DispatcherResult<DispatcherRunView> => {
+    const trusted = context(ingress);
+    if (trusted === null) return failed("INVALID_INPUT", "Trusted Codex dispatcher ingress is invalid");
+    try {
+      const preflight = readApplicationStateForOwner(store);
+      const runtime = runtimeFailure(preflight, trusted, store);
+      if (runtime !== null) return runtime;
+      const selected = productOperation(preflight, operationId);
+      if ("ok" in selected) return selected;
+      const operation = selected;
+      const leaseSeconds = targetedLeaseSeconds(preflight, operation, routeKind);
+      if (operation.actorId !== trusted.actor.actorId || operation.lifecycle !== "active" || operation.stage !== "prepared" ||
+        leaseSeconds === null) {
+        return failed("STALE_REVISION", "Codex product operation is not ready for targeted dispatch");
+      }
+      const priorRun = preflight.dispatcherRuns.find((candidate) => candidate.runId === operation.runId);
+      if (priorRun !== undefined) {
+        if (priorRun.productOperationId !== operation.operationId || priorRun.routeKind !== routeKind) {
+          return failed("IDEMPOTENCY_CONFLICT", "Codex run identity belongs to another route");
+        }
+        const request = triggerRequest(preflight, priorRun);
+        return succeeded(runView(preflight, priorRun), request.requestId, request.correlationId, true);
+      }
+      const requestId = stableId("request", operation.operationId, "targeted-dispatch");
+      const correlationId = stableId("correlation", operation.operationId, "targeted-dispatch");
+      const decisionId = stableId("decision", operation.operationId, "targeted-dispatch");
+      const auditId = stableId("audit", operation.operationId, "targeted-dispatch");
+      const observationId = stableId("observation", operation.operationId, "targeted-dispatch");
+      const identity = Object.freeze({ requestId, correlationId });
+      return withApplicationTransaction(store, (transaction) => {
+        const state = transaction.read();
+        const currentRuntime = persistedRuntimeFailure(state, trusted);
+        if (currentRuntime !== null) return Object.freeze({ ...currentRuntime, ...identity });
+        const current = productOperation(state, operation.operationId);
+        if ("ok" in current) return current;
+        const currentLeaseSeconds = targetedLeaseSeconds(state, current, routeKind);
+        if (current.actorId !== trusted.actor.actorId || current.lifecycle !== "active" || current.stage !== "prepared" ||
+          currentLeaseSeconds === null) {
+          return failed("STALE_REVISION", "Codex product operation changed before targeted run creation", identity);
+        }
+        const racedRun = state.dispatcherRuns.find((candidate) => candidate.runId === current.runId);
+        if (racedRun !== undefined) {
+          if (racedRun.productOperationId !== current.operationId || racedRun.routeKind !== routeKind) {
+            return failed("IDEMPOTENCY_CONFLICT", "Codex run identity raced with another route", identity);
+          }
+          return succeeded(runView(state, racedRun), requestId, correlationId, true);
+        }
+        const priorRequest = state.dispatcherTriggerRequests.find((candidate) => candidate.requestId === requestId);
+        if (priorRequest !== undefined) {
+          return failed(priorRequest.result === "deny" ? "AUTHORIZATION_DENIED" : "INTEGRITY_FAILURE",
+            "Codex targeted dispatch has an incomplete prior observation", identity);
+        }
+        const evaluation = dispatchEvaluation(state, trusted);
+        transaction.insertDispatcherTriggerRequest(Object.freeze({
+          requestId,
+          observationId,
+          idempotencyKey: stableId("codex-dispatch", current.operationId),
+          correlationId,
+          actorId: trusted.actor.actorId,
+          action: "dispatch.run" as const,
+          workerOwnerId: trusted.ownerId,
+          requestedLeaseSeconds: currentLeaseSeconds,
+          result: evaluation.allowed ? "allow" as const : "deny" as const,
+          createdAt: trusted.now,
+        }));
+        transaction.insertDispatcherAuthorizationDecision(Object.freeze({
+          decisionId,
+          requestId,
+          actorId: trusted.actor.actorId,
+          action: "dispatch.run" as const,
+          result: evaluation.allowed ? "allow" as const : "deny" as const,
+          reason: evaluation.reason,
+          policy: evaluation.policy,
+          grantId: evaluation.grantId,
+          grantRevision: evaluation.grantRevision,
+          createdAt: trusted.now,
+        }));
+        if (!evaluation.allowed) {
+          transaction.insertDispatcherAudit(dispatcherAudit(
+            auditId, requestId, decisionId, null, "dispatch.denied", false,
+            trusted.actor.actorId, correlationId, evaluation.reason, trusted.now,
+          ));
+          return failed("AUTHORIZATION_DENIED", "Current dispatch.run grant did not allow Codex targeted dispatch", identity);
+        }
+        const run: DispatcherRunRecord = Object.freeze({
+          runId: current.runId,
+          observationId,
+          requestId,
+          decisionId,
+          actorId: trusted.actor.actorId,
+          ownerId: trusted.ownerId,
+          ownerRevision: 1,
+          runRevision: 1,
+          routeKind,
+          productOperationId: current.operationId,
+          requestedLeaseSeconds: currentLeaseSeconds,
+          heartbeatAt: trusted.now,
+          leaseExpiresAt: leaseExpiry(trusted.now, currentLeaseSeconds),
+          status: "sweeping" as const,
+          createdAt: trusted.now,
+          updatedAt: trusted.now,
+        });
+        transaction.insertDispatcherRun(run);
+        transaction.insertDispatcherAudit(dispatcherAudit(
+          auditId, requestId, decisionId, run.runId, "dispatch.started", true,
+          trusted.actor.actorId, correlationId, "started", trusted.now,
+        ));
+        transaction.insertDispatcherReconciliationSummary(Object.freeze({
+          runId: run.runId,
+          summaryRevision: 1 as const,
+          expectedCount: 0,
+          reconciledCount: 0,
+          noEffectCount: 0,
+          authorizationDeniedCount: 0,
+          ambiguousCount: 0,
+          failedCount: 0,
+          createdAt: trusted.now,
+        }));
+        transaction.insertDispatcherMembership(Object.freeze({
+          runId: run.runId,
+          membershipRevision: 1,
+          expectedMemberCount: 1,
+          sealedAt: trusted.now,
+        }));
+        transaction.insertDispatcherMember(Object.freeze({
+          memberId: current.memberId,
+          runId: run.runId,
+          membershipRevision: 1,
+          ordinal: 0,
+          projectId: current.projectId,
+          projectResourceRevision: current.expectedProjectResourceRevision,
+          projectConfigRevision: current.expectedProjectConfigRevision,
+          taskId: current.taskId,
+          taskRevision: current.expectedTaskRevision,
+          lifecycle: "pending" as const,
+          outcome: null,
+          executionId: null,
+          intentId: null,
+          productOperationId: null,
+          ownerKind: null,
+          code: null,
+          revision: 1,
+          createdAt: trusted.now,
+          updatedAt: trusted.now,
+        }));
+        return succeeded(runView(transaction.read(), run), requestId, correlationId);
+      });
+    } catch (error) {
+      return mapPersistence(error);
+    }
+  };
+
+  const createStartRun = (operationId: string): DispatcherResult<DispatcherRunView> =>
+    createTargetedRun(operationId, "codex-start");
+
+  const createContinuationRun = (operationId: string): DispatcherResult<DispatcherRunView> =>
+    createTargetedRun(operationId, "codex-continuation");
+
+  const reopenTargetedRun = (
+    operationId: string,
+    trusted: TrustedContext,
+  ): DispatcherResult<DispatcherRunView> => {
+    let state: ApplicationState;
+    try { state = readApplicationStateForOwner(store); } catch (error) { return mapPersistence(error); }
+    const runtime = runtimeFailure(state, trusted, store);
+    if (runtime !== null) return runtime;
+    const selected = productOperation(state, operationId);
+    if ("ok" in selected) return selected;
+    const run = state.dispatcherRuns.find((candidate) => candidate.runId === selected.runId);
+    if (run === undefined) return failed("RUN_NOT_FOUND", "Codex targeted run is absent");
+    const expectedRoute = selected.commandKind === "codex.dispatch-run" ? "codex-start" : "codex-continuation";
+    if (run.productOperationId !== selected.operationId || run.routeKind !== expectedRoute ||
+      run.actorId !== trusted.actor.actorId) {
+      return failed("STALE_REVISION", "Codex targeted run ownership tuple is inconsistent");
+    }
+    const request = triggerRequest(state, run);
+    if (["completed", "partial", "failed", "interrupted"].includes(run.status) ||
+      (run.ownerId === trusted.ownerId && trusted.now < run.leaseExpiresAt)) {
+      return succeeded(runView(state, run), request.requestId, request.correlationId, true);
+    }
+    if (run.ownerId === trusted.ownerId) {
+      return failed("LEASE_EXPIRED", "Codex targeted run requires a fresh worker owner after lease expiry");
+    }
+    if (trusted.now < run.leaseExpiresAt) {
+      return failed("LEASE_NOT_EXPIRED", "Codex targeted run is still owned by a live worker");
+    }
+    const lifecycle = createDispatcherApplicationServiceInternal(store, ingress, Object.freeze({
+      adapterId: "openai-codex-sdk-local",
+      adapterVersion: "0.153.2",
+      executionLeaseSeconds,
+    }), Object.freeze({}));
+    return lifecycle.takeover(Object.freeze({
+      kind: "dispatch.takeover" as const,
+      runId: run.runId,
+      expectedOwnerId: run.ownerId,
+      expectedOwnerRevision: run.ownerRevision,
+      expectedRunRevision: run.runRevision,
+      expectedStatus: run.status as "starting" | "reconciling" | "sweeping",
+    }));
+  };
+
+  const claimStartMember = (operationId: string): DispatcherResult<DispatcherMemberView> => {
+    const trusted = context(ingress);
+    if (trusted === null) return failed("INVALID_INPUT", "Trusted Codex dispatcher ingress is invalid");
+    const reopened = reopenTargetedRun(operationId, trusted);
+    if (!reopened.ok) return reopened;
+    let preflight: ApplicationState;
+    try { preflight = readApplicationStateForOwner(store); } catch (error) { return mapPersistence(error); }
+    const runtime = runtimeFailure(preflight, trusted, store);
+    if (runtime !== null) return runtime;
+    const selected = productOperation(preflight, operationId);
+    if ("ok" in selected) return selected;
+    const operation = selected;
+    const run = preflight.dispatcherRuns.find((candidate) => candidate.runId === operation.runId);
+    const member = preflight.dispatcherMembers.find((candidate) => candidate.memberId === operation.memberId);
+    const project = preflight.projects.find((candidate) => candidate.projectId === operation.projectId);
+    if (run === undefined || member === undefined || project === undefined) {
+      return failed("RUN_NOT_SEALED", "Codex targeted run is incomplete");
+    }
+    if (member.lifecycle === "terminal") {
+      const request = triggerRequest(preflight, run);
+      return succeeded(memberView(preflight, member), request.requestId, request.correlationId, true);
+    }
+    let rootCurrent: ProjectRootIdentity | null = null;
+    try { rootCurrent = revalidateProjectRoot(project, store.layout.root); } catch { rootCurrent = null; }
+    const request = triggerRequest(preflight, run);
+    const identity = Object.freeze({ requestId: request.requestId, correlationId: request.correlationId });
+    try {
+      return withApplicationTransaction(store, (transaction) => {
+        const state = transaction.read();
+        const currentRuntime = persistedRuntimeFailure(state, trusted);
+        if (currentRuntime !== null) return Object.freeze({ ...currentRuntime, ...identity });
+        const current = productOperation(state, operation.operationId);
+        if ("ok" in current) return current;
+        const currentRun = state.dispatcherRuns.find((candidate) => candidate.runId === current.runId);
+        const currentMember = state.dispatcherMembers.find((candidate) => candidate.memberId === current.memberId);
+        const currentProject = state.projects.find((candidate) => candidate.projectId === current.projectId);
+        const currentTask = state.domain.tasks.find((candidate) => candidate.id === current.taskId);
+        if (currentRun === undefined || currentMember === undefined || currentProject === undefined || currentTask === undefined) {
+          return failed("INTEGRITY_FAILURE", "Codex targeted claim lineage is absent", identity);
+        }
+        if (currentMember.lifecycle === "terminal") {
+          return succeeded(memberView(state, currentMember), request.requestId, request.correlationId, true);
+        }
+        if (current.lifecycle !== "active" || current.stage !== "prepared" ||
+          currentRun.productOperationId !== current.operationId || currentRun.routeKind !== "codex-start" ||
+          currentRun.ownerId !== trusted.ownerId || currentRun.actorId !== trusted.actor.actorId ||
+          currentRun.status !== "sweeping" || currentRun.leaseExpiresAt <= trusted.now ||
+          currentMember.runId !== currentRun.runId || currentMember.membershipRevision !== 1 || currentMember.revision !== 1) {
+          return failed("STALE_REVISION", "Codex targeted claim tuple is stale", identity);
+        }
+        const resolve = (
+          outcome: DispatcherMemberOutcome,
+          code: DispatcherMemberCode,
+        ): DispatcherResult<DispatcherMemberView> => {
+          transaction.resolveDispatcherMember(
+            currentMember.memberId, currentRun.runId, currentMember.membershipRevision, currentMember.revision,
+            outcome, null, null, code, laterTimestamp(currentMember.updatedAt, trusted.now),
+          );
+          const readback = transaction.read();
+          const terminal = readback.dispatcherMembers.find((candidate) => candidate.memberId === currentMember.memberId);
+          if (terminal === undefined) throw new TypeError("Codex targeted member resolution disappeared");
+          return succeeded(memberView(readback, terminal), request.requestId, request.correlationId);
+        };
+        const profile = state.codexProfiles.find((candidate) => candidate.profileId === current.profileId);
+        if (profile === undefined || profile.status !== "active" || profile.revision !== current.profileRevision ||
+          profile.constructorConfigSha256 !== current.constructorConfigSha256) {
+          return resolve("authorization_denied", "codex_profile_inactive");
+        }
+        if (rootCurrent === null || !sameProjectIdentity(currentProject, project) ||
+          !sameProjectIdentity(currentProject, rootCurrent) ||
+          currentProject.resourceRevision !== current.expectedProjectResourceRevision ||
+          currentProject.configRevision !== current.expectedProjectConfigRevision ||
+          currentTask.projectId !== current.projectId || currentTask.revision !== current.expectedTaskRevision) {
+          return resolve("ineligible_at_cas", "codex_product_stale");
+        }
+        const dispatch = persistContinuationAuthorization(
+          transaction, state, currentRun, trusted,
+          {
+            decisionId: stableId("decision", current.operationId, "targeted-claim-dispatch"),
+            auditId: stableId("audit", current.operationId, "targeted-claim-dispatch"),
+          },
+          "dispatch.member.resolved", "member_resolved",
+        );
+        if (!dispatch.allowed) return resolve("authorization_denied", "dispatch_denied");
+        if (state.executionSequences.some((candidate) => candidate.taskId === currentTask.id)) {
+          return resolve("already_claimed", "execution_sequence_exists");
+        }
+        const eligibility = evaluateTaskEligibility(state.domain, {
+          taskId: currentTask.id,
+          readRevision: `task-revision:${currentTask.revision}`,
+        });
+        if (!eligibility.ok || !eligibility.value.eligible) {
+          return resolve("ineligible_at_cas", "domain_ineligible");
+        }
+        const claimEvaluation = projectEvaluation(state, trusted, "execution.claim", currentProject);
+        const claimRequestId = stableId("request", current.operationId, "targeted-claim");
+        const claimCorrelationId = stableId("correlation", current.operationId, "targeted-claim");
+        const claimDecisionId = stableId("decision", current.operationId, "targeted-claim");
+        const claimAuditId = stableId("audit", current.operationId, "targeted-claim");
+        transaction.insertRequest(applicationClaimRequest(
+          claimRequestId, claimCorrelationId, trusted.actor.actorId, current.executionId, claimEvaluation, trusted.now,
+        ));
+        transaction.insertDecision(applicationClaimDecision(
+          claimDecisionId, claimRequestId, trusted.actor.actorId, currentProject, claimEvaluation, trusted.now,
+        ));
+        transaction.insertAudit(applicationClaimAudit(
+          claimAuditId, claimRequestId, claimDecisionId, claimCorrelationId, trusted.actor.actorId,
+          current.executionId, claimEvaluation, trusted.now,
+        ));
+        if (!claimEvaluation.allowed) return resolve("authorization_denied", "execution_claim_denied");
+        const startEvaluation = projectEvaluation(state, trusted, "execution.start", currentProject);
+        const startRequestId = stableId("request", current.operationId, "targeted-start");
+        const startCorrelationId = stableId("correlation", current.operationId, "targeted-start");
+        const startDecisionId = stableId("decision", current.operationId, "targeted-start");
+        const startAuditId = stableId("audit", current.operationId, "targeted-start");
+        if (!startEvaluation.allowed) {
+          transaction.insertDispatcherMemberDenialRequest(dispatcherMemberDenialRequest(
+            startRequestId, startCorrelationId, currentRun.runId, currentMember.memberId,
+            trusted.actor.actorId, current.executionId, trusted.now,
+          ));
+          transaction.insertDispatcherMemberDenialDecision(dispatcherMemberDenialDecision(
+            startDecisionId, startRequestId, trusted.actor.actorId, currentProject, startEvaluation, trusted.now,
+          ));
+          transaction.insertDispatcherMemberDenialAudit(dispatcherMemberDenialAudit(
+            startAuditId, startRequestId, startDecisionId, currentRun.runId, currentMember.memberId,
+            trusted.actor.actorId, startCorrelationId, current.executionId, startEvaluation, trusted.now,
+          ));
+          return resolve("authorization_denied", "execution_start_denied");
+        }
+        const transition = transitionTask(state.domain, Object.freeze({
+          taskId: currentTask.id,
+          event: "claim_accepted" as const,
+          targetState: "running" as const,
+          payload: Object.freeze({
+            externalAcceptance: Object.freeze({
+              taskId: currentTask.id,
+              taskRevision: currentTask.revision,
+              authorization: "accepted" as const,
+              reliability: "accepted" as const,
+            }),
+          }),
+        }));
+        if (!transition.ok) return resolve("ineligible_at_cas", "domain_claim_rejected");
+        transaction.insertExecutionSequence(Object.freeze({
+          taskId: currentTask.id,
+          lastAttemptNumber: 1,
+          currentFencingToken: 1,
+          revision: 1,
+        }));
+        const execution: ExecutionAttempt = Object.freeze({
+          executionId: current.executionId,
+          taskId: currentTask.id,
+          attemptNumber: 1,
+          operationKind: "claim" as const,
+          status: "active" as const,
+          idempotencyKey: stableId("codex-targeted-claim", current.operationId),
+          ownerId: trusted.executionOwnerId,
+          requestedLeaseSeconds: current.leaseDurationSeconds ?? executionLeaseSeconds,
+          predecessorExecutionRevision: null,
+          predecessorLeaseRevision: null,
+          predecessorFencingToken: null,
+          leaseRevision: 1,
+          leaseExpiresAt: leaseExpiry(trusted.now, current.leaseDurationSeconds ?? executionLeaseSeconds),
+          fencingToken: 1,
+          revision: 1,
+          expectedTaskRevision: currentTask.revision,
+          preTaskRevision: currentTask.revision,
+          postTaskRevision: currentTask.revision + 1,
+          projectResourceRevision: currentProject.resourceRevision,
+          projectConfigRevision: currentProject.configRevision,
+          requestId: claimRequestId,
+          decisionId: claimDecisionId,
+          supersedesExecutionId: null,
+          supersededByExecutionId: null,
+          createdAt: trusted.now,
+          updatedAt: trusted.now,
+        });
+        transaction.insertExecutionAttempt(execution);
+        transaction.insertExecutionOperationRequest(executionStartRequest(
+          startRequestId, startCorrelationId, trusted.actor.actorId, current.executionId, startEvaluation, trusted.now,
+        ));
+        transaction.insertExecutionAuthorizationDecision(executionStartDecision(
+          startDecisionId, startRequestId, trusted.actor.actorId, currentProject, startEvaluation, trusted.now,
+        ));
+        transaction.insertExecutionOperationAudit(executionStartAudit(
+          startAuditId, startRequestId, startDecisionId, startCorrelationId, trusted.actor.actorId,
+          current.executionId, startEvaluation, trusted.now,
+        ));
+        transaction.writeDomain(state.domain, transition.value);
+        transaction.resolveDispatcherMember(
+          currentMember.memberId, currentRun.runId, currentMember.membershipRevision, currentMember.revision,
+          "claimed", execution.executionId, null, "claimed_for_codex",
+          laterTimestamp(currentMember.updatedAt, trusted.now), current.operationId, "codex-product-operation",
+        );
+        transaction.updateCodexProductOperation(Object.freeze({
+          ...current,
+          stage: "member_bound" as const,
+          revision: current.revision + 1,
+          updatedAt: laterTimestamp(current.updatedAt, trusted.now),
+        }), current.revision);
+        const readback = transaction.read();
+        const claimed = readback.dispatcherMembers.find((candidate) => candidate.memberId === currentMember.memberId);
+        if (claimed === undefined || claimed.executionId !== execution.executionId || claimed.ownerKind !== "codex-product-operation") {
+          throw new TypeError("Codex targeted claim readback failed");
+        }
+        return succeeded(memberView(readback, claimed), request.requestId, request.correlationId);
+      });
+    } catch (error) {
+      return mapPersistence(error);
+    }
+  };
+
+  const claimContinuationMember = (operationId: string): DispatcherResult<DispatcherMemberView> => {
+    const trusted = context(ingress);
+    if (trusted === null) return failed("INVALID_INPUT", "Trusted Codex continuation dispatcher ingress is invalid");
+    const reopened = reopenTargetedRun(operationId, trusted);
+    if (!reopened.ok) return reopened;
+    let preflight: ApplicationState;
+    try { preflight = readApplicationStateForOwner(store); } catch (error) { return mapPersistence(error); }
+    const runtime = runtimeFailure(preflight, trusted, store);
+    if (runtime !== null) return runtime;
+    const selected = productOperation(preflight, operationId);
+    if ("ok" in selected) return selected;
+    if (selected.commandKind !== "execution.resume" && selected.commandKind !== "execution.retry") {
+      return failed("INVALID_INPUT", "Codex continuation product operation kind is invalid");
+    }
+    const run = preflight.dispatcherRuns.find((candidate) => candidate.runId === selected.runId);
+    const member = preflight.dispatcherMembers.find((candidate) => candidate.memberId === selected.memberId);
+    const project = preflight.projects.find((candidate) => candidate.projectId === selected.projectId);
+    if (run === undefined || member === undefined || project === undefined) {
+      return failed("RUN_NOT_SEALED", "Codex continuation targeted run is incomplete");
+    }
+    if (member.lifecycle === "terminal") {
+      const request = triggerRequest(preflight, run);
+      return succeeded(memberView(preflight, member), request.requestId, request.correlationId, true);
+    }
+    let rootCurrent: ProjectRootIdentity | null = null;
+    try { rootCurrent = revalidateProjectRoot(project, store.layout.root); } catch { rootCurrent = null; }
+    const request = triggerRequest(preflight, run);
+    const identity = Object.freeze({ requestId: request.requestId, correlationId: request.correlationId });
+    try {
+      return withApplicationTransaction(store, (transaction) => {
+        const state = transaction.read();
+        const currentRuntime = persistedRuntimeFailure(state, trusted);
+        if (currentRuntime !== null) return Object.freeze({ ...currentRuntime, ...identity });
+        const current = productOperation(state, selected.operationId);
+        if ("ok" in current) return current;
+        if (current.commandKind !== "execution.resume" && current.commandKind !== "execution.retry") {
+          return failed("INVALID_INPUT", "Codex continuation product operation changed kind", identity);
+        }
+        const currentRun = state.dispatcherRuns.find((candidate) => candidate.runId === current.runId);
+        const currentMember = state.dispatcherMembers.find((candidate) => candidate.memberId === current.memberId);
+        const currentProject = state.projects.find((candidate) => candidate.projectId === current.projectId);
+        const currentTask = state.domain.tasks.find((candidate) => candidate.id === current.taskId);
+        const source = state.executions.find((candidate) => candidate.executionId === current.sourceExecutionId);
+        const sequence = state.executionSequences.find((candidate) => candidate.taskId === current.taskId);
+        if (currentRun === undefined || currentMember === undefined || currentProject === undefined ||
+          currentTask === undefined || source === undefined || sequence === undefined) {
+          return failed("INTEGRITY_FAILURE", "Codex continuation allocation lineage is absent", identity);
+        }
+        if (currentMember.lifecycle === "terminal") {
+          return succeeded(memberView(state, currentMember), request.requestId, request.correlationId, true);
+        }
+        const resolve = (
+          outcome: DispatcherMemberOutcome,
+          code: DispatcherMemberCode,
+        ): DispatcherResult<DispatcherMemberView> => {
+          transaction.resolveDispatcherMember(
+            currentMember.memberId, currentRun.runId, currentMember.membershipRevision, currentMember.revision,
+            outcome, null, null, code, laterTimestamp(currentMember.updatedAt, trusted.now),
+          );
+          const readback = transaction.read();
+          const terminal = readback.dispatcherMembers.find((candidate) => candidate.memberId === currentMember.memberId);
+          if (terminal === undefined) throw new TypeError("Codex continuation member resolution disappeared");
+          return succeeded(memberView(readback, terminal), request.requestId, request.correlationId);
+        };
+        if (current.lifecycle !== "active" || current.stage !== "prepared" ||
+          currentRun.productOperationId !== current.operationId || currentRun.routeKind !== "codex-continuation" ||
+          currentRun.ownerId !== trusted.ownerId || currentRun.actorId !== trusted.actor.actorId ||
+          currentRun.status !== "sweeping" || currentRun.leaseExpiresAt <= trusted.now ||
+          currentMember.runId !== currentRun.runId || currentMember.membershipRevision !== 1 || currentMember.revision !== 1) {
+          return failed("STALE_REVISION", "Codex continuation claim tuple is stale", identity);
+        }
+        const profile = state.codexProfiles.find((candidate) => candidate.profileId === current.profileId);
+        if (profile === undefined || profile.status !== "active" || profile.revision !== current.profileRevision ||
+          profile.constructorConfigSha256 !== current.constructorConfigSha256) {
+          return resolve("authorization_denied", "codex_profile_inactive");
+        }
+        if (rootCurrent === null || !sameProjectIdentity(currentProject, project) ||
+          !sameProjectIdentity(currentProject, rootCurrent) ||
+          currentProject.resourceRevision !== current.expectedProjectResourceRevision ||
+          currentProject.configRevision !== current.expectedProjectConfigRevision ||
+          currentTask.projectId !== current.projectId || currentTask.revision !== current.expectedTaskRevision ||
+          currentTask.state !== "waiting" || currentTask.waiting === null ||
+          source.revision !== current.sourceExecutionRevision || source.attemptNumber !== current.sourceAttemptNumber ||
+          source.fencingToken !== current.sourceFencingToken || source.status !== "active" ||
+          sequence.lastAttemptNumber !== source.attemptNumber || sequence.currentFencingToken !== source.fencingToken ||
+          sequence.revision !== source.attemptNumber ||
+          (current.commandKind === "execution.resume" && source.leaseExpiresAt > trusted.now)) {
+          return resolve("ineligible_at_cas", "codex_product_stale");
+        }
+        if (state.executionIntents.some((candidate) =>
+          candidate.executionId === source.executionId && candidate.state !== "finalized"
+        )) return resolve("reconciliation_required", "codex_source_not_ready");
+        const sourceTurn = state.codexTurns.find((candidate) => candidate.backendExecutionId === current.sourceBackendExecutionId);
+        const sourceReceipt = state.executionReceipts.find((candidate) => candidate.verifiedReceiptId === current.sourceVerifiedReceiptId);
+        const sourceIntent = sourceReceipt === undefined ? undefined
+          : state.executionIntents.find((candidate) => candidate.intentId === sourceReceipt.intentId);
+        const sourceObservation = sourceIntent === undefined ? undefined : state.executionObservations.find((candidate) =>
+          candidate.intentId === sourceIntent.intentId && candidate.observationNumber === current.sourceObservationNumber
+        );
+        const sourceFinalization = sourceIntent === undefined ? undefined
+          : state.executionFinalizations.find((candidate) => candidate.intentId === sourceIntent.intentId);
+        const sourceWorkspace = state.workspaceGenerations.find((candidate) =>
+          candidate.workspaceId === current.sourceWorkspaceId && candidate.generation === current.sourceWorkspaceGeneration
+        );
+        const sourceWorkspaceReceipt = state.workspaceReceipts.find((candidate) =>
+          candidate.verifiedReceiptId === current.sourceWorkspaceVerifiedReceiptId
+        );
+        const sourceWorkspaceFinalization = sourceWorkspaceReceipt === undefined ? undefined
+          : state.workspaceFinalizations.find((candidate) => candidate.intentId === sourceWorkspaceReceipt.intentId &&
+            candidate.verifiedReceiptId === sourceWorkspaceReceipt.verifiedReceiptId);
+        if (sourceTurn === undefined || sourceTurn.threadId !== current.sourceThreadId ||
+          sourceTurn.revision !== current.sourceObservationNumber ||
+          (current.commandKind === "execution.retry" && sourceTurn.lifecycle !== "failed") ||
+          sourceReceipt === undefined || sourceIntent === undefined || sourceIntent.state !== "finalized" ||
+          sourceIntent.executionId !== source.executionId || sourceObservation === undefined || sourceFinalization === undefined ||
+          sourceObservation.backendExecutionId !== sourceTurn.backendExecutionId ||
+          sourceObservation.threadId !== sourceTurn.threadId || sourceObservation.journalRevision !== sourceTurn.revision ||
+          sourceReceipt.observedRevision !== sourceTurn.revision || sourceReceipt.fencingToken !== source.fencingToken ||
+          sourceWorkspace === undefined || sourceWorkspace.status !== "ready" ||
+          sourceWorkspace.revision !== current.sourceWorkspaceRevision ||
+          sourceWorkspace.executionId !== source.executionId || sourceWorkspace.fencingToken !== source.fencingToken ||
+          sourceWorkspaceReceipt === undefined || sourceWorkspaceReceipt.outcome !== "succeeded" ||
+          sourceWorkspaceReceipt.externalState !== "complete" ||
+          sourceWorkspaceReceipt.workspaceId !== sourceWorkspace.workspaceId ||
+          sourceWorkspaceReceipt.generation !== sourceWorkspace.generation ||
+          sourceWorkspace.workspaceRootKey !== current.sourceWorkspaceRootKey ||
+          sourceWorkspaceReceipt.ownershipBindingSha256 !== current.sourceWorkspaceOwnershipBindingSha256 ||
+          sourceWorkspaceReceipt.headObjectId !== current.sourceWorkspaceHeadObjectId ||
+          sourceWorkspaceFinalization?.outcome !== "succeeded" ||
+          sourceWorkspaceFinalization.resultingGenerationRevision !== sourceWorkspace.revision) {
+          return resolve("reconciliation_required", "codex_source_not_ready");
+        }
+        const dispatch = persistContinuationAuthorization(
+          transaction, state, currentRun, trusted,
+          { decisionId: stableId("decision", current.operationId, "continuation-dispatch"),
+            auditId: stableId("audit", current.operationId, "continuation-dispatch") },
+          "dispatch.member.resolved", "member_resolved",
+        );
+        if (!dispatch.allowed) return resolve("authorization_denied", "dispatch_denied");
+        const claimEvaluation = projectEvaluation(state, trusted, "execution.claim", currentProject);
+        const continuationEvaluation = projectEvaluation(state, trusted, current.commandKind, currentProject);
+        const takeoverEvaluation = projectEvaluation(state, trusted, "execution.lease.takeover", currentProject);
+        const claimRequestId = stableId("request", current.operationId, "continuation-claim");
+        const claimCorrelationId = stableId("correlation", current.operationId, "continuation-claim");
+        const claimDecisionId = stableId("decision", current.operationId, "continuation-claim");
+        const claimAuditId = stableId("audit", current.operationId, "continuation-claim");
+        const continuationRequestId = stableId("request", current.operationId, "continuation-operation");
+        const continuationCorrelationId = stableId("correlation", current.operationId, "continuation-operation");
+        const continuationDecisionId = stableId("decision", current.operationId, "continuation-operation");
+        const continuationAuditId = stableId("audit", current.operationId, "continuation-operation");
+        const takeoverRequestId = stableId("request", current.operationId, "continuation-takeover");
+        const takeoverCorrelationId = stableId("correlation", current.operationId, "continuation-takeover");
+        const takeoverDecisionId = stableId("decision", current.operationId, "continuation-takeover");
+        const takeoverAuditId = stableId("audit", current.operationId, "continuation-takeover");
+        if (!claimEvaluation.allowed || !continuationEvaluation.allowed || !takeoverEvaluation.allowed) {
+          transaction.insertRequest(applicationClaimRequest(
+            claimRequestId, claimCorrelationId, trusted.actor.actorId, source.executionId, claimEvaluation, trusted.now,
+          ));
+          transaction.insertDecision(applicationClaimDecision(
+            claimDecisionId, claimRequestId, trusted.actor.actorId, currentProject, claimEvaluation, trusted.now,
+          ));
+          transaction.insertAudit(applicationClaimAudit(
+            claimAuditId, claimRequestId, claimDecisionId, claimCorrelationId, trusted.actor.actorId,
+            source.executionId, claimEvaluation, trusted.now,
+          ));
+          transaction.insertRequest(Object.freeze({
+            requestId: takeoverRequestId, correlationId: takeoverCorrelationId, actorId: trusted.actor.actorId,
+            action: "execution.lease.takeover" as const, targetKind: "execution" as const,
+            targetId: source.executionId, targetRevision: source.revision,
+            result: takeoverEvaluation.allowed ? "allow" as const : "deny" as const, createdAt: trusted.now,
+          }));
+          transaction.insertDecision(Object.freeze({
+            decisionId: takeoverDecisionId, requestId: takeoverRequestId, actorId: trusted.actor.actorId,
+            action: "execution.lease.takeover" as const,
+            result: takeoverEvaluation.allowed ? "allow" as const : "deny" as const,
+            reason: takeoverEvaluation.reason, policy: takeoverEvaluation.policy,
+            grantId: takeoverEvaluation.grantId, grantRevision: takeoverEvaluation.grantRevision,
+            projectId: currentProject.projectId, resourceRevision: currentProject.resourceRevision, createdAt: trusted.now,
+          }));
+          transaction.insertAudit(Object.freeze({
+            auditId: takeoverAuditId, requestId: takeoverRequestId, decisionId: takeoverDecisionId,
+            eventKind: takeoverEvaluation.allowed ? "execution.lease.taken_over" as const : "authorization.denied" as const,
+            result: takeoverEvaluation.allowed ? "accepted" as const : "denied" as const,
+            actorId: trusted.actor.actorId, correlationId: takeoverCorrelationId,
+            targetKind: "execution" as const, targetId: source.executionId, targetRevision: source.revision,
+            reason: takeoverEvaluation.allowed ? "accepted" : takeoverEvaluation.reason, createdAt: trusted.now,
+          }));
+          transaction.insertExecutionOperationRequest(Object.freeze({
+            requestId: continuationRequestId, correlationId: continuationCorrelationId,
+            actorId: trusted.actor.actorId, action: current.commandKind,
+            targetExecutionId: source.executionId, targetRevision: source.revision,
+            result: continuationEvaluation.allowed ? "allow" as const : "deny" as const, createdAt: trusted.now,
+          }));
+          transaction.insertExecutionAuthorizationDecision(Object.freeze({
+            decisionId: continuationDecisionId, requestId: continuationRequestId, actorId: trusted.actor.actorId,
+            action: current.commandKind, result: continuationEvaluation.allowed ? "allow" as const : "deny" as const,
+            reason: continuationEvaluation.reason, policy: continuationEvaluation.policy,
+            grantId: continuationEvaluation.grantId, grantRevision: continuationEvaluation.grantRevision,
+            projectId: currentProject.projectId, resourceRevision: currentProject.resourceRevision,
+            configRevision: currentProject.configRevision, createdAt: trusted.now,
+          }));
+          transaction.insertExecutionOperationAudit(Object.freeze({
+            auditId: continuationAuditId, requestId: continuationRequestId, decisionId: continuationDecisionId,
+            eventKind: continuationEvaluation.allowed ? "execution.operation.prepared" as const : "execution.operation.denied" as const,
+            result: continuationEvaluation.allowed ? "accepted" as const : "denied" as const,
+            actorId: trusted.actor.actorId, correlationId: continuationCorrelationId,
+            executionId: source.executionId, executionRevision: source.revision,
+            code: continuationEvaluation.allowed ? "prepared" : continuationEvaluation.reason, createdAt: trusted.now,
+          }));
+          return resolve("authorization_denied", !takeoverEvaluation.allowed
+            ? "execution_takeover_denied" : !continuationEvaluation.allowed
+              ? "execution_continuation_denied" : "execution_claim_denied");
+        }
+        const transition = transitionTask(state.domain, Object.freeze({
+          taskId: currentTask.id,
+          event: current.commandKind === "execution.resume" ? "resume_accepted" as const : "retry_accepted" as const,
+          targetState: "running" as const,
+          payload: Object.freeze({
+            continuation: Object.freeze({
+              taskId: currentTask.id,
+              expectedTaskRevision: currentTask.revision,
+              readRevision: stableId("continuation-read", current.operationId),
+              kind: current.commandKind === "execution.resume" ? "resume" as const : "retry" as const,
+              requiredActionReceipt: Object.freeze({
+                receiptId: current.requiredActionReceiptId!, taskId: currentTask.id,
+                taskRevision: currentTask.revision, requiredAction: currentTask.waiting.requiredAction,
+                status: "accepted" as const,
+              }),
+              targetExecutionId: source.executionId,
+              targetWorkspaceRevision: String(current.sourceWorkspaceRevision),
+              targetBackendThreadId: current.sourceThreadId,
+              trustedTime: Date.parse(trusted.now),
+            }),
+            externalAcceptance: Object.freeze({
+              taskId: currentTask.id, taskRevision: currentTask.revision,
+              authorization: "accepted" as const, reliability: "accepted" as const,
+            }),
+          }),
+        }));
+        if (!transition.ok) return resolve("ineligible_at_cas", "domain_claim_rejected");
+        const advanced = transaction.advanceExecutionSequence(
+          currentTask.id, sequence.lastAttemptNumber, sequence.currentFencingToken, sequence.revision,
+        );
+        transaction.supersedeExecutionAttemptAfterReconciliation(
+          source.executionId, current.executionId, source.ownerId, source.revision,
+          source.leaseRevision, source.fencingToken, trusted.now,
+        );
+        const replacement: ExecutionAttempt = Object.freeze({
+          executionId: current.executionId,
+          taskId: currentTask.id,
+          attemptNumber: advanced.lastAttemptNumber,
+          operationKind: "takeover" as const,
+          status: "active" as const,
+          idempotencyKey: stableId("codex-continuation-execution", current.operationId),
+          ownerId: trusted.executionOwnerId,
+          requestedLeaseSeconds: source.requestedLeaseSeconds,
+          predecessorExecutionRevision: source.revision,
+          predecessorLeaseRevision: source.leaseRevision,
+          predecessorFencingToken: source.fencingToken,
+          leaseRevision: 1,
+          leaseExpiresAt: leaseExpiry(trusted.now, source.requestedLeaseSeconds),
+          fencingToken: advanced.currentFencingToken,
+          revision: 1,
+          expectedTaskRevision: currentTask.revision,
+          preTaskRevision: currentTask.revision,
+          postTaskRevision: currentTask.revision + 1,
+          projectResourceRevision: currentProject.resourceRevision,
+          projectConfigRevision: currentProject.configRevision,
+          requestId: takeoverRequestId,
+          decisionId: takeoverDecisionId,
+          supersedesExecutionId: source.executionId,
+          supersededByExecutionId: null,
+          createdAt: trusted.now,
+          updatedAt: trusted.now,
+        });
+        transaction.insertRequest(applicationClaimRequest(
+          claimRequestId, claimCorrelationId, trusted.actor.actorId, replacement.executionId, claimEvaluation, trusted.now,
+        ));
+        transaction.insertDecision(applicationClaimDecision(
+          claimDecisionId, claimRequestId, trusted.actor.actorId, currentProject, claimEvaluation, trusted.now,
+        ));
+        transaction.insertAudit(applicationClaimAudit(
+          claimAuditId, claimRequestId, claimDecisionId, claimCorrelationId, trusted.actor.actorId,
+          replacement.executionId, claimEvaluation, trusted.now,
+        ));
+        transaction.insertRequest(Object.freeze({
+          requestId: takeoverRequestId, correlationId: takeoverCorrelationId, actorId: trusted.actor.actorId,
+          action: "execution.lease.takeover" as const, targetKind: "execution" as const,
+          targetId: replacement.executionId, targetRevision: replacement.revision,
+          result: "allow" as const, createdAt: trusted.now,
+        }));
+        transaction.insertDecision(Object.freeze({
+          decisionId: takeoverDecisionId, requestId: takeoverRequestId, actorId: trusted.actor.actorId,
+          action: "execution.lease.takeover" as const, result: "allow" as const,
+          reason: takeoverEvaluation.reason, policy: takeoverEvaluation.policy,
+          grantId: takeoverEvaluation.grantId, grantRevision: takeoverEvaluation.grantRevision,
+          projectId: currentProject.projectId, resourceRevision: currentProject.resourceRevision, createdAt: trusted.now,
+        }));
+        transaction.insertAudit(Object.freeze({
+          auditId: takeoverAuditId, requestId: takeoverRequestId, decisionId: takeoverDecisionId,
+          eventKind: "execution.lease.taken_over" as const, result: "accepted" as const,
+          actorId: trusted.actor.actorId, correlationId: takeoverCorrelationId,
+          targetKind: "execution" as const, targetId: replacement.executionId, targetRevision: replacement.revision,
+          reason: "accepted", createdAt: trusted.now,
+        }));
+        transaction.insertExecutionAttempt(replacement);
+        transaction.insertExecutionOperationRequest(Object.freeze({
+          requestId: continuationRequestId, correlationId: continuationCorrelationId,
+          actorId: trusted.actor.actorId, action: current.commandKind,
+          targetExecutionId: replacement.executionId, targetRevision: replacement.revision,
+          result: "allow" as const, createdAt: trusted.now,
+        }));
+        transaction.insertExecutionAuthorizationDecision(Object.freeze({
+          decisionId: continuationDecisionId, requestId: continuationRequestId, actorId: trusted.actor.actorId,
+          action: current.commandKind, result: "allow" as const,
+          reason: continuationEvaluation.reason, policy: continuationEvaluation.policy,
+          grantId: continuationEvaluation.grantId, grantRevision: continuationEvaluation.grantRevision,
+          projectId: currentProject.projectId, resourceRevision: currentProject.resourceRevision,
+          configRevision: currentProject.configRevision, createdAt: trusted.now,
+        }));
+        transaction.insertExecutionOperationAudit(Object.freeze({
+          auditId: continuationAuditId, requestId: continuationRequestId, decisionId: continuationDecisionId,
+          eventKind: "execution.operation.prepared" as const, result: "accepted" as const,
+          actorId: trusted.actor.actorId, correlationId: continuationCorrelationId,
+          executionId: replacement.executionId, executionRevision: replacement.revision,
+          code: "prepared", createdAt: trusted.now,
+        }));
+        transaction.writeDomain(state.domain, transition.value);
+        transaction.resolveDispatcherMember(
+          currentMember.memberId, currentRun.runId, currentMember.membershipRevision, currentMember.revision,
+          "claimed", replacement.executionId, null, "claimed_for_codex",
+          laterTimestamp(currentMember.updatedAt, trusted.now), current.operationId, "codex-product-operation",
+        );
+        transaction.updateCodexProductOperation(Object.freeze({
+          ...current, stage: "member_bound" as const, revision: current.revision + 1,
+          updatedAt: laterTimestamp(current.updatedAt, trusted.now),
+        }), current.revision);
+        const readback = transaction.read();
+        const claimed = readback.dispatcherMembers.find((candidate) => candidate.memberId === currentMember.memberId);
+        if (claimed === undefined || claimed.executionId !== replacement.executionId ||
+          claimed.ownerKind !== "codex-product-operation") {
+          throw new TypeError("Codex continuation claim readback failed");
+        }
+        return succeeded(memberView(readback, claimed), request.requestId, request.correlationId);
+      });
+    } catch (error) {
+      return mapPersistence(error);
+    }
+  };
+
+  const finalizeRun = (operationId: string): DispatcherResult<DispatcherRunView> => {
+    const trusted = context(ingress);
+    if (trusted === null) return failed("INVALID_INPUT", "Trusted Codex dispatcher ingress is invalid");
+    const reopened = reopenTargetedRun(operationId, trusted);
+    if (!reopened.ok) return reopened;
+    let state: ApplicationState;
+    try { state = readApplicationStateForOwner(store); } catch (error) { return mapPersistence(error); }
+    const selected = productOperation(state, operationId);
+    if ("ok" in selected) return selected;
+    const run = state.dispatcherRuns.find((candidate) => candidate.runId === selected.runId);
+    if (run === undefined) return failed("RUN_NOT_FOUND", "Codex targeted run is absent");
+    if (["completed", "partial", "failed", "interrupted"].includes(run.status)) {
+      const request = triggerRequest(state, run);
+      return succeeded(runView(state, run), request.requestId, request.correlationId, true);
+    }
+    const lifecycle = createDispatcherApplicationServiceInternal(store, ingress, Object.freeze({
+      adapterId: "openai-codex-sdk-local",
+      adapterVersion: "0.153.2",
+      executionLeaseSeconds,
+    }), Object.freeze({}));
+    return lifecycle.finalize(Object.freeze({
+      kind: "dispatch.finalize" as const,
+      runId: run.runId,
+      expectedOwnerRevision: run.ownerRevision,
+      expectedRunRevision: run.runRevision,
+    }));
+  };
+
+  return Object.freeze({
+    createStartRun,
+    claimStartMember,
+    createContinuationRun,
+    claimContinuationMember,
+    finalizeRun,
+  });
 }

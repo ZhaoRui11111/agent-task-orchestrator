@@ -1,6 +1,8 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "evidenceMode": "package_validated",
+  "productComposition": true,
+  "administratorPolicyAttestation": "not_run",
   "officialDocumentation": {
     "status": "verified",
     "sources": [

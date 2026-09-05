@@ -1,6 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { BASE_AUTHORIZATION_ACTIONS } from "./authorization.ts";
 import {
+  createCodexProductApplication,
+  lookupCodexContinuationReplayForCli,
+  type CodexProductIngress,
+  type CodexProductApplicationService,
+  type CodexProductResult,
+} from "./codex-product-application.ts";
+import {
   createApplicationService,
   type ApplicationResult,
 } from "./application.ts";
@@ -16,7 +23,10 @@ import {
   prepareLocalRuntime,
   selectTrustedLocalRuntimeRoot,
 } from "./persistence/local-ingress.ts";
-import { parseApplicationLifecycleAuthorization } from "./persistence/application-repository.ts";
+import {
+  parseApplicationLifecycleAuthorization,
+  readApplicationStateForOwner,
+} from "./persistence/application-repository.ts";
 import { openPersistence, type PersistenceStore } from "./persistence/store.ts";
 import { createManualExecutionBackend } from "./manual-execution-backend.ts";
 import {
@@ -34,6 +44,7 @@ import {
   applicationCommand,
   confirmationFor,
   option,
+  optionProfileRevision,
   optionRevision,
   parseCliArguments,
 } from "./cli-api-parser.ts";
@@ -41,6 +52,7 @@ import {
   applicationValueResult,
   failureResult,
   mapApplicationFailure,
+  mapCodexProductFailureToPublicCode,
   mapDoctorBlock,
   mapPersistenceFailure,
   mapProductFailureToPublicCode,
@@ -62,10 +74,56 @@ function productCommon(command: ParsedCliCommand): Readonly<Record<string, unkno
   });
 }
 
-function executeProductCommand(
-  product: ProductRuntime,
+type CliProductResult = ProductRuntimeResult<object> | CodexProductResult<object>;
+
+function codexProfileCommon(command: ParsedCliCommand): Readonly<Record<string, unknown>> {
+  return Object.freeze({
+    projectId: option(command, "project-id"),
+    expectedProjectResourceRevision: optionRevision(command, "expected-project-resource-revision"),
+    expectedProjectConfigRevision: optionRevision(command, "expected-project-config-revision"),
+    profileId: option(command, "profile-id"),
+    expectedProfileRevision: optionProfileRevision(command),
+  });
+}
+
+function executionFamily(
+  store: PersistenceStore,
   command: ParsedCliCommand,
-): ProductRuntimeResult<object> {
+): "manual" | "codex" {
+  const state = readApplicationStateForOwner(store);
+  const executionId = option(command, "execution-id");
+  const codexOwned = state.codexProductOperations.some((candidate) => candidate.executionId === executionId);
+  const manualOwned = state.manualTurns.some((candidate) => candidate.executionId === executionId);
+  if (codexOwned && manualOwned) {
+    throw new PersistenceError("CORRUPT_ROW", "Execution backend ownership is mixed");
+  }
+  return codexOwned ? "codex" : "manual";
+}
+
+function invalidCodexProductResult(): CodexProductResult<object> {
+  return Object.freeze({
+    ok: false as const,
+    error: Object.freeze({ code: "INVALID_INPUT" as const, message: "The command input is invalid." }),
+  });
+}
+
+function codexContinuationConfirmationRequiredResult(): CodexProductResult<object> {
+  return Object.freeze({
+    ok: false as const,
+    error: Object.freeze({
+      code: "CONFIRMATION_REQUIRED" as const,
+      message: "Fresh Codex continuation confirmation is required.",
+    }),
+  });
+}
+
+async function executeProductCommand(
+  store: PersistenceStore,
+  product: ProductRuntime,
+  codex: CodexProductApplicationService,
+  codexIngress: CodexProductIngress,
+  command: ParsedCliCommand,
+): Promise<CliProductResult> {
   switch (command.id) {
     case "authorization.upgrade": return product.upgrade(Object.freeze({
       kind: "authorization.upgrade",
@@ -80,27 +138,37 @@ function executeProductCommand(
       kind: "dispatch.resume",
       runId: option(command, "run-id"),
     }));
-    case "execution.inspect": return product.inspect(Object.freeze({
-      kind: "execution.inspect",
-      ...productCommon(command),
-    }));
-    case "execution.resume": return product.resume(Object.freeze({
-      kind: "execution.resume",
-      ...productCommon(command),
-      continuationReference: option(command, "continuation-reference"),
-      requiredActionReceiptId: option(command, "required-action-receipt-id"),
-    }));
-    case "execution.retry": return product.retry(Object.freeze({
-      kind: "execution.retry",
-      ...productCommon(command),
-      continuationReference: option(command, "continuation-reference"),
-      requiredActionReceiptId: option(command, "required-action-receipt-id"),
-    }));
-    case "execution.request-cancel": return product.requestCancel(Object.freeze({
-      kind: "execution.request-cancel",
-      ...productCommon(command),
-      reasonCode: option(command, "reason-code"),
-    }));
+    case "execution.inspect": {
+      const input = Object.freeze({ kind: "execution.inspect", ...productCommon(command) });
+      return executionFamily(store, command) === "codex" ? codex.inspect(input) : product.inspect(input);
+    }
+    case "execution.resume":
+    case "execution.retry": {
+      const input = Object.freeze({
+        kind: command.id,
+        ...productCommon(command),
+        continuationReference: option(command, "continuation-reference"),
+        requiredActionReceiptId: option(command, "required-action-receipt-id"),
+      });
+      const lookup = lookupCodexContinuationReplayForCli(store, codexIngress, input, command.id);
+      if (!lookup.ok) return lookup;
+      const family = lookup.value.found ? "codex" : executionFamily(store, command);
+      if (family === "manual" && command.options.confirm !== undefined) return invalidCodexProductResult();
+      if (family === "codex" && command.options.confirm === undefined) {
+        return codexContinuationConfirmationRequiredResult();
+      }
+      return family === "codex"
+        ? command.id === "execution.resume" ? codex.resume(input) : codex.retry(input)
+        : command.id === "execution.resume" ? product.resume(input) : product.retry(input);
+    }
+    case "execution.request-cancel": {
+      const input = Object.freeze({
+        kind: "execution.request-cancel",
+        ...productCommon(command),
+        reasonCode: option(command, "reason-code"),
+      });
+      return executionFamily(store, command) === "codex" ? codex.requestCancel(input) : product.requestCancel(input);
+    }
     case "manual.outcome-report": return product.recordManualOutcome(Object.freeze({
       kind: "manual.outcome-report",
       ...productCommon(command),
@@ -112,6 +180,34 @@ function executeProductCommand(
     case "execution.accept-manual-completion": return product.acceptManualCompletion(Object.freeze({
       kind: "execution.accept-manual-completion",
       ...productCommon(command),
+    }));
+    case "codex.profile.activate": return codex.activateProfile(Object.freeze({
+      kind: "codex.profile.activate",
+      ...codexProfileCommon(command),
+      workspaceRootKey: option(command, "workspace-root-key"),
+      workspaceRoot: option(command, "workspace-root"),
+      codexHomeKey: option(command, "codex-home-key"),
+      codexHome: option(command, "codex-home"),
+      gitExecutable: option(command, "git-executable"),
+      idempotencyKey: option(command, "idempotency-key"),
+    }));
+    case "codex.profile.inspect": return codex.inspectProfile(Object.freeze({
+      kind: "codex.profile.inspect",
+      ...codexProfileCommon(command),
+    }));
+    case "codex.profile.deactivate": return codex.deactivateProfile(Object.freeze({
+      kind: "codex.profile.deactivate",
+      ...codexProfileCommon(command),
+      idempotencyKey: option(command, "idempotency-key"),
+    }));
+    case "codex.dispatch-run": return codex.dispatchRun(Object.freeze({
+      kind: "codex.dispatch-run",
+      ...codexProfileCommon(command),
+      taskId: option(command, "task-id"),
+      expectedTaskRevision: optionRevision(command, "expected-task-revision"),
+      baseReference: option(command, "base-reference"),
+      idempotencyKey: option(command, "idempotency-key"),
+      leaseDurationSeconds: Number(option(command, "lease-duration-seconds")),
     }));
     default: throw new TypeError("CLI command has no Phase 2 product route");
   }
@@ -164,10 +260,17 @@ export async function runCli(args: readonly string[], options: CliRunOptions): P
       if (PRODUCT_COMMAND_IDS.has(command.id)) {
         const backend = createManualExecutionBackend(store!, { ingress: productIngress });
         const product = createProductRuntime(store!, productIngress, backend, backend);
-        const result = executeProductCommand(product, command);
+        const codex = createCodexProductApplication(store!, productIngress);
+        const result = await executeProductCommand(store!, product, codex, productIngress, command);
         return result.ok
           ? successResult(command.format, command.id, result.value)
-          : failureResult(command.format, command.id, mapProductFailureToPublicCode(result.error));
+          : failureResult(
+            command.format,
+            command.id,
+            "owner" in result.error
+              ? mapProductFailureToPublicCode(result.error)
+              : mapCodexProductFailureToPublicCode(result.error),
+          );
       }
       if (command.id === "init") {
         const initialized = service.bootstrap({ kind: "authorization.bootstrap", expiresAt: option(command, "expires-at") });

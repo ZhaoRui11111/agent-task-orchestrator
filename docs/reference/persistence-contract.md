@@ -9,18 +9,20 @@ migration identity, backup publication, restore recovery, and
 incompatible/corrupt-state handling.
 
 The current implementation stores the complete local explicit-Manual Phase 2
-model plus the fresh-only injected Phase 3 and scheduler libraries in one schema-version-1
+model, the authorized Codex product subset, and the fresh-only injected Phase 3
+and scheduler libraries in one schema-version-1
 baseline: exact Project/Task Domain snapshots, ProjectRegistry, local identity,
-vocabulary-version-1-through-7 epochs and grants, application requests,
+vocabulary-version-1-through-8 epochs and grants, application requests,
 authorization decisions, lifecycle authorizations, sanitized audit, execution
 attempts/sequences, reliable Manual-loop evidence and journal records,
-package-private Codex execution intents and turn/terminal journal records,
+Codex profiles, product operations, effect authorizations, execution intents,
+and package-private turn/terminal journal records,
 reconcile-first Manual dispatcher records, workspace generation/operation
 evidence, ProjectPolicy receipts, completion gates and generic/subtype decisions,
 terminal execution facts, integration reservations/effects/recovery, cleanup
 attestations, and bounded Phase 3 events; scheduler configuration, registration,
 operation, delivery-observation, and scheduled-tuple records. Lifecycle
-authorization stores and verifies only application-state digest version 3.
+authorization stores and verifies only application-state digest version 4.
 
 Persistence exposes lifecycle operations, read-only doctor, and the typed
 application transaction owner; it does not authorize a mutation or select or
@@ -44,7 +46,7 @@ The repository ships exactly one immutable migration:
 
 | Version and file | Current physical allocation |
 | --- | --- |
-| `1`, `0001-current-baseline.sql` | The complete implemented local explicit-Manual Phase 2, package-private Codex journal, and fresh-only injected Phase 3 plus scheduler storage model described in this contract |
+| `1`, `0001-current-baseline.sql` | The complete implemented local explicit-Manual Phase 2, authorized Codex product/journal, and fresh-only injected Phase 3 plus scheduler storage model described in this contract |
 
 This baseline is for a genuinely fresh runtime only. It is not a forward path
 from an earlier prototype database and does not preserve any previous migration
@@ -52,7 +54,7 @@ prefix, checksum, physical authorization partition, grant-link relation,
 historical application-state projection, or lifecycle digest version. Schema
 version and authorization vocabulary are independent: the database remains
 schema version 1 while separately confirmed capability transitions advance
-vocabulary version 1 to 2, 2 to 3, 3 to 4, 4 to 5, 5 to 6, and 6 to 7.
+vocabulary version 1 to 2, 2 to 3, 3 to 4, 4 to 5, 5 to 6, 6 to 7, and 7 to 8.
 
 The baseline does not allocate platform-specific scheduler task definitions,
 credentials, raw adapter payloads, MCP, Codex credentials/account state/raw SDK
@@ -145,7 +147,7 @@ local Project/Task/dependency application owner:
 - `authorization_local_identity` stores the immutable versioned
   actor/principal digest and runtime-root binding created by bootstrap.
 - `authorization_capability_epochs` stores one immutable contiguous
-  vocabulary-version-1-through-7 renewal/upgrade lineage bound to the exact action-set
+  vocabulary-version-1-through-8 renewal/upgrade lineage bound to the exact action-set
   digest.
 - `authorization_grants` stores the exact finite action, runtime or
   revision-bound Project scope, lifetime, administrative/source provenance,
@@ -158,7 +160,7 @@ local Project/Task/dependency application owner:
   prompts, tool output, Agent text, or secrets.
 - `application_lifecycle_authorizations` stores immutable short-lived
   backup/restore handoffs bound to authorization evidence and exactly
-  `state_digest_version = 3` of the complete current non-lifecycle application state.
+  `state_digest_version = 4` of the complete current non-lifecycle application state.
 
 Every application relation is `STRICT`. Requests, bootstrap, identity, epochs,
 decisions, lifecycle authorizations, and audit are append-only; grants are
@@ -182,10 +184,10 @@ lease-renewal CAS or an expired active-attempt supersession CAS. Attempts and
 sequences cannot be deleted. Baseline creation inserts no capability epoch,
 grant, execution row, or authority. Bootstrap creates only the fixed nineteen
 version-1 base grants. A separately confirmed contiguous upgrade is the only
-path that appends vocabulary-version-2, -3, -4, -5, -6, or -7 origin grants.
+path that appends vocabulary-version-2, -3, -4, -5, -6, -7, or -8 origin grants.
 
 Reliable execution-loop storage uses the same epoch/grant relations and the sole
-current digest-version-3 `applicationStateProjection`. A confirmed
+current digest-version-4 `applicationStateProjection`. A confirmed
 version-2-to-3 upgrade appends one epoch and exactly twenty-nine current origin
 grants. The projection enumerates direct epochs and grants once under their
 current property names and excludes only lifecycle authorizations to avoid a
@@ -230,6 +232,41 @@ An execution ID may occur in exactly one backend-turn family: simultaneous
 `manual_backend_turns` and `codex_backend_turns` ownership is corrupt even
 though the tables have separate SQL uniqueness domains.
 
+Codex product storage adds exactly four current relations:
+
+- `codex_profiles` is the narrowly revisioned Project-scoped configuration
+  projection. It binds status, fixed destination and opaque credential
+  reference, Project/resource/config/root identities, exact Git/workspace-root/
+  private-home path keys and filesystem identities, constructor/configuration
+  digests, creator operation, actor, and timestamps. It stores no credential
+  value.
+- `codex_profile_operations` is immutable activation/deactivation evidence. It
+  binds idempotency, expected/resulting revision and status, request/decision/
+  audit/confirmation, exact configuration digest, and trusted time. Exact
+  replay returns this original result projection rather than the later mutable
+  profile state.
+- `codex_product_operations` owns the C19 public idempotency key, complete
+  canonical original start/resume/retry command JSON and digest, preallocated
+  run/member/execution/workspace/intent identities, source continuation tuple,
+  profile/configuration/constructor identities, stage, lifecycle, result code,
+  canonical bounded terminal result JSON, revision, and timestamps. Immutable
+  command and allocation fields cannot be replaced while stage/lifecycle may
+  only advance through their closed forward CAS.
+- `codex_effect_authorizations` is immutable Prepare/Act evidence bound to the
+  exact product operation, profile revision/configuration, planned or current
+  run/member/execution/workspace/intent tuple, decision/grant and required-
+  grant-set digest, result/reason/policy, confirmation, and trusted time. An
+  allowed Act has exactly one pending-intent consumer and a non-null fresh
+  confirmation. A confirmation-required denial alone may store a null
+  confirmation; every allow and every other denial requires one.
+
+Dispatcher runs and members discriminate `manual-explicit`, `manual-scheduled`,
+`codex-start`, and `codex-continuation` route ownership. Existing Manual/
+scheduled claimed members remain `execution-start-intent`; Codex claimed
+members use `codex-product-operation` and bind their preallocated product
+operation/execution before workspace creation. The closed owner union is
+checked by SQL guards and combined decoding rather than inferred from IDs.
+
 All execution evidence is bounded IDs, enums,
 revisions, timestamps, hashes, and redacted references; no Task body, prompt,
 path, environment, credential, raw adapter payload/error, SQL, or stack is
@@ -256,6 +293,11 @@ integration authority.
 A separately confirmed version-6-to-7 upgrade or later version-7 renewal
 appends one epoch and exactly fifty current origin grants. Baseline creation,
 bootstrap, and versions 1 through 6 renewal add no `scheduler.*` authority.
+
+A separately confirmed version-7-to-8 upgrade or later version-8 renewal
+appends one epoch and exactly fifty-five current origin grants. Baseline
+creation, bootstrap, and versions 1 through 7 renewal add no `codex.*`
+authority.
 
 The dispatcher relations separate bounded trigger observation, authorization
 decision/audit, owned run and heartbeat lease, complete per-resource
@@ -410,7 +452,7 @@ Phase 3 adds these current record families through the same combined owner:
   to `executing`.
 
 All Phase 3 rows are `STRICT`, bounded, and covered once by the combined reader
-and digest-version-3 projection. Append-only guards, subtype/FK checks, partial
+and digest-version-4 projection. Append-only guards, subtype/FK checks, partial
 unique indexes, and legal-transition triggers reject orphan, duplicate,
 cross-subtype, stale-fence, nonterminal-reservation, or attestation/intent phase
 drift before mutation or normal readback.
@@ -423,23 +465,25 @@ drift before mutation or normal readback.
 | `schema_metadata.domain_initialized` one-time `0` to `1` transition | `src/persistence/repository.ts` inside the initial snapshot transaction | current startup validation, repository decoder, backup/restore verification |
 | `projects`, `tasks`, `task_dependencies` | `src/persistence/repository.ts`, invoked only through the internal application transaction after initialization | the same repository decoder, combined application decoder, backup verification, and doctor |
 | `project_registry` | `src/persistence/application-repository-transaction.ts` in the accepted application transaction | `application-repository-readers.ts` and the combined `application-repository-state.ts` decoder, then the application service through the stable `application-repository.ts` facade |
-| `authorization_bootstrap`, `authorization_local_identity`, and all vocabulary-version-1-through-7 `authorization_capability_epochs`/`authorization_grants` | `src/persistence/application-repository-transaction.ts` in bootstrap, renewal/upgrade, or authorized grant transactions | `application-repository-readers.ts`, the combined `application-repository-state.ts` decoder, and the application authorization owner through the stable facade |
-| `application_requests`, `authorization_decisions`, `application_audit`, `application_lifecycle_authorizations` | `src/persistence/application-repository-transaction.ts` in the same decision/operation transaction | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-3 `application-repository-digest.ts`, `application-repository-lifecycle.ts`, backup verification, and doctor |
+| `authorization_bootstrap`, `authorization_local_identity`, and all vocabulary-version-1-through-8 `authorization_capability_epochs`/`authorization_grants` | `src/persistence/application-repository-transaction.ts` in bootstrap, renewal/upgrade, or authorized grant transactions | `application-repository-readers.ts`, the combined `application-repository-state.ts` decoder, and the application authorization owner through the stable facade |
+| `application_requests`, `authorization_decisions`, `application_audit`, `application_lifecycle_authorizations` | `src/persistence/application-repository-transaction.ts` in the same decision/operation transaction | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-4 `application-repository-digest.ts`, `application-repository-lifecycle.ts`, backup verification, and doctor |
 | `task_execution_sequences`, `execution_attempts` | `src/persistence/application-repository-transaction.ts` only inside the typed execution application transaction | `application-repository-readers.ts`, `application-repository-state.ts`, the execution application owner, backup verification, and doctor |
 | `execution_operation_requests`, `execution_authorization_decisions`, `execution_operation_audit`, `execution_operation_intents`, `execution_intent_authorization_bindings`, `execution_observations`, `execution_verified_receipts`, `execution_finalizations`, `execution_terminal_states`, `completion_decisions`, `manual_completion_decisions`, `policy_gated_completion_decisions` | `src/persistence/application-repository-transaction.ts` only inside reliable-loop or Phase 3 completion transactions after the application owner selects and authorizes the exact operation | `application-repository-readers.ts`, `application-repository-state.ts`, the reliable execution or Phase 3 completion owner, backup verification, and doctor |
 | `manual_backend_turns`, `manual_backend_operations` | `src/persistence/manual-backend-repository.ts` remains the semantic journal writer through the injected production Manual backend/control after a matching committed core intent; physical writes use the same `ApplicationTransaction` from `application-repository-transaction.ts` | the same journal plus `application-repository-readers.ts`, `application-repository-state.ts`, the reliable execution owner, backup verification, and doctor |
 | `codex_backend_turns`, `codex_backend_operations` | `src/persistence/codex-backend-repository.ts` is the package-private semantic journal writer through the injected Codex backend after a matching committed core intent; physical writes use the same `ApplicationTransaction` from `application-repository-transaction.ts` | the same journal plus `application-repository-readers.ts`, `application-repository-state.ts`, the package-private reliable execution owner, backup verification, and doctor |
+| `codex_profiles`, `codex_profile_operations`, `codex_product_operations`, `codex_effect_authorizations` | `src/persistence/application-repository-transaction.ts` only inside the Codex product application after complete parsing, trusted identity/configuration inspection, authorization, and exact stage selection | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-4 `application-repository-digest.ts`, the Codex product/reliable owners, backup verification, and doctor |
 | `dispatcher_trigger_requests`, `dispatcher_authorization_decisions`, `dispatcher_runs`, `dispatcher_audit`, `dispatcher_reconciliation_items`, `dispatcher_reconciliation_summaries`, `dispatcher_memberships`, `dispatcher_members`, `dispatcher_member_denial_requests`, `dispatcher_member_denial_decisions`, `dispatcher_member_denial_audit`, `dispatcher_run_summaries` | `src/persistence/application-repository-transaction.ts` only inside the typed dispatcher application transaction after the dispatcher application owner selects and authorizes the exact transition | `application-repository-readers.ts`, `application-repository-state.ts`, the dispatcher application/orchestration owners, backup verification, and doctor |
-| `scheduler_operation_requests`, `scheduler_authorization_decisions`, `scheduler_configurations`, `scheduler_operation_intents`, `scheduler_registrations`, `scheduler_observations`, `scheduler_verified_receipts`, `scheduler_finalizations`, `scheduler_events`, `scheduler_delivery_observations`, `scheduler_scheduled_tuples` | `src/persistence/application-repository-transaction.ts` only inside the typed scheduler application or scheduled-delivery dispatcher transaction after the owning application code parses, authorizes, observes, verifies, and selects the exact transition | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-3 `application-repository-digest.ts`, the scheduler/dispatcher application owners, backup verification, and doctor |
-| `workspace_generations`, `workspace_authorization_decisions`, `workspace_operation_intents`, `workspace_observations`, `workspace_verified_receipts`, `workspace_finalizations`, `workspace_events`, `workspace_cleanup_attestations` | `src/persistence/application-repository-transaction.ts` only inside the typed workspace or Phase 3 cleanup transaction after the application owner selects, authorizes, observes, verifies, and finalizes the exact transition | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-3 `application-repository-digest.ts`, the workspace/Phase 3 application owner, backup verification, and doctor |
-| `project_policy_receipts`, `completion_gate_requests`, `completion_gate_authorization_decisions`, `completion_gate_intents`, `completion_gate_observations`, `completion_gate_verified_receipts`, `completion_gate_finalizations`, `completion_gate_events` | `src/persistence/application-repository-transaction.ts` only inside typed Phase 3 policy/gate transactions after the application owner chooses the exact operation | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-3 `application-repository-digest.ts`, the Phase 3 application owner, backup verification, and doctor |
-| `integration_target_sequences`, `integration_reservations`, `integration_operation_requests`, `integration_authorization_decisions`, `integration_intents`, `integration_observations`, `integration_verified_receipts`, `integration_finalizations`, `integration_events` | `src/persistence/application-repository-transaction.ts` only inside typed Phase 3 reservation/effect/recovery transactions after the application owner chooses and authorizes the exact transition | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-3 `application-repository-digest.ts`, the Phase 3 application owner, backup verification, and doctor |
+| `scheduler_operation_requests`, `scheduler_authorization_decisions`, `scheduler_configurations`, `scheduler_operation_intents`, `scheduler_registrations`, `scheduler_observations`, `scheduler_verified_receipts`, `scheduler_finalizations`, `scheduler_events`, `scheduler_delivery_observations`, `scheduler_scheduled_tuples` | `src/persistence/application-repository-transaction.ts` only inside the typed scheduler application or scheduled-delivery dispatcher transaction after the owning application code parses, authorizes, observes, verifies, and selects the exact transition | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-4 `application-repository-digest.ts`, the scheduler/dispatcher application owners, backup verification, and doctor |
+| `workspace_generations`, `workspace_authorization_decisions`, `workspace_operation_intents`, `workspace_observations`, `workspace_verified_receipts`, `workspace_finalizations`, `workspace_events`, `workspace_cleanup_attestations` | `src/persistence/application-repository-transaction.ts` only inside the typed workspace or Phase 3 cleanup transaction after the application owner selects, authorizes, observes, verifies, and finalizes the exact transition | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-4 `application-repository-digest.ts`, the workspace/Phase 3 application owner, backup verification, and doctor |
+| `project_policy_receipts`, `completion_gate_requests`, `completion_gate_authorization_decisions`, `completion_gate_intents`, `completion_gate_observations`, `completion_gate_verified_receipts`, `completion_gate_finalizations`, `completion_gate_events` | `src/persistence/application-repository-transaction.ts` only inside typed Phase 3 policy/gate transactions after the application owner chooses the exact operation | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-4 `application-repository-digest.ts`, the Phase 3 application owner, backup verification, and doctor |
+| `integration_target_sequences`, `integration_reservations`, `integration_operation_requests`, `integration_authorization_decisions`, `integration_intents`, `integration_observations`, `integration_verified_receipts`, `integration_finalizations`, `integration_events` | `src/persistence/application-repository-transaction.ts` only inside typed Phase 3 reservation/effect/recovery transactions after the application owner chooses and authorizes the exact transition | `application-repository-readers.ts`, `application-repository-state.ts`, digest-version-4 `application-repository-digest.ts`, the Phase 3 application owner, backup verification, and doctor |
 | backup generation and manifest | `src/persistence/backup.ts` under the lifecycle lock | the same verifier, restore, and current CLI/doctor surfaces |
 | lifecycle lock and connection receipts | `src/persistence/runtime.ts` | persistence lifecycle operations only |
 | restore intent, retained generation, and restore receipt | `src/persistence/backup.ts` under the lifecycle lock | explicit recovery and current doctor/CLI surfaces |
 
-No product surface opens SQLite or writes these paths directly. The Manual and
-package-private Codex adapters reach only their declared journal writers and
+No CLI surface opens SQLite or writes these paths directly. Product owners use
+only the typed transaction/repository boundary. The Manual and package-private
+Codex adapters reach only their declared journal writers and
 cannot write core records;
 the injected workspace or scheduler backend never writes SQLite; a CLI, MCP
 server, scheduler platform, adapter receipt, or Agent output cannot become a
@@ -581,7 +625,7 @@ checks SQLite storage classes, and invokes `createDomainSnapshot`. The current
 schema-version-1 application decoder then reads every registry, bootstrap, local
 identity, capability epoch/grant lineage, application and execution request,
 decision/audit/lifecycle record, execution sequence/attempt, operation stage,
-Manual journal, Codex turn/terminal-operation journal, terminal fact,
+Manual journal, Codex profile/product/effect and turn/terminal-operation journal, terminal fact,
 generic/subtype completion decision, dispatcher and scheduler
 record, all eight workspace record families, and every policy/gate/integration
 record family. It checks exact storage
@@ -591,8 +635,9 @@ sequence/attempt/fence order, at most one active attempt, complete
 authorization/request identity, Project/Task revisions, lease/idempotency and
 supersession semantics, contiguous prepare/act/finalize authorization binding
 chains, exact intent-stage and durable retry evidence, independent inspect
-authorization, Manual turn/operation lineage, exact Codex intent/workspace/
-thread/predecessor/terminal-signal/operation lineage, unique confirmation consumption,
+authorization, Manual turn/operation lineage, exact Codex profile/C19 command/
+product-stage/Act-consumer and intent/workspace/thread/predecessor/terminal-
+signal/operation lineage, unique confirmation consumption,
 terminal Task/execution/receipt/finalization/completion consistency, plus exact
 dispatcher trigger/run ownership, reconciliation completeness, sealed-member,
 claim/intent, and terminal-summary lineage. It has no historical schema reader,
@@ -610,8 +655,8 @@ mutation, impossible registration projection, or cross-tuple attachment is
 
 Grant identifiers are globally unique in the one current grant relation. Each
 capability epoch has the exact inventory for its recorded vocabulary: nineteen,
-twenty-three, twenty-nine, thirty, thirty-five, forty-seven, or fifty direct grants for
-vocabulary versions 1, 2, 3, 4, 5, 6, or 7 respectively. Missing, substituted, duplicate-action, wrong-epoch, or
+twenty-three, twenty-nine, thirty, thirty-five, forty-seven, fifty, or fifty-five direct grants for
+vocabulary versions 1, 2, 3, 4, 5, 6, 7, or 8 respectively. Missing, substituted, duplicate-action, wrong-epoch, or
 noncontiguous state is corruption. The decoder also requires each dispatcher request,
 decision, audit, run, reconciliation summary, membership/member, bound
 execution/intent, and run summary to form one exact lineage. Unknown enum/code,
@@ -630,18 +675,22 @@ causation chain. An unknown state/code/event, stale fence, denied Act bound to
 an observation, missing or substituted receipt, noncontiguous observation,
 invalid recover causation, unbounded evidence value, or impossible generation
 transition is `CORRUPT_ROW`. The complete workspace family appears once in the
-digest-version-3 application projection; backup, restore verification, and
+digest-version-4 application projection; backup, restore verification, and
 lifecycle authorization therefore bind it without a second projection.
 
-The same projection includes each Codex intent, turn, and terminal operation
-exactly once. The decoder rejects a Codex row with a Manual/no-workspace intent,
+The same projection includes each Codex profile, profile operation, product
+operation, effect authorization, intent, turn, and terminal operation exactly
+once. The decoder rejects a Codex row with a Manual/no-workspace intent,
 missing ready workspace lineage, changed input/ownership/HEAD/fence tuple,
 replaced thread, invalid predecessor, cancellation-as-terminal assertion,
 terminal signal/lifecycle mismatch, cross-family execution ownership, or a
 substituted terminal receipt identity/digest. For every terminal operation it
 reconstructs the canonical bounded receipt projection from the originating Act
 request, intent, turn, and stored receipt ID, then requires the recomputed SHA-256
-to equal the stored digest. Backup,
+to equal the stored digest. It independently reconstructs each complete C19
+command tuple and digest, profile configuration binding, effect Prepare/Act
+tuple, nullable-confirmation rule, single-consumer intent binding, closed stage/
+lifecycle/result combination, and canonical stored terminal result. Backup,
 restore verification, lifecycle authorization, and restart therefore bind the
 same Codex evidence rather than trusting a separate adapter cache.
 
@@ -792,9 +841,11 @@ The sole migration is `0001-current-baseline.sql`, registry ID
 
 | Version | Canonical line ending | Canonical `checksum_sha256` |
 | --- | --- | --- |
-| `1` | LF | `D7CDF784C090773CC846D484A8208A0D78FB8F640D8BA37A5827122AB70A4C3A` |
+| `1` | LF | `6F336B76BFA2A526A69D66B8A8FF554FE45E3415F4852A259EB4345455935E67` |
 
-The pre-EP-03E development baseline checksum
+The pre-EP-03F development baseline checksum
+`D7CDF784C090773CC846D484A8208A0D78FB8F640D8BA37A5827122AB70A4C3A`,
+pre-EP-03E checksum
 `E17C6ACFF0891C3B8FD6F1DADBF3616DDFCF4391F7F5D7427FE0F2F8CCFFED0D`,
 pre-EP-03D checksum
 `48AEAA28BCA5152BC930149483E649D6C91E1E63D64D5BD29958492860AA95A5`
@@ -994,15 +1045,16 @@ separately acknowledged verified-backup mechanism can publish older data.
 
 The current repository proves a local schema-version-1 persistence/application
 foundation, durable claims/leases/fences, reliable Manual-loop records,
-package-private Codex intent/thread/terminal records, dispatcher records, and
+Codex profile/product/effect plus package-private intent/thread/terminal
+records, dispatcher records, and
 scheduler configuration/operation/delivery/tuple records, plus the durable workspace generation/
 operation/evidence foundation, Phase 3 policy/gate/completion/integration/
 cleanup records, and versioned local product CLI backup, separately confirmed
 restore, and read-only doctor surfaces on the observed development host. The
-typed Manual and injected Phase 3 facades compose their records without adding
-a second writer. The package-private Codex owner is not composed by a supported
-facade. This does not establish a release, Windows or Codex support,
-product-wired Codex or scheduler operation route, concrete Scheduler adapter,
+typed Manual, Codex, and injected Phase 3 facades compose their records without
+adding a second writer. This does not establish a release, Windows or Codex
+support, administrator-managed effective-configuration attestation,
+product-wired scheduler operation route, concrete Scheduler adapter,
 real scheduled task, MCP server, plugin, daemon, general
 network integration, deployment, public Phase 3 CLI, or external Project
 operation beyond explicitly injected disposable local effects. The Manual

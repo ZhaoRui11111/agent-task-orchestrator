@@ -531,6 +531,159 @@ export interface ManualCompletionDecisionRecord {
   readonly createdAt: string;
 }
 
+export type CodexProfileStatus = "active" | "deactivated";
+
+export interface CodexProfileRecord {
+  readonly profileId: string;
+  readonly projectId: string;
+  readonly creatorOperationId: string;
+  readonly actorId: string;
+  readonly revision: number;
+  readonly status: CodexProfileStatus;
+  readonly projectResourceRevision: number;
+  readonly projectConfigRevision: number;
+  readonly projectRootKey: string;
+  readonly destination: "openai-codex-api";
+  readonly credentialReference: "process-env:CODEX_API_KEY";
+  readonly workspaceRoot: string;
+  readonly workspaceRootKey: string;
+  readonly workspacePlatform: string;
+  readonly workspaceDevice: string;
+  readonly workspaceInode: string;
+  readonly workspaceMode: number;
+  readonly codexHome: string;
+  readonly codexHomeKey: string;
+  readonly codexHomePlatform: string;
+  readonly codexHomeDevice: string;
+  readonly codexHomeInode: string;
+  readonly codexHomeMode: number;
+  readonly gitExecutable: string;
+  readonly gitExecutableKey: string;
+  readonly gitExecutablePlatform: string;
+  readonly gitExecutableDevice: string;
+  readonly gitExecutableInode: string;
+  readonly gitExecutableMode: number;
+  readonly constructorConfigSha256: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CodexProfileOperationRecord {
+  readonly operationId: string;
+  readonly idempotencyKey: string;
+  readonly requestId: string;
+  readonly decisionId: string;
+  readonly auditId: string;
+  readonly confirmationId: string | null;
+  readonly actorId: string;
+  readonly action: "codex.profile.activate" | "codex.profile.deactivate";
+  readonly projectId: string;
+  readonly expectedProjectResourceRevision: number;
+  readonly expectedProjectConfigRevision: number;
+  readonly profileId: string;
+  readonly expectedProfileRevision: number;
+  readonly result: "allow" | "deny";
+  readonly reason: AuthorizationReason;
+  readonly policy: AuthorizationPolicyResult;
+  readonly grantId: string | null;
+  readonly grantRevision: number | null;
+  readonly configurationSha256: string | null;
+  readonly resultingProfileRevision: number | null;
+  readonly resultingStatus: CodexProfileStatus | null;
+  readonly createdAt: string;
+}
+
+export type CodexProductCommandKind = "codex.dispatch-run" | "execution.resume" | "execution.retry";
+export type CodexProductStage =
+  | "prepared" | "member_bound" | "workspace_ready" | "intent_prepared"
+  | "effect_possible" | "effect_terminal" | "workspace_refreshed";
+export type CodexProductLifecycle = "active" | "finalized" | "refused" | "recovery_required";
+
+export interface CodexProductOperationRecord {
+  readonly operationId: string;
+  readonly publicIdempotencyKey: string;
+  readonly commandKind: CodexProductCommandKind;
+  readonly commandJson: string;
+  readonly commandSha256: string;
+  readonly actorId: string;
+  readonly profileId: string;
+  readonly profileRevision: number;
+  readonly constructorConfigSha256: string;
+  readonly projectId: string;
+  readonly expectedProjectResourceRevision: number;
+  readonly expectedProjectConfigRevision: number;
+  readonly taskId: string;
+  readonly expectedTaskRevision: number;
+  readonly baseReference: string | null;
+  readonly leaseDurationSeconds: number | null;
+  readonly sourceExecutionId: string | null;
+  readonly sourceExecutionRevision: number | null;
+  readonly sourceAttemptNumber: number | null;
+  readonly sourceFencingToken: number | null;
+  readonly sourceBackendExecutionId: string | null;
+  readonly sourceThreadId: string | null;
+  readonly sourceObservationNumber: number | null;
+  readonly sourceVerifiedReceiptId: string | null;
+  readonly sourceWorkspaceId: string | null;
+  readonly sourceWorkspaceGeneration: number | null;
+  readonly sourceWorkspaceRevision: number | null;
+  readonly sourceWorkspaceRootKey: string | null;
+  readonly sourceWorkspaceOwnershipBindingSha256: string | null;
+  readonly sourceWorkspaceHeadObjectId: string | null;
+  readonly sourceWorkspaceVerifiedReceiptId: string | null;
+  readonly continuationReference: string | null;
+  readonly requiredActionReceiptId: string | null;
+  readonly runId: string;
+  readonly memberId: string;
+  readonly executionId: string;
+  readonly workspaceId: string;
+  readonly intentId: string;
+  readonly stage: CodexProductStage;
+  readonly lifecycle: CodexProductLifecycle;
+  readonly revision: number;
+  readonly workspaceGeneration: number | null;
+  readonly workspaceRevision: number | null;
+  readonly workspaceHeadObjectId: string | null;
+  readonly resultCode: string | null;
+  readonly resultJson: string | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface CodexEffectAuthorizationRecord {
+  readonly authorizationId: string;
+  readonly productOperationId: string;
+  readonly phase: "prepare" | "act";
+  readonly bindingRevision: number;
+  readonly requestId: string;
+  readonly decisionId: string;
+  readonly auditId: string;
+  readonly confirmationId: string | null;
+  readonly actorId: string;
+  readonly action: "codex.execution.invoke";
+  readonly result: "allow" | "deny";
+  readonly reason: AuthorizationReason;
+  readonly policy: AuthorizationPolicyResult;
+  readonly grantId: string | null;
+  readonly grantRevision: number | null;
+  readonly requiredGrantSetVersion: 1;
+  readonly requiredGrantSetJson: string;
+  readonly requiredGrantSetSha256: string;
+  readonly coreAuthorizationDecisionId: string | null;
+  readonly coreAuthorizationBindingRevision: number | null;
+  readonly profileId: string;
+  readonly profileRevision: number;
+  readonly constructorConfigSha256: string;
+  readonly runId: string;
+  readonly memberId: string;
+  readonly executionId: string;
+  readonly intentId: string | null;
+  readonly workspaceId: string;
+  readonly workspaceGeneration: number | null;
+  readonly workspaceRevision: number | null;
+  readonly createdAt: string;
+}
+
 export interface DispatcherTriggerRequestRecord {
   readonly requestId: string;
   readonly observationId: string;
@@ -558,6 +711,7 @@ export interface DispatcherAuthorizationDecisionRecord {
 }
 
 export type DispatcherRunStatus = "starting" | "reconciling" | "sweeping" | "completed" | "partial" | "failed" | "interrupted";
+export type DispatcherRouteKind = "manual" | "scheduled" | "codex-start" | "codex-continuation";
 
 export interface DispatcherRunRecord {
   readonly runId: string;
@@ -565,6 +719,8 @@ export interface DispatcherRunRecord {
   readonly requestId: string;
   readonly decisionId: string;
   readonly actorId: string;
+  readonly routeKind: DispatcherRouteKind;
+  readonly productOperationId: string | null;
   readonly ownerId: string;
   readonly ownerRevision: number;
   readonly runRevision: number;
@@ -599,6 +755,9 @@ export const DISPATCHER_MEMBER_CODES = Object.freeze([
   "dispatch_denied", "binding_absent", "project_identity_changed", "project_revision_changed", "project_disabled",
   "execution_sequence_exists", "task_revision_changed", "domain_ineligible", "resource_reconciliation_incomplete",
   "execution_claim_denied", "execution_start_denied", "domain_claim_rejected", "claimed_and_prepared",
+  "claimed_for_codex",
+  "codex_profile_inactive", "codex_product_stale", "codex_source_not_ready",
+  "execution_continuation_denied", "execution_takeover_denied",
 ] as const);
 export type DispatcherMemberCode = (typeof DISPATCHER_MEMBER_CODES)[number];
 
@@ -664,6 +823,8 @@ export interface DispatcherMemberRecord {
   readonly outcome: DispatcherMemberOutcome | null;
   readonly executionId: string | null;
   readonly intentId: string | null;
+  readonly productOperationId: string | null;
+  readonly ownerKind: "execution-start-intent" | "codex-product-operation" | null;
   readonly code: DispatcherMemberCode | null;
   readonly revision: number;
   readonly createdAt: string;
@@ -1499,6 +1660,10 @@ export interface ApplicationState {
   readonly codexBackendOperations: readonly CodexBackendOperationRecord[];
   readonly completionDecisions: readonly CompletionDecisionRecord[];
   readonly manualCompletionDecisions: readonly ManualCompletionDecisionRecord[];
+  readonly codexProfiles: readonly CodexProfileRecord[];
+  readonly codexProfileOperations: readonly CodexProfileOperationRecord[];
+  readonly codexProductOperations: readonly CodexProductOperationRecord[];
+  readonly codexEffectAuthorizations: readonly CodexEffectAuthorizationRecord[];
   readonly dispatcherTriggerRequests: readonly DispatcherTriggerRequestRecord[];
   readonly dispatcherAuthorizationDecisions: readonly DispatcherAuthorizationDecisionRecord[];
   readonly dispatcherRuns: readonly DispatcherRunRecord[];

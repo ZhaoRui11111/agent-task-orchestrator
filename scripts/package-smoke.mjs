@@ -315,6 +315,14 @@ const expectedEntries = [
   "package/dist/codex-execution-backend.d.ts.map",
   "package/dist/codex-execution-backend.js",
   "package/dist/codex-execution-backend.js.map",
+  "package/dist/codex-product-application.d.ts",
+  "package/dist/codex-product-application.d.ts.map",
+  "package/dist/codex-product-application.js",
+  "package/dist/codex-product-application.js.map",
+  "package/dist/codex-product-configuration.d.ts",
+  "package/dist/codex-product-configuration.d.ts.map",
+  "package/dist/codex-product-configuration.js",
+  "package/dist/codex-product-configuration.js.map",
   "package/dist/codex-sdk-worker.d.ts",
   "package/dist/codex-sdk-worker.d.ts.map",
   "package/dist/codex-sdk-worker.js",
@@ -411,6 +419,10 @@ const expectedEntries = [
   "package/dist/persistence/codex-backend-repository.d.ts.map",
   "package/dist/persistence/codex-backend-repository.js",
   "package/dist/persistence/codex-backend-repository.js.map",
+  "package/dist/persistence/codex-product-digest.d.ts",
+  "package/dist/persistence/codex-product-digest.d.ts.map",
+  "package/dist/persistence/codex-product-digest.js",
+  "package/dist/persistence/codex-product-digest.js.map",
   "package/dist/persistence/codex-receipt-digest.d.ts",
   "package/dist/persistence/codex-receipt-digest.d.ts.map",
   "package/dist/persistence/codex-receipt-digest.js",
@@ -499,7 +511,7 @@ const expectedEntries = [
   "package/package.json",
 ].sort();
 
-invariant(expectedEntries.length === 240, `packed expected inventory count drifted: ${expectedEntries.length}`);
+invariant(expectedEntries.length === 252, `packed expected inventory count drifted: ${expectedEntries.length}`);
 
 const packageManagerVersion = pnpm(["--version"], repoRoot).stdout.trim();
 invariant(packageManagerVersion === "11.19.0", `pnpm version drifted: ${packageManagerVersion}`);
@@ -605,12 +617,45 @@ export async function resolve(specifier, context, nextResolve) {
     ),
     "packed declarations retain a synthetic capability-status surface",
   );
-  invariant(
-    !/CodexExecution|CodexSdk|PinnedCodex|createCodex|createInjectedCodex|createPinnedCodex|CodexWorkspace|VerifiedCodex|CODEX_EXECUTION_ADAPTER_ID/u.test(
-      `${sourceIndex}\n${indexDeclarations}`,
-    ),
-    "package root exposes the package-private Codex execution composition",
-  );
+  for (const required of [
+    "CODEX_PRODUCT_ERROR_CODES",
+    "createCodexProductApplication",
+    "CodexDispatchRunCommand",
+    "CodexDispatchView",
+    "CodexProductApplicationService",
+    "CodexProductConfirmationRequest",
+    "CodexProductError",
+    "CodexProductErrorCode",
+    "CodexProductFailure",
+    "CodexProductIngress",
+    "CodexProductResult",
+    "CodexProductSuccess",
+    "CodexProfileActivateCommand",
+    "CodexProfileDeactivateCommand",
+    "CodexProfileInspectCommand",
+    "CodexProfileView",
+  ]) {
+    invariant(sourceIndex.includes(required), `source package root lacks Codex product export: ${required}`);
+    invariant(indexDeclarations.includes(required), `packed declarations lack Codex product export: ${required}`);
+  }
+  for (const forbidden of [
+    "CodexCredentialResolver",
+    "CodexExecutionBackendConfiguration",
+    "CodexProductApplicationDependencies",
+    "CodexProductApplicationHooks",
+    "CodexProfileConfigurationInput",
+    "CodexSdkDriver",
+    "createCodexExecutionBackend",
+    "createCodexProductApplicationWithDependencies",
+    "createCodexTargetedDispatcherService",
+    "createInjectedCodexReliableExecutionService",
+    "createProcessEnvironmentCodexCredentialResolver",
+    "createProductCodexSdkDriver",
+    "lookupCodexContinuationReplayForCli",
+  ]) {
+    invariant(!sourceIndex.includes(forbidden), `source package root exposes Codex private seam: ${forbidden}`);
+    invariant(!indexDeclarations.includes(forbidden), `packed declarations expose Codex private seam: ${forbidden}`);
+  }
 
   pnpm(["pack", "--pack-destination", generation], repoRoot);
   const tgz = readdirSync(generation).find((item) => item.endsWith(".tgz"));
@@ -632,12 +677,15 @@ export async function resolve(specifier, context, nextResolve) {
     path.join(consumer, "index.ts"),
     `import {
   AUTHORIZATION_ACTIONS,
+  CODEX_AUTHORIZATION_ACTIONS,
+  CODEX_PRODUCT_ERROR_CODES,
   SCHEDULER_CONTRACT_ID,
   SCHEDULER_STAGE_AUTHORIZATION_ACTIONS,
   WORKSPACE_CONTRACT_ID,
   WINDOWS_GIT_WORKSPACE_ADAPTER_ID,
   WINDOWS_GIT_WORKSPACE_ADAPTER_VERSION,
   createApplicationService,
+  createCodexProductApplication,
   createExecutionApplicationService,
   createManualExecutionBackend,
   createProductRuntime,
@@ -653,6 +701,13 @@ export async function resolve(specifier, context, nextResolve) {
   parseSchedulerBackendResult,
   parseSchedulerDispatchTrigger,
   type ApplicationIngress,
+  type CodexDispatchRunCommand,
+  type CodexDispatchView,
+  type CodexProductApplicationService,
+  type CodexProductIngress,
+  type CodexProductResult,
+  type CodexProfileActivateCommand,
+  type CodexProfileView,
   type ExecutionClaimCommand,
   type ExecutionIngress,
   type ExecutionBackend,
@@ -686,12 +741,15 @@ void backupManifest;
 void restoreReceipt;
 void currentSchemaVersion();
 void AUTHORIZATION_ACTIONS;
+void CODEX_AUTHORIZATION_ACTIONS;
+void CODEX_PRODUCT_ERROR_CODES;
 void SCHEDULER_CONTRACT_ID;
 void SCHEDULER_STAGE_AUTHORIZATION_ACTIONS;
 void WORKSPACE_CONTRACT_ID;
 void WINDOWS_GIT_WORKSPACE_ADAPTER_ID;
 void WINDOWS_GIT_WORKSPACE_ADAPTER_VERSION;
 void createApplicationService;
+void createCodexProductApplication;
 void createExecutionApplicationService;
 void createManualExecutionBackend;
 void createProductRuntime;
@@ -707,6 +765,20 @@ void parseSchedulerBackendResult;
 void parseSchedulerDispatchTrigger;
 const ingress = null as unknown as ApplicationIngress;
 void ingress;
+const codexIngress = null as unknown as CodexProductIngress;
+const codexProduct = null as unknown as CodexProductApplicationService;
+const codexDispatch = null as unknown as CodexDispatchRunCommand;
+const codexDispatchView = null as unknown as CodexDispatchView;
+const codexProfileActivate = null as unknown as CodexProfileActivateCommand;
+const codexProfileView = null as unknown as CodexProfileView;
+const codexProductResult = null as unknown as CodexProductResult<CodexProfileView>;
+void codexIngress;
+void codexProduct;
+void codexDispatch;
+void codexDispatchView;
+void codexProfileActivate;
+void codexProfileView;
+void codexProductResult;
 const executionIngress = null as unknown as ExecutionIngress;
 const executionClaim = null as unknown as ExecutionClaimCommand;
 void executionIngress;
@@ -779,8 +851,12 @@ void windowsGitBackend;
       "--eval",
       `import { randomUUID } from "node:crypto";
       import("agent-task-orchestrator").then(async (m) => {
+        if (typeof m.createCodexProductApplication !== "function" ||
+            !Array.isArray(m.CODEX_PRODUCT_ERROR_CODES)) {
+          throw new Error("package root lacks the supported Codex product surface");
+        }
         const forbiddenCodexExports = Object.keys(m).filter((name) =>
-          /CodexExecution|CodexSdk|PinnedCodex|createCodex|createInjectedCodex|createPinnedCodex|CodexWorkspace|VerifiedCodex|CODEX_EXECUTION_ADAPTER_ID/u.test(name));
+          /CodexExecution|CodexSdk|PinnedCodex|createCodexExecutionBackend|createCodexProductApplicationWithDependencies|createCodexTargetedDispatcherService|createInjectedCodex|createPinnedCodex|createProcessEnvironmentCodexCredentialResolver|createProductCodexSdkDriver|lookupCodexContinuationReplayForCli|CodexWorkspace|VerifiedCodex|CODEX_EXECUTION_ADAPTER_ID/u.test(name));
         if (forbiddenCodexExports.length !== 0) {
           throw new Error("package root exposes the package-private Codex execution composition");
         }
@@ -812,6 +888,12 @@ void windowsGitBackend;
           currentLeaseOwner: () => "package-worker",
           confirmOperation: ({ action }) => ({ confirmationId: action + ":" + randomUUID() }),
         };
+        const codexProduct = m.createCodexProductApplication(store, trusted);
+        if (typeof codexProduct.activateProfile !== "function" ||
+            typeof codexProduct.dispatchRun !== "function" ||
+            typeof codexProduct.requestCancel !== "function") {
+          throw new Error("supported Codex product factory returned an invalid surface");
+        }
         let service = m.createApplicationService(store, trusted);
         const bootstrap = service.bootstrap({ kind: "authorization.bootstrap", expiresAt });
         if (!bootstrap.ok) throw new Error("package bootstrap was rejected");
@@ -867,11 +949,17 @@ void windowsGitBackend;
         trustedMilliseconds = Date.parse(issuedAt) + 6000;
         const schedulerUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
         if (!schedulerUpgrade.ok || schedulerUpgrade.value.epochRevision !== 6 ||
-            schedulerUpgrade.value.capabilityCount !== m.SCHEDULER_STAGE_AUTHORIZATION_ACTIONS.length ||
-            schedulerUpgrade.value.capabilityCount !== m.AUTHORIZATION_ACTIONS.length) {
+            schedulerUpgrade.value.capabilityCount !== m.SCHEDULER_STAGE_AUTHORIZATION_ACTIONS.length) {
           throw new Error("package scheduler capability upgrade was rejected");
         }
         trustedMilliseconds = Date.parse(issuedAt) + 7000;
+        const codexUpgrade = service.upgrade({ kind: "authorization.capability.upgrade", expiresAt });
+        if (!codexUpgrade.ok || codexUpgrade.value.epochRevision !== 7 ||
+            m.CODEX_AUTHORIZATION_ACTIONS.length !== 5 ||
+            codexUpgrade.value.capabilityCount !== m.AUTHORIZATION_ACTIONS.length) {
+          throw new Error("package Codex capability upgrade was rejected");
+        }
+        trustedMilliseconds = Date.parse(issuedAt) + 8000;
         let manualBackend = m.createManualExecutionBackend(store, { ingress: trusted });
         let product = m.createProductRuntime(store, trusted, manualBackend, manualBackend);
         const dispatched = product.dispatchRun({
@@ -906,7 +994,7 @@ void windowsGitBackend;
           throw new Error("package product inspection did not bind the dispatched execution");
         }
         const executionId = inspected.value.executionId;
-        trustedMilliseconds = Date.parse(issuedAt) + 8000;
+        trustedMilliseconds = Date.parse(issuedAt) + 9000;
         const reportCommand = {
           kind: "manual.outcome-report",
           ...publicCommon(executionId, "package-report"),
@@ -927,7 +1015,7 @@ void windowsGitBackend;
         product = m.createProductRuntime(store, trusted, manualBackend, manualBackend);
         const reportReplay = product.recordManualOutcome(reportCommand);
         if (!reportReplay.ok || !reportReplay.value.replayed) throw new Error("package Manual restart replay was not stable");
-        trustedMilliseconds = Date.parse(issuedAt) + 9000;
+        trustedMilliseconds = Date.parse(issuedAt) + 10000;
         const completed = product.acceptManualCompletion({
           kind: "execution.accept-manual-completion",
           ...publicCommon(executionId, "package-completion"),
@@ -948,6 +1036,8 @@ void windowsGitBackend;
           snapshot: project.value.projectId === "project" && task.value.id === "task",
           claim: inspected.value.fencingToken === 1 && inspected.value.taskRevision === 3,
           manual: inspected.value.lifecycle === "queued" && reported.value.lifecycle === "turn_succeeded" && completed.value.lifecycle === "completed",
+          codexProductExport: typeof m.createCodexProductApplication === "function" &&
+            m.CODEX_PRODUCT_ERROR_CODES.length > 0,
           dispatcherExport: typeof m.createManualDispatcher === "function",
           schedulerExport: m.SCHEDULER_CONTRACT_ID === "ato.scheduler/v1" &&
             m.SCHEDULER_STAGE_AUTHORIZATION_ACTIONS.length === 50 &&
@@ -990,6 +1080,7 @@ void windowsGitBackend;
       imported.snapshot === true &&
       imported.claim === true &&
       imported.manual === true &&
+      imported.codexProductExport === true &&
       imported.dispatcherExport === true &&
       imported.schedulerExport === true &&
       imported.workspaceExport === true &&
@@ -1110,7 +1201,15 @@ void windowsGitBackend;
   const installedExplicitBin = pnpm(["exec", "ato", ...explicitCurrentArgs], consumer, undefined, cliEnvironment);
   invariant(installedExplicitBin.stdout === expectedPositive.stdout && installedExplicitBin.stderr === "", "installed package explicit-current bin drifted from direct CLI entry");
 
-  pnpm(["remove", "agent-task-orchestrator"], consumer, storeDir);
+  // Removing the just-tested local tarball introduces no dependency. Trust the
+  // consumer lockfile that this process constructed from the frozen offline
+  // install instead of asking pnpm to fetch supply-chain metadata again.
+  pnpm(
+    ["remove", "agent-task-orchestrator"],
+    consumer,
+    storeDir,
+    { pnpm_config_trust_lockfile: "true" },
+  );
   invariant(!existsSync(path.join(consumer, "node_modules", "agent-task-orchestrator")), "package uninstall left the installed package");
   console.log(
     JSON.stringify({

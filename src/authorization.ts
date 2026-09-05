@@ -99,8 +99,17 @@ export const SCHEDULER_STAGE_AUTHORIZATION_ACTIONS = Object.freeze([
   ...SCHEDULER_AUTHORIZATION_ACTIONS,
 ] as const);
 
+export const CODEX_AUTHORIZATION_ACTIONS = Object.freeze([
+  "codex.profile.activate",
+  "codex.profile.inspect",
+  "codex.profile.deactivate",
+  "codex.execution.invoke",
+  "codex.execution.cancel",
+] as const);
+
 export const AUTHORIZATION_ACTIONS = Object.freeze([
   ...SCHEDULER_STAGE_AUTHORIZATION_ACTIONS,
+  ...CODEX_AUTHORIZATION_ACTIONS,
 ] as const);
 
 export const HIGH_RISK_ACTIONS = Object.freeze([
@@ -117,13 +126,16 @@ export const HIGH_RISK_ACTIONS = Object.freeze([
   "workspace.cleanup",
   "scheduler.register",
   "scheduler.remove",
+  "codex.profile.activate",
+  "codex.profile.deactivate",
+  "codex.execution.invoke",
 ] as const);
 
 export type AuthorizationAction = (typeof AUTHORIZATION_ACTIONS)[number];
-export type AuthorizationVocabularyVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7;
+export type AuthorizationVocabularyVersion = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
 
 export function isAuthorizationVocabularyVersion(value: unknown): value is AuthorizationVocabularyVersion {
-  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5 || value === 6 || value === 7;
+  return value === 1 || value === 2 || value === 3 || value === 4 || value === 5 || value === 6 || value === 7 || value === 8;
 }
 
 export function actionsForVocabulary(version: AuthorizationVocabularyVersion): readonly AuthorizationAction[] {
@@ -139,7 +151,9 @@ export function actionsForVocabulary(version: AuthorizationVocabularyVersion): r
               ? WORKSPACE_STAGE_AUTHORIZATION_ACTIONS
               : version === 6
                 ? PHASE3_AUTHORIZATION_ACTIONS
-                : AUTHORIZATION_ACTIONS;
+                : version === 7
+                  ? SCHEDULER_STAGE_AUTHORIZATION_ACTIONS
+                  : AUTHORIZATION_ACTIONS;
 }
 export type AuthorizationPolicyResult = "allow" | "deny" | "read_not_applicable";
 export type AuthorizationReason =

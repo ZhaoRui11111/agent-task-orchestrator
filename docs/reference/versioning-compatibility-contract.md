@@ -10,7 +10,7 @@ internal current SQLite baseline at schema version `1`, a provisional package-ro
   workspace/Phase-3/persistence surface, implemented closed pure
 `ato.execution/v2`, `ato.scheduler/v1`, `ato.project-policy/v1`, `ato.completion/v1`,
 `ato.integration/v1`, and `ato.workspace/v2` local ports, and one implemented
-provisional `ato.api/v1` local explicit-Manual product CLI major.
+provisional `ato.api/v1` local Manual plus authorized-Codex product CLI major.
 It still has no released product,
 validated platform, or supported external API.
 
@@ -26,9 +26,9 @@ create or change this policy.
   `0` means a genuinely fresh database with no application object and shipped
   versions begin at `1`. The current and only accepted target is `1`.
   `0001-current-baseline.sql` directly owns the complete implemented local
-  explicit-Manual Phase 2, package-private Codex journal, and fresh-only Phase 3
-  plus scheduler storage shape, including lifecycle state-digest version 3 and
-  authorization vocabularies 1 through 7.
+  explicit-Manual Phase 2, authorized Codex profile/product/backend journal,
+  and fresh-only Phase 3 plus scheduler storage shape, including lifecycle
+  state-digest version 4 and authorization vocabularies 1 through 8.
   Schema version and
   authorization vocabulary are independent counters. Exact migration
   identity, checksum, allocation, and mechanics are owned by the
@@ -65,16 +65,16 @@ tests; otherwise it returns a typed incompatibility error.
 The current `ato.api/v1` request and response shapes are closed, have no
 extension map, and reject unknown input. Its exact grammar, fields, key order,
 redaction, errors, and exits are owned by the [CLI/API contract](cli-contract.md).
-It contains exactly the complete local explicit-Manual Phase 2 product documented
-there. Omitting the version and selecting `ato.api/v1` explicitly are identical;
+It contains the complete local explicit-Manual Phase 2 product plus the closed
+authorized Codex subset documented there. Omitting the version and selecting `ato.api/v1` explicitly are identical;
 all other majors are unsupported before runtime construction or protected state
 evaluation. This major is not a released stability or platform-support promise.
 The package may expose independent library ports and services without adding a
 CLI command: the scheduler and Phase 3 ports/application services, Phase 3
 adapters, and Phase 3 product facade therefore do not change the closed
-33-command/37-error `ato.api/v1` grammar or the three backup/restore JSON
+37-command/41-error `ato.api/v1` grammar or the three backup/restore JSON
 formats. The existing generic authorization commands may manage the global
-vocabulary-version-7 scheduler labels/grants without creating a scheduler
+vocabulary-version-8 scheduler and Codex labels/grants without creating a scheduler
 operation route.
 
 ### Unreleased current-v1 reset
@@ -126,10 +126,9 @@ HEAD identity, a SHA-256 Task-input reference, bounded ephemeral input at the
 effect boundary, and `openai-codex-sdk/v1` receipts. `ato.execution/v1` and
 `local-manual/v1` are retired and rejected. There is no v1 reader, alias,
 fallback, translation, migration, dual write, or deprecation window. The Codex
-constructor/configuration/driver/injected service remain outside the supported
-package root and every current product/application/dispatcher/API/CLI factory,
-so this port change neither adds an operational Codex route nor acquires
-authority from the current vocabulary-version-7 action set. A later required-field, authorization,
+backend constructor/driver and injected seams remain outside the supported
+package root; EP-03F composes the branch only through its public product factory,
+closed CLI subset, and vocabulary-version-8 authority. A later required-field, authorization,
 side-effect, lifecycle, receipt, or error-meaning change requires v3.
 
 EP-03A is the first implementation of `ato.workspace/v1`. The package was still
@@ -154,9 +153,10 @@ fresh-only development baseline. The sole current workspace contract is now
 adds the required cleanup-attestation request/receipt binding plus an owned
 cleanup effect. `ato.workspace/v1` is retired and rejected; there is no v1
 reader, alias, fallback, migration, dual write, or deprecation window. The
-Windows Git workspace backend implements only v2, remains product/CLI-unwired,
-and its exact-host evidence does not establish platform compatibility or
-support.
+Windows Git workspace backend implements only v2. EP-03F's Codex product owner
+constructs it only for the targeted owned-workspace route; the Phase 3 facade
+remains explicitly injected, and exact-host evidence does not establish
+platform compatibility or support.
 
 EP-03C is also the first implementation of exact `ato.project-policy/v1`,
 `ato.completion/v1`, and `ato.integration/v1`. Each is closed at that identity:
@@ -172,9 +172,23 @@ identity. A later required-field, identity, operation, cadence ownership,
 side-effect, receipt, lifecycle, authorization-boundary, or error-meaning change
 requires a new scheduler port major. The injected scheduler library, unexported
 no-effect test Fake, durable scheduled-delivery tuple, authorization vocabulary
-version 7, and application-state digest version 3 do not alter the current
-`ato.api/v1` CLI or backup/restore artifact versions; no concrete scheduler
+version 7, and scheduler state now covered by application-state digest version 4
+do not add a scheduler command to the current `ato.api/v1` CLI or alter backup/
+restore artifact versions; no concrete scheduler
 adapter or compatibility claim exists.
+
+EP-03F consumes a separately authorized fresh-only schema/API baseline
+replacement without changing the current schema number, API major, or port
+majors. It advances the cumulative authorization vocabulary to version 8 with
+exactly five Codex actions, advances the application-state digest to version 4,
+and expands the closed current `ato.api/v1` tree from 33/37 to exactly 37
+commands/41 errors. The four new paths are profile activate/inspect/deactivate
+and targeted Codex dispatch; existing execution inspect/resume/retry/request-
+cancel discriminate Manual/Codex only from durable state. There is no old-shape
+reader, alias, dual write, negotiation, or same-major compatibility claim. The
+three backup/restore JSON formats and every port major remain version 1/current
+as documented. Deterministic local evidence establishes no real-account,
+administrator-policy, provider, platform, or release support.
 
 ## Forward migration
 

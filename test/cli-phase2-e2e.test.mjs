@@ -11,8 +11,8 @@ import {
   CLAIM_AUTHORIZATION_ACTIONS,
   DISPATCHER_AUTHORIZATION_ACTIONS,
   MANUAL_AUTHORIZATION_ACTIONS,
-  AUTHORIZATION_ACTIONS,
   PHASE3_AUTHORIZATION_ACTIONS,
+  SCHEDULER_STAGE_AUTHORIZATION_ACTIONS,
   WORKSPACE_STAGE_AUTHORIZATION_ACTIONS,
   openPersistence,
 } from "../src/index.ts";
@@ -178,7 +178,7 @@ test("source ato.api/v1 closes the real local Manual dispatch-to-completion loop
       DISPATCHER_AUTHORIZATION_ACTIONS.length,
       WORKSPACE_STAGE_AUTHORIZATION_ACTIONS.length,
       PHASE3_AUTHORIZATION_ACTIONS.length,
-      AUTHORIZATION_ACTIONS.length,
+      SCHEDULER_STAGE_AUTHORIZATION_ACTIONS.length,
     ]) {
       const upgraded = invoke(runtimeRoot, [
         "authorization", "upgrade", "--expires-at", expiry,
@@ -346,7 +346,7 @@ test("source ato.api/v1 opens the exact current baseline and completes one resta
           DISPATCHER_AUTHORIZATION_ACTIONS.length,
           WORKSPACE_STAGE_AUTHORIZATION_ACTIONS.length,
           PHASE3_AUTHORIZATION_ACTIONS.length,
-          AUTHORIZATION_ACTIONS.length,
+          SCHEDULER_STAGE_AUTHORIZATION_ACTIONS.length,
         ]) {
           const upgraded = invoke(runtimeRoot, [
             "authorization", "upgrade", "--expires-at", expiry,

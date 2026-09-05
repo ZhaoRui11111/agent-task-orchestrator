@@ -32,16 +32,20 @@ confirmation-bound vocabulary upgrades, the sole current `ato.execution/v2`
 port, one durable local Manual backend journal, and the ordered
 intent/observation/verified-receipt/finalization protocol for start, inspect,
 resume, retry, cancellation, trusted Manual outcome reporting, reconciliation,
-and separately confirmed Manual completion acceptance. A package-private,
-non-composed Codex SDK backend also implements v2 for an exact owned
-`ato.workspace/v2` generation and verified ephemeral Task input. It persists
-bounded thread/terminal evidence before convergence, never exposes raw SDK item
-payloads, never treats response loss as replay authority, and leaves Task
-completion to the existing completion owner. No supported package-root,
-product-runtime, dispatcher, API, or CLI route can construct or select it; the
-current vocabulary-version-7 grant set creates no supported Codex selection or
-destination authority. The explicit
-Manual dispatcher adds a separately upgraded `dispatch.run` capability,
+and separately confirmed Manual completion acceptance. A package-private Codex
+SDK backend implements v2 for an exact owned `ato.workspace/v2` generation and
+verified ephemeral Task input. The supported Codex product application now
+composes that backend only through a Project-scoped active profile, the fixed
+`openai-codex-api` destination and `process-env:CODEX_API_KEY` reference, a
+targeted one-member dispatcher route, and fresh vocabulary-version-8
+authorization. Each invocation persists Prepare before credential availability,
+then atomically binds a fresh Act to the exact pending intent before credential
+resolution, Task disclosure, or SDK access. It persists bounded thread/terminal
+evidence before convergence, never exposes raw SDK item payloads, never treats
+response loss as replay authority, allocates each continuation a new fenced
+execution and owned workspace, and leaves Task completion to the existing
+completion owner. The explicit Manual dispatcher adds a separately upgraded
+`dispatch.run` capability,
 durable run ownership/heartbeat/takeover, complete pre-claim reconciliation,
 immutable finite candidate membership, one terminal outcome per member, and a
 completeness-gated durable summary. The sole current `ato.api/v1` surface
@@ -55,9 +59,9 @@ and fixed public error mapping. Adapter work remains
 outside writer transactions, turn success alone never completes a Task, lease
 expiry never authorizes blind replay, and stale-fence writes are refused.
 
-The fresh-only Phase 3 library and scheduler extension use the same
-schema-version-1 baseline with application-state digest version 3 and
-authorization vocabulary version 7. Phase 3
+The fresh-only Phase 3 library, scheduler extension, and Codex product
+composition use the same schema-version-1 baseline with application-state
+digest version 4 and authorization vocabulary version 8. Phase 3
 implements exact `ato.project-policy/v1`, `ato.completion/v1`,
 `ato.integration/v1`, and the sole current `ato.workspace/v2` contracts, one
 typed Phase 3 application/product-library owner, and persistence-owned policy,
@@ -85,16 +89,17 @@ attachment. The only scheduler backend is an unexported no-effect test Fake;
 there is no concrete scheduler adapter, platform grammar, default product/API/
 CLI scheduler operation route, real scheduled task, or scheduler support claim.
 
-The Phase 2 product capabilities are implemented only for the local
+The retained Phase 2 Manual capabilities remain implemented only by the local
 explicit-Manual product and `manual-local` adapter. They do not execute Task
-content or perform an external Project/workspace effect. The Phase 3 capability
+content or perform an external Project/workspace effect, and Manual/scheduled
+dispatch cannot select a Codex profile. The Phase 3 capability
 is an explicitly injected library surface with no public CLI command or default
 product composition; its disposable Git `2.53.0.windows.1` evidence is
 development evidence only. The repository still has no concrete scheduler
-adapter or real scheduled task, MCP component, product-wired Codex, scheduler,
-or Phase 3 route, Codex credential/
-destination authority, daemon/service, general external-service integration,
-release, deployment, real Codex account E2E, or validated
+adapter or real scheduled task, MCP component, product-wired scheduler or
+Phase 3 route, daemon/service, general external-service integration, release,
+deployment, real Codex account E2E, administrator-managed effective-
+configuration attestation, or validated
 platform-support claim. Do not describe those absent modules, platform support,
 safety properties, or integration behavior as implemented. Follow the
 [toolchain contract](docs/reference/toolchain-contract.md) for current
@@ -105,7 +110,8 @@ current finite local grant model, and the
 [persistence contract](docs/reference/persistence-contract.md) for the current
 schema and storage/recovery boundary. The
 [reliability protocol](docs/reference/reliability-protocol.md) owns the current
-claim/lease/fence, Manual and package-private Codex effects, scheduler lifecycle
+claim/lease/fence, Manual and product-composed package-private Codex effects,
+scheduler lifecycle
 and delivery, dispatcher fan-out, workspace, gate,
 completion, integration, and cleanup protocols. The
 [CLI contract](docs/reference/cli-contract.md) alone owns commands, public output,

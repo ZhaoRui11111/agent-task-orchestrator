@@ -5,9 +5,11 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
   AUTHORIZATION_ACTIONS,
+  CODEX_AUTHORIZATION_ACTIONS,
   COMPLETION_INTEGRATION_AUTHORIZATION_ACTIONS,
   PHASE3_AUTHORIZATION_ACTIONS,
   SCHEDULER_AUTHORIZATION_ACTIONS,
+  SCHEDULER_STAGE_AUTHORIZATION_ACTIONS,
   createApplicationService,
   openPersistence,
 } from "../src/index.ts";
@@ -223,7 +225,7 @@ test("scheduler vocabulary stage-7 upgrade rolls back every request, epoch, gran
     const stages = [
       "request",
       "epoch",
-      ...AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`),
+      ...SCHEDULER_STAGE_AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`),
       "decision",
       "audit",
     ];
@@ -246,10 +248,67 @@ test("scheduler vocabulary stage-7 upgrade rolls back every request, epoch, gran
       kind: "authorization.capability.upgrade", expiresAt: "2026-09-20T12:00:00.000Z",
     });
     assert.equal(upgraded.ok, true, JSON.stringify(upgraded));
-    assert.equal(upgraded.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
+    assert.equal(upgraded.value.capabilityCount, SCHEDULER_STAGE_AUTHORIZATION_ACTIONS.length);
     const current = readApplicationStateForOwner(store);
     assert.equal(current.epochs.at(-1).vocabularyVersion, 7);
     assert.equal(SCHEDULER_AUTHORIZATION_ACTIONS.every((action) => current.grants.some(
+      (grant) => grant.action === action && grant.revokedAt === null,
+    )), true);
+  } finally {
+    if (store) await store.close();
+    cleanupPersistenceFixture(fixture);
+  }
+});
+
+test("Codex vocabulary stage-8 upgrade rolls back every request, epoch, grant, decision, and audit failpoint", async () => {
+  const fixture = createPersistenceFixture("codex-vocabulary-atomicity");
+  let store;
+  try {
+    store = await openPersistence(fixture.layout, { applicationVersion: "codex-vocabulary-atomicity" });
+    let trustedMilliseconds = Date.parse("2026-09-05T02:00:00.000Z");
+    const trusted = {
+      ...ingress("codex-vocabulary-atomicity"),
+      now: () => new Date(trustedMilliseconds += 1000).toISOString(),
+    };
+    const setup = createApplicationService(store, trusted);
+    assert.equal(setup.bootstrap({ kind: "authorization.bootstrap", expiresAt: "2026-09-20T12:00:00.000Z" }).ok, true);
+    for (let version = 2; version <= 7; version += 1) {
+      assert.equal(setup.upgrade({
+        kind: "authorization.capability.upgrade", expiresAt: "2026-09-20T12:00:00.000Z",
+      }).ok, true);
+    }
+    const exactSchedulerStage = structuredClone(readApplicationStateForOwner(store));
+    assert.equal(exactSchedulerStage.epochs.at(-1).vocabularyVersion, 7);
+    const stages = [
+      "request",
+      "epoch",
+      ...AUTHORIZATION_ACTIONS.map((action) => `grant:${action}`),
+      "decision",
+      "audit",
+    ];
+    for (const stage of stages) {
+      const faulting = createApplicationServiceWithHooks(store, trusted, {
+        afterStage(current) {
+          if (current === stage) throw new Error(`failpoint:${stage}`);
+        },
+      });
+      assert.throws(
+        () => faulting.upgrade({
+          kind: "authorization.capability.upgrade", expiresAt: "2026-09-20T12:00:00.000Z",
+        }),
+        (error) => expectFailpoint(error, stage),
+        stage,
+      );
+      assert.deepEqual(readApplicationStateForOwner(store), exactSchedulerStage, stage);
+    }
+    const upgraded = setup.upgrade({
+      kind: "authorization.capability.upgrade", expiresAt: "2026-09-20T12:00:00.000Z",
+    });
+    assert.equal(upgraded.ok, true, JSON.stringify(upgraded));
+    assert.equal(upgraded.value.capabilityCount, AUTHORIZATION_ACTIONS.length);
+    const current = readApplicationStateForOwner(store);
+    assert.equal(current.epochs.at(-1).vocabularyVersion, 8);
+    assert.equal(CODEX_AUTHORIZATION_ACTIONS.every((action) => current.grants.some(
       (grant) => grant.action === action && grant.revokedAt === null,
     )), true);
   } finally {

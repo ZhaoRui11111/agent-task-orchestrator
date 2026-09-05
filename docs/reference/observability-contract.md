@@ -6,7 +6,7 @@ This file is the sole normative owner of planned correlation, structured
 operational events, diagnostic access, and the application of redaction to
 operational events. No logger, diagnostic command, event exporter, or telemetry
 pipeline exists today. Current schema-version-1 application, Manual-loop,
-package-private Codex turn/terminal journal, dispatcher request/
+Codex profile/product/effect plus package-private turn/terminal journal, dispatcher request/
 decision/audit, reconciliation, member, no-execution member-denial, and summary
 rows, plus current policy receipts, completion-gate transition evidence,
 completion decisions, integration reservation/transition evidence, cleanup
@@ -119,13 +119,17 @@ adapter payload/error, and arbitrary attributes are absent. The immutable
 scheduled-tuple relation, not an event, binds exact `(schedule_id,
 config_revision, scheduled_for)` to one canonical observation and run.
 
-The package-private Codex path likewise implements no operational event stream.
-Its source-of-truth subset is the exact execution intent/authorization/
-observation/verified-receipt/finalization chain plus `codex_backend_turns` and
-immutable terminal `codex_backend_operations`. Those rows retain only opaque
+The authorized Codex product path likewise implements no operational event
+stream. Its source-of-truth subset is the exact profile operation, product
+operation, Prepare/Act, execution intent/authorization/observation/verified-
+receipt/finalization chain plus `codex_backend_turns` and immutable terminal
+`codex_backend_operations`. Those rows retain only opaque
 backend/thread/operation/receipt identities, tuple revisions/fence/workspace
 bindings, closed lifecycle and `turn.completed|turn.failed` signals, timestamps,
-hashes, and bounded evidence references. The SDK thread ID is sensitive
+hashes, canonical bounded stored result, and bounded evidence references. The
+profile store alone retains its required trusted paths and opaque credential
+reference; public projections show only status, fixed destination,
+`credentialConfigured=true`, and digests. The SDK thread ID is sensitive
 authoritative state: it is not copied into application audit, CLI output,
 compatibility evidence, or a general log. SDK item events, prompts, model/tool
 text, command/path values, usage detail, and raw error bodies are discarded at

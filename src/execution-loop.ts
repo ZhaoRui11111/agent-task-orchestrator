@@ -27,6 +27,7 @@ import {
   type RegisteredProject,
 } from "./persistence/application-repository.ts";
 import { PersistenceError } from "./persistence/errors.ts";
+import { codexProductTaskInputReference } from "./persistence/codex-product-digest.ts";
 import type { PersistenceStore } from "./persistence/store.ts";
 import { canonicalJson, sha256 } from "./persistence/values.ts";
 import {
@@ -71,6 +72,8 @@ export const RELIABLE_EXECUTION_ERROR_CODES = Object.freeze([
   "AMBIGUOUS_EXTERNAL_STATE",
   "PERSISTENCE_FAILURE",
 ] as const);
+
+export { codexProductTaskInputReference } from "./persistence/codex-product-digest.ts";
 
 export type ReliableExecutionErrorCode = (typeof RELIABLE_EXECUTION_ERROR_CODES)[number];
 export interface ReliableExecutionError {
@@ -231,6 +234,38 @@ export type CodexExecutionInspectCommand = Readonly<ExecutionLoopInspectCommand 
 export type CodexExecutionCancelCommand = Readonly<ExecutionLoopCancelCommand & {
   readonly workspace: CodexExecutionWorkspaceContext;
 }>;
+export interface CodexContinuationSuccessorContext {
+  readonly executionId: string;
+  readonly executionRevision: number;
+  readonly attemptNumber: number;
+  readonly fencingToken: number;
+  readonly taskRevision: number;
+}
+export type CodexExecutionContinuationCommand = Readonly<ExecutionLoopResumeCommand & {
+  readonly workspace: CodexExecutionWorkspaceContext;
+  readonly successor: CodexContinuationSuccessorContext;
+}>;
+
+export interface CodexExecutionActGuardInput {
+  readonly transaction: ApplicationTransaction;
+  readonly state: ApplicationState;
+  readonly intent: ExecutionOperationIntent;
+  readonly now: string;
+  readonly executionRequestId: string;
+  readonly executionCorrelationId: string;
+  readonly executionDecisionId: string;
+  readonly executionAuditId: string;
+  readonly bindingRevision: number;
+  readonly executionAuthorized: boolean;
+}
+
+export type CodexExecutionActGuardResult =
+  | Readonly<{ readonly allowed: true }>
+  | Readonly<{ readonly allowed: false; readonly failure: ReliableExecutionFailure }>;
+
+export interface CodexExecutionActGuard {
+  authorize(input: CodexExecutionActGuardInput): CodexExecutionActGuardResult;
+}
 
 /**
  * Deliberately not re-exported by the supported package root. Continuation
@@ -239,6 +274,16 @@ export type CodexExecutionCancelCommand = Readonly<ExecutionLoopCancelCommand & 
  */
 export interface InjectedCodexReliableExecutionService {
   start(command: CodexExecutionStartCommand): Promise<ReliableExecutionResult>;
+  prepareStart(command: CodexExecutionStartCommand): ReliableExecutionResult;
+  invokePreparedStart(
+    command: CodexExecutionStartCommand,
+    guard: CodexExecutionActGuard,
+  ): Promise<ReliableExecutionResult>;
+  prepareContinuation(command: CodexExecutionContinuationCommand): ReliableExecutionResult;
+  invokePreparedContinuation(
+    command: CodexExecutionContinuationCommand,
+    guard: CodexExecutionActGuard,
+  ): Promise<ReliableExecutionResult>;
   inspect(command: CodexExecutionInspectCommand): Promise<ReliableExecutionResult>;
   requestCancel(command: CodexExecutionCancelCommand): Promise<ReliableExecutionResult>;
   reconcile(command: CodexExecutionInspectCommand): Promise<ReliableExecutionResult>;
@@ -390,7 +435,8 @@ function parseCodexOperationCommand(value: unknown): CodexOperationCommand | nul
   if (additional === null) return null;
   const record = exactRecord(value, [...BASE_KEYS, ...additional, "workspace"]);
   const workspace = record === null ? null : parseCodexWorkspaceContext(record.workspace);
-  if (record === null || workspace === null || !/^task-sha256:[0-9a-f]{64}$/u.test(String(record.inputReference))) {
+  if (record === null || workspace === null ||
+    !/^(?:task-sha256:[0-9a-f]{64}|codex-task-binding:[0-9A-F]{64})$/u.test(String(record.inputReference))) {
     return null;
   }
   const { workspace: _workspace, ...plain } = record;
@@ -400,6 +446,32 @@ function parseCodexOperationCommand(value: unknown): CodexOperationCommand | nul
   if (command.kind === "execution.cancel" &&
     !["active", "turn_succeeded", "failed"].includes(command.expectedLifecycle)) return null;
   return Object.freeze({ ...command, workspace }) as CodexOperationCommand;
+}
+
+function parseCodexContinuationSuccessor(value: unknown): CodexContinuationSuccessorContext | null {
+  const record = exactRecord(value, [
+    "attemptNumber", "executionId", "executionRevision", "fencingToken", "taskRevision",
+  ]);
+  return record !== null && operationalIdentifier(record.executionId) && positive(record.executionRevision) &&
+    positive(record.attemptNumber) && positive(record.fencingToken) && positive(record.taskRevision)
+    ? Object.freeze(record as unknown as CodexContinuationSuccessorContext) : null;
+}
+
+function parseCodexContinuationCommand(value: unknown): CodexExecutionContinuationCommand | null {
+  const kind = commandKind(value);
+  if (kind !== "execution.resume" && kind !== "execution.retry") return null;
+  const record = exactRecord(value, [
+    ...BASE_KEYS, "backendExecutionId", "continuationReference", "lastObservationNumber",
+    "previousTurnReceiptId", "requiredActionReceiptId", "successor", "threadId", "workspace",
+  ]);
+  const workspace = record === null ? null : parseCodexWorkspaceContext(record.workspace);
+  const successor = record === null ? null : parseCodexContinuationSuccessor(record.successor);
+  if (record === null || workspace === null || successor === null ||
+    !/^codex-task-binding:[0-9A-F]{64}$/u.test(String(record.inputReference))) return null;
+  const { workspace: _workspace, successor: _successor, ...plain } = record;
+  const command = parseOperationCommand(Object.freeze(plain));
+  return command !== null && (command.kind === "execution.resume" || command.kind === "execution.retry")
+    ? Object.freeze({ ...command, workspace, successor }) : null;
 }
 
 function parseCompletionCommand(value: unknown): ManualCompletionCommand | null {
@@ -462,6 +534,26 @@ function operationIdentity(context: TrustedContext, ingress: ReliableExecutionIn
 
 function stableId(prefix: string, ...parts: readonly unknown[]): string {
   return `${prefix}:${sha256(canonicalJson(parts)).slice(0, 64)}`;
+}
+
+function codexTaskReferenceMatches(
+  state: ApplicationState,
+  command: Pick<ExecutionLoopStartCommand,
+    "taskId" | "expectedTaskRevision" | "inputReference" | "executionId">,
+  plannedIntentId: string,
+): boolean {
+  const task = state.domain.tasks.find((candidate) => candidate.id === command.taskId);
+  if (task === undefined || task.revision !== command.expectedTaskRevision) return false;
+  if (/^task-sha256:[0-9a-f]{64}$/u.test(command.inputReference)) {
+    return task.body.length > 0 && new TextEncoder().encode(task.body).byteLength <= 1_048_576 &&
+      `task-sha256:${sha256(task.body).toLocaleLowerCase("en-US")}` === command.inputReference;
+  }
+  const operation = state.codexProductOperations.find((candidate) => candidate.intentId === plannedIntentId);
+  return operation !== undefined && operation.taskId === command.taskId &&
+    operation.executionId === command.executionId &&
+    command.inputReference === codexProductTaskInputReference(
+      operation.operationId, command.taskId, command.expectedTaskRevision,
+    );
 }
 function afterTimestamp(previous: string, candidate: string): string {
   const previousValue = Date.parse(previous);
@@ -668,6 +760,7 @@ function persistStageAuthorization(
   context: TrustedContext,
   phase: "act" | "finalize",
   acceptedCode: string,
+  actGuard: CodexExecutionActGuard | null = null,
 ): StageAuthorization {
   const project = state.projects.find((candidate) => candidate.projectId === intent.projectId);
   const execution = state.executions.find((candidate) => candidate.executionId === intent.executionId);
@@ -696,6 +789,21 @@ function persistStageAuthorization(
       : "execution.operation.denied",
     evaluation.allowed, evaluation.allowed ? acceptedCode : evaluation.reason, context.now,
   ));
+  let guarded: CodexExecutionActGuardResult | null = null;
+  if (phase === "act" && actGuard !== null) {
+    guarded = actGuard.authorize(Object.freeze({
+      transaction,
+      state,
+      intent,
+      now: context.now,
+      executionRequestId: requestId,
+      executionCorrelationId: correlationId,
+      executionDecisionId: decisionId,
+      executionAuditId: auditId,
+      bindingRevision,
+      executionAuthorized: evaluation.allowed,
+    }));
+  }
   if (!evaluation.allowed) return Object.freeze({
     allowed: false,
     requestId,
@@ -705,6 +813,17 @@ function persistStageAuthorization(
     bindingRevision,
     failure: failed("AUTHORIZATION_DENIED", `Current ${intent.action} grant did not allow ${phase}`, { requestId, correlationId }),
   });
+  if (guarded !== null) {
+    if (!guarded.allowed) return Object.freeze({
+      allowed: false,
+      requestId,
+      correlationId,
+      decisionId,
+      auditId,
+      bindingRevision,
+      failure: guarded.failure,
+    });
+  }
   transaction.insertExecutionIntentAuthorizationBinding(Object.freeze({
     bindingId: stableId("authorization-binding", intent.intentId, bindingRevision),
     intentId: intent.intentId,
@@ -975,7 +1094,7 @@ function waitingMetadata(
     retryCount: intent.retryCount,
     retryAfter: intent.retryAfter === null ? null : Date.parse(intent.retryAfter),
     executionId: intent.executionId,
-    workspaceRevision: null,
+    workspaceRevision: intent.workspaceRevision === null ? null : String(intent.workspaceRevision),
     backendThreadId: intent.threadId,
   });
 }
@@ -987,6 +1106,9 @@ function transitionContinuation(
   identity: OperationIdentity,
 ) {
   if (task.state !== "waiting" || task.waiting === null) return null;
+  const workspace = "workspace" in command
+    ? (command as ExecutionLoopResumeCommand & { readonly workspace: CodexExecutionWorkspaceContext }).workspace
+    : null;
   const transition = transitionTask(state.domain, {
     taskId: task.id,
     event: command.kind === "execution.resume" ? "resume_accepted" : "retry_accepted",
@@ -1005,7 +1127,7 @@ function transitionContinuation(
           status: "accepted",
         },
         targetExecutionId: command.executionId,
-        targetWorkspaceRevision: null,
+        targetWorkspaceRevision: workspace === null ? null : String(workspace.workspaceRevision),
         targetBackendThreadId: command.threadId,
         trustedTime: Date.parse(identity.now),
       },
@@ -1249,7 +1371,7 @@ function prepareSuccessorOperation(
         revision: 1,
         expectedTaskRevision: bound.task.revision,
         preTaskRevision: bound.task.revision,
-        postTaskRevision: bound.task.revision,
+        postTaskRevision: bound.task.revision + 1,
         projectResourceRevision: bound.project.resourceRevision,
         projectConfigRevision: bound.project.configRevision,
         requestId: takeoverRequestId,
@@ -1548,6 +1670,7 @@ function markExecuting(
   store: PersistenceStore,
   intentId: string,
   context: TrustedContext,
+  actGuard: CodexExecutionActGuard | null = null,
 ): ExecutionOperationIntent | ReliableExecutionFailure {
   const preflight = readApplicationStateForOwner(store);
   const preflightIntent = preflight.executionIntents.find((candidate) => candidate.intentId === intentId);
@@ -1563,7 +1686,7 @@ function markExecuting(
     }
     const semantic = semanticForIntent(state, intent, context);
     if ("ok" in semantic) return semantic;
-    const stage = persistStageAuthorization(transaction, state, intent, context, "act", "act_authorized");
+    const stage = persistStageAuthorization(transaction, state, intent, context, "act", "act_authorized", actGuard);
     if (!stage.allowed) return stage.failure ?? failed("AUTHORIZATION_DENIED", "Act authorization was denied");
     const updatedAt = afterTimestamp(intent.updatedAt, context.now);
     transaction.bindExecutionIntentAuthorization(
@@ -2456,9 +2579,16 @@ function invokeEffect(
 
 function boundedCodexTaskInput(state: ApplicationState, intent: ExecutionOperationIntent): string | null {
   const task = state.domain.tasks.find((candidate) => candidate.id === intent.taskId);
-  if (task === undefined || task.revision !== intent.taskRevision || task.body.length === 0 ||
-    new TextEncoder().encode(task.body).byteLength > 1_048_576) return null;
-  return `task-sha256:${sha256(task.body).toLocaleLowerCase("en-US")}` === intent.inputReference ? task.body : null;
+  if (task === undefined || task.revision !== intent.taskRevision) return null;
+  const product = state.codexProductOperations.find((candidate) => candidate.intentId === intent.intentId);
+  const productReference = product === undefined ? null
+    : codexProductTaskInputReference(product.operationId, intent.taskId, intent.taskRevision);
+  if (productReference !== intent.inputReference) {
+    if (!/^task-sha256:[0-9a-f]{64}$/u.test(intent.inputReference) ||
+      `task-sha256:${sha256(task.body).toLocaleLowerCase("en-US")}` !== intent.inputReference) return null;
+  }
+  if (task.body.length === 0 || new TextEncoder().encode(task.body).byteLength > 1_048_576) return null;
+  return task.body;
 }
 
 function codexInputFailure(correlationId: string): ExecutionAdapterError {
@@ -2911,6 +3041,7 @@ async function processCodexIntent(
   backend: ExecutionBackend,
   hooks: ReliableExecutionTestHooks,
   options: BindExecutionOptions = Object.freeze({}),
+  actGuard: CodexExecutionActGuard | null = null,
 ): Promise<ReliableExecutionResult> {
   try {
     let state = readApplicationStateForOwner(store);
@@ -2957,7 +3088,7 @@ async function processCodexIntent(
       intent = markedForReconciliation;
       hooks.afterStage?.("reconciliation-executing");
     } else if (intent.state === "pending" || intent.state === "retry_wait") {
-      const marked = markExecuting(store, intent.intentId, context);
+      const marked = markExecuting(store, intent.intentId, context, actGuard);
       if ("ok" in marked) return marked;
       intent = marked;
       hooks.afterStage?.("executing");
@@ -3031,13 +3162,18 @@ async function processCodexIntent(
         if (result.ok) hooks.afterStage?.("failure-finalized");
         return result;
       }
+      if (actGuard !== null && entryState === "executing" && !backendEffectAbsent(state, effectIntent)) {
+        return failed("RECONCILIATION_REQUIRED", "An effect-possible Codex intent is observation-only");
+      }
     }
     refreshed = refreshProcessContext(store, ingress, effectIntent.actorId);
     if ("ok" in refreshed) return refreshed;
     context = refreshed;
-    const rebound = markExecuting(store, effectIntent.intentId, context);
-    if ("ok" in rebound) return rebound;
-    effectIntent = rebound;
+    if (!(actGuard !== null && entryState === "pending")) {
+      const rebound = markExecuting(store, effectIntent.intentId, context, actGuard);
+      if ("ok" in rebound) return rebound;
+      effectIntent = rebound;
+    }
     state = readApplicationStateForOwner(store);
     persistedIntent = state.executionIntents.find((candidate) => candidate.intentId === intentId);
     if (persistedIntent === undefined ||
@@ -3214,6 +3350,7 @@ async function runCodexOperation(
   backend: ExecutionBackend,
   hooks: ReliableExecutionTestHooks,
   options: BindExecutionOptions = Object.freeze({}),
+  actGuard: CodexExecutionActGuard | null = null,
 ): Promise<ReliableExecutionResult> {
   const parsed = parseCodexOperationCommand(value);
   if (parsed === null || parsed.kind !== expectedKind) return failed("INVALID_INPUT", "Codex execution command is invalid");
@@ -3233,7 +3370,7 @@ async function runCodexOperation(
     if (context === null) return failed("INVALID_INPUT", "Trusted Codex ingress is invalid");
     const runtimeFailure = runtimeActorFailure(store, state, context, replay.actorId);
     if (runtimeFailure !== null) return runtimeFailure;
-    return processCodexIntent(store, replay.intentId, ingress, backend, hooks, options);
+    return processCodexIntent(store, replay.intentId, ingress, backend, hooks, options, actGuard);
   }
   const context = trustedContext(ingress);
   if (context === null) return failed("INVALID_INPUT", "Trusted Codex ingress is invalid");
@@ -3250,9 +3387,7 @@ async function runCodexOperation(
     return failed("STALE_REVISION", "Codex owned workspace tuple is not current", identity);
   }
   if (command.kind === "execution.start") {
-    const task = state.domain.tasks.find((candidate) => candidate.id === command.taskId);
-    if (task === undefined || task.body.length === 0 || new TextEncoder().encode(task.body).byteLength > 1_048_576 ||
-      `task-sha256:${sha256(task.body).toLocaleLowerCase("en-US")}` !== command.inputReference) {
+    if (!codexTaskReferenceMatches(state, command, identity.intentId)) {
       return failed("INVALID_INPUT", "Codex Task input does not match its bounded digest", identity);
     }
   }
@@ -3261,7 +3396,301 @@ async function runCodexOperation(
   );
   if ("ok" in prepared) return prepared;
   hooks.afterStage?.("prepared");
-  return processCodexIntent(store, prepared.intent.intentId, ingress, backend, hooks, options);
+  return processCodexIntent(store, prepared.intent.intentId, ingress, backend, hooks, options, actGuard);
+}
+
+function prepareCodexStartOnly(
+  store: PersistenceStore,
+  value: unknown,
+  ingress: ReliableExecutionIngress,
+  backend: ExecutionBackend,
+  hooks: ReliableExecutionTestHooks,
+): ReliableExecutionResult {
+  const parsed = parseCodexOperationCommand(value);
+  if (parsed === null || parsed.kind !== "execution.start") {
+    return failed("INVALID_INPUT", "Codex start preparation command is invalid");
+  }
+  const command = plainCodexCommand(parsed) as ExecutionLoopStartCommand;
+  let state: ApplicationState;
+  try { state = readApplicationStateForOwner(store); } catch {
+    return failed("PERSISTENCE_FAILURE", "Codex execution state could not be read");
+  }
+  const replay = state.executionIntents.find((candidate) => candidate.idempotencyKey === command.idempotencyKey);
+  if (replay !== undefined) {
+    if (replay.backendKind !== "codex-sdk" || !intentTupleMatches(state, replay, command, parsed.workspace)) {
+      return failed("IDEMPOTENCY_CONFLICT", "Codex idempotency identity is bound to another operation tuple");
+    }
+    const replayContext = trustedContext(ingress);
+    if (replayContext === null) return failed("INVALID_INPUT", "Trusted Codex ingress is invalid");
+    const replayRuntime = runtimeActorFailure(store, state, replayContext, replay.actorId);
+    if (replayRuntime !== null) return replayRuntime;
+    return successForIntent(state, replay, true);
+  }
+  const context = trustedContext(ingress);
+  if (context === null) return failed("INVALID_INPUT", "Trusted Codex ingress is invalid");
+  const runtime = runtimeActorFailure(store, state, context);
+  if (runtime !== null) return runtime;
+  const identity = operationIdentity(context, ingress);
+  if (identity === null) return failed("INVALID_INPUT", "Trusted Codex identities are invalid");
+  const bound = bindExecution(state, command, context);
+  if ("ok" in bound) return Object.freeze({ ...bound, requestId: identity.requestId, correlationId: identity.correlationId });
+  const projectFailure = revalidateBoundProject(bound.project, store);
+  if (projectFailure !== null) return projectFailure;
+  if (!currentCodexWorkspaceMatches(state, command, parsed.workspace)) {
+    return failed("STALE_REVISION", "Codex owned workspace tuple is not current", identity);
+  }
+  if (!codexTaskReferenceMatches(state, command, identity.intentId)) {
+    return failed("INVALID_INPUT", "Codex Task input does not match its bounded digest", identity);
+  }
+  const prepared = prepareOperation(store, command, identity, backend, null, Object.freeze({}), parsed.workspace);
+  if ("ok" in prepared) return prepared;
+  hooks.afterStage?.("prepared");
+  const readback = readApplicationStateForOwner(store);
+  const intent = readback.executionIntents.find((candidate) => candidate.intentId === prepared.intent.intentId);
+  return intent === undefined
+    ? failed("PERSISTENCE_FAILURE", "Prepared Codex intent readback is absent", identity)
+    : successForIntent(readback, intent, false);
+}
+
+function codexContinuationIntentMatches(
+  state: ApplicationState,
+  intent: ExecutionOperationIntent,
+  command: CodexExecutionContinuationCommand,
+): boolean {
+  const { workspace, successor, ...plain } = command;
+  return intentTupleMatches(state, intent, plain, workspace) &&
+    intent.executionId === successor.executionId && intent.executionRevision === successor.executionRevision &&
+    intent.attemptNumber === successor.attemptNumber && intent.fencingToken === successor.fencingToken &&
+    intent.taskRevision === successor.taskRevision;
+}
+
+function prepareCodexContinuationOnly(
+  store: PersistenceStore,
+  value: unknown,
+  ingress: ReliableExecutionIngress,
+  backend: ExecutionBackend,
+  hooks: ReliableExecutionTestHooks,
+): ReliableExecutionResult {
+  const parsed = parseCodexContinuationCommand(value);
+  if (parsed === null) return failed("INVALID_INPUT", "Codex continuation preparation command is invalid");
+  const { workspace, successor, ...command } = parsed;
+  let state: ApplicationState;
+  try { state = readApplicationStateForOwner(store); } catch {
+    return failed("PERSISTENCE_FAILURE", "Codex continuation state could not be read");
+  }
+  const replay = state.executionIntents.find((candidate) => candidate.idempotencyKey === command.idempotencyKey);
+  if (replay !== undefined) {
+    if (replay.backendKind !== "codex-sdk" || !codexContinuationIntentMatches(state, replay, parsed)) {
+      return failed("IDEMPOTENCY_CONFLICT", "Codex continuation idempotency identity is bound to another tuple");
+    }
+    const replayContext = trustedContext(ingress);
+    if (replayContext === null) return failed("INVALID_INPUT", "Trusted Codex continuation ingress is invalid");
+    const replayRuntime = runtimeActorFailure(store, state, replayContext, replay.actorId);
+    return replayRuntime ?? successForIntent(state, replay, true);
+  }
+  const context = trustedContext(ingress);
+  if (context === null) return failed("INVALID_INPUT", "Trusted Codex continuation ingress is invalid");
+  const runtime = runtimeActorFailure(store, state, context);
+  if (runtime !== null) return runtime;
+  const identity = operationIdentity(context, ingress);
+  if (identity === null) return failed("INVALID_INPUT", "Trusted Codex continuation identities are invalid");
+  try {
+    const prepared = withApplicationTransaction(store, (transaction): PreparedOperation | ReliableExecutionFailure => {
+      const current = transaction.read();
+      const project = current.projects.find((candidate) => candidate.projectId === command.projectId);
+      const task = current.domain.tasks.find((candidate) => candidate.id === command.taskId);
+      const source = current.executions.find((candidate) => candidate.executionId === command.executionId);
+      const replacement = current.executions.find((candidate) => candidate.executionId === successor.executionId);
+      const sequence = current.executionSequences.find((candidate) => candidate.taskId === command.taskId);
+      const operation = current.codexProductOperations.find((candidate) => candidate.intentId === identity.intentId);
+      if (project === undefined || project.resourceRevision !== command.expectedProjectResourceRevision ||
+        project.configRevision !== command.expectedProjectConfigRevision) {
+        return failed("STALE_REVISION", "Codex continuation Project binding is stale", identity);
+      }
+      if (task === undefined || task.projectId !== command.projectId || task.state !== "running" ||
+        task.revision !== successor.taskRevision || successor.taskRevision !== command.expectedTaskRevision + 1) {
+        return failed("STALE_REVISION", "Codex continuation Task binding is stale", identity);
+      }
+      if (source === undefined || source.taskId !== task.id || source.revision !== command.expectedExecutionRevision + 1 ||
+        source.attemptNumber !== command.expectedAttemptNumber || source.fencingToken !== command.expectedFencingToken ||
+        source.status !== "superseded" || source.supersededByExecutionId !== successor.executionId) {
+        return failed("STALE_FENCE", "Codex continuation source fence is stale", identity);
+      }
+      if (replacement === undefined || replacement.taskId !== task.id || replacement.status !== "active" ||
+        replacement.supersedesExecutionId !== source.executionId || replacement.ownerId !== context.ownerId ||
+        replacement.revision !== successor.executionRevision || replacement.attemptNumber !== successor.attemptNumber ||
+        replacement.fencingToken !== successor.fencingToken || replacement.leaseExpiresAt <= context.now ||
+        sequence?.lastAttemptNumber !== replacement.attemptNumber || sequence.currentFencingToken !== replacement.fencingToken) {
+        return failed("STALE_FENCE", "Codex continuation successor fence is stale", identity);
+      }
+      if (operation === undefined || operation.executionId !== replacement.executionId ||
+        operation.sourceExecutionId !== source.executionId || operation.stage !== "workspace_ready" ||
+        (operation.commandKind !== "execution.resume" && operation.commandKind !== "execution.retry") ||
+        operation.commandKind !== command.kind) {
+        return failed("RECONCILIATION_REQUIRED", "Codex continuation product lineage is incomplete", identity);
+      }
+      const sourceReceipt = current.executionReceipts.find((candidate) => candidate.verifiedReceiptId === command.previousTurnReceiptId);
+      const sourceIntent = sourceReceipt === undefined ? undefined
+        : current.executionIntents.find((candidate) => candidate.intentId === sourceReceipt.intentId);
+      const sourceObservation = sourceIntent === undefined ? undefined : current.executionObservations.find((candidate) =>
+        candidate.intentId === sourceIntent.intentId && candidate.observationNumber === command.lastObservationNumber
+      );
+      const sourceFinalization = sourceIntent === undefined ? undefined
+        : current.executionFinalizations.find((candidate) => candidate.intentId === sourceIntent.intentId);
+      const sourceTurn = current.codexTurns.find((candidate) => candidate.backendExecutionId === command.backendExecutionId);
+      if (sourceReceipt === undefined || sourceIntent === undefined || sourceIntent.state !== "finalized" ||
+        sourceIntent.executionId !== source.executionId || sourceFinalization === undefined ||
+        sourceObservation === undefined || sourceObservation.backendExecutionId !== command.backendExecutionId ||
+        sourceObservation.threadId !== command.threadId || sourceObservation.journalRevision !== sourceReceipt.observedRevision ||
+        sourceTurn === undefined || sourceTurn.threadId !== command.threadId || sourceTurn.revision !== sourceObservation.journalRevision ||
+        (command.kind === "execution.retry" && sourceTurn.lifecycle !== "failed")) {
+        return failed("RECONCILIATION_REQUIRED", "Codex continuation source evidence is not authoritative", identity);
+      }
+      const targetCommand = Object.freeze({
+        ...command,
+        expectedTaskRevision: successor.taskRevision,
+        executionId: successor.executionId,
+        expectedExecutionRevision: successor.executionRevision,
+        expectedAttemptNumber: successor.attemptNumber,
+        expectedFencingToken: successor.fencingToken,
+      });
+      if (!currentCodexWorkspaceMatches(current, targetCommand, workspace) ||
+        !codexTaskReferenceMatches(current, targetCommand, identity.intentId)) {
+        return failed("STALE_REVISION", "Codex continuation owned workspace or Task binding is stale", identity);
+      }
+      if (current.executionIntents.some((candidate) => candidate.executionId === replacement.executionId && candidate.state !== "finalized")) {
+        return failed("RECONCILIATION_REQUIRED", "The Codex successor already has an unfinished intent", identity);
+      }
+      if (command.requestedDeadline <= context.now) {
+        return failed("INVALID_INPUT", "Codex continuation deadline is not in the future", identity);
+      }
+      const evaluation = authorize(current, context.actor.actorId, command.kind, project, context.now, true);
+      transaction.insertExecutionOperationRequest(requestRecord(
+        identity.requestId, identity.correlationId, context.actor.actorId, command.kind,
+        replacement, evaluation.allowed, context.now,
+      ));
+      transaction.insertExecutionAuthorizationDecision(decisionRecord(
+        identity.decisionId, identity.requestId, context.actor.actorId, command.kind,
+        evaluation, project, context.now,
+      ));
+      transaction.insertExecutionOperationAudit(auditRecord(
+        identity.auditId, identity.requestId, identity.decisionId, context.actor.actorId,
+        identity.correlationId, replacement,
+        evaluation.allowed ? "execution.operation.prepared" : "execution.operation.denied",
+        evaluation.allowed, evaluation.allowed ? "prepared" : evaluation.reason, context.now,
+      ));
+      if (!evaluation.allowed) {
+        return failed("AUTHORIZATION_DENIED", "Current continuation grant did not allow intent preparation", identity);
+      }
+      const intent: ExecutionOperationIntent = Object.freeze({
+        intentId: identity.intentId,
+        operationId: identity.operationId,
+        idempotencyKey: command.idempotencyKey,
+        operationKind: command.kind === "execution.resume" ? "resume" as const : "retry" as const,
+        action: command.kind,
+        state: "pending" as const,
+        revision: 1,
+        actorId: context.actor.actorId,
+        requestId: identity.requestId,
+        decisionId: identity.decisionId,
+        currentAuthorizationDecisionId: identity.decisionId,
+        authorizationBindingRevision: 1,
+        confirmationId: null,
+        projectId: command.projectId,
+        projectResourceRevision: command.expectedProjectResourceRevision,
+        projectConfigRevision: command.expectedProjectConfigRevision,
+        taskId: command.taskId,
+        taskRevision: successor.taskRevision,
+        inputReference: command.inputReference,
+        executionId: replacement.executionId,
+        executionRevision: replacement.revision,
+        attemptNumber: replacement.attemptNumber,
+        fencingToken: replacement.fencingToken,
+        sourceExecutionId: source.executionId,
+        sourceExecutionRevision: command.expectedExecutionRevision,
+        sourceAttemptNumber: command.expectedAttemptNumber,
+        sourceFencingToken: command.expectedFencingToken,
+        sourceObservationNumber: command.lastObservationNumber,
+        contractId: EXECUTION_CONTRACT_ID,
+        backendKind: backend.backendKind,
+        adapterId: backend.adapterId,
+        adapterVersion: backend.adapterVersion,
+        policyBindingReference: command.policyBindingReference,
+        workspaceMode: "owned" as const,
+        workspaceContractId: workspace.workspaceContractId,
+        workspaceId: workspace.workspaceId,
+        workspaceGeneration: workspace.workspaceGeneration,
+        workspaceRevision: workspace.workspaceRevision,
+        workspaceRootKey: workspace.workspaceRootKey,
+        ownershipBindingSha256: workspace.ownershipBindingSha256,
+        workspaceHeadObjectId: workspace.workspaceHeadObjectId,
+        backendExecutionId: command.backendExecutionId,
+        threadId: command.threadId,
+        previousReceiptId: command.previousTurnReceiptId,
+        expectedJournalRevision: null,
+        requestedDeadline: command.requestedDeadline,
+        continuationReference: command.continuationReference,
+        requiredActionReceiptId: command.requiredActionReceiptId,
+        expectedLifecycle: null,
+        reasonCode: null,
+        reportId: null,
+        reportOperation: null,
+        reportCode: null,
+        evidenceReference: null,
+        lastObservationNumber: 0,
+        lastErrorCategory: null,
+        lastErrorCode: null,
+        lastErrorRetryable: null,
+        lastErrorAmbiguous: null,
+        retryAfter: null,
+        retryCount: 0,
+        createdAt: context.now,
+        updatedAt: context.now,
+      });
+      transaction.insertExecutionIntent(intent);
+      transaction.insertExecutionIntentAuthorizationBinding(initialAuthorizationBinding(intent.intentId, identity));
+      const readback = transaction.read().executionIntents.find((candidate) => candidate.intentId === intent.intentId);
+      if (readback === undefined || readback.state !== "pending" || readback.executionId !== replacement.executionId) {
+        throw new TypeError("Prepared Codex continuation intent readback failed");
+      }
+      return Object.freeze({ intent: readback, requestId: identity.requestId, correlationId: identity.correlationId });
+    });
+    if ("ok" in prepared) return prepared;
+    hooks.afterStage?.("prepared");
+    const readback = readApplicationStateForOwner(store);
+    const intent = readback.executionIntents.find((candidate) => candidate.intentId === prepared.intent.intentId);
+    return intent === undefined
+      ? failed("PERSISTENCE_FAILURE", "Prepared Codex continuation intent readback is absent", identity)
+      : successForIntent(readback, intent, false);
+  } catch {
+    return failed("PERSISTENCE_FAILURE", "Codex continuation preparation failed closed", identity);
+  }
+}
+
+async function invokePreparedCodexContinuation(
+  store: PersistenceStore,
+  value: unknown,
+  ingress: ReliableExecutionIngress,
+  backend: ExecutionBackend,
+  hooks: ReliableExecutionTestHooks,
+  guard: CodexExecutionActGuard,
+): Promise<ReliableExecutionResult> {
+  const parsed = parseCodexContinuationCommand(value);
+  if (parsed === null) return failed("INVALID_INPUT", "Codex continuation invocation command is invalid");
+  let state: ApplicationState;
+  try { state = readApplicationStateForOwner(store); } catch {
+    return failed("PERSISTENCE_FAILURE", "Codex continuation state could not be read");
+  }
+  const intent = state.executionIntents.find((candidate) => candidate.idempotencyKey === parsed.idempotencyKey);
+  if (intent === undefined) return failed("RECONCILIATION_REQUIRED", "Prepared Codex continuation intent is absent");
+  if (intent.backendKind !== "codex-sdk" || !codexContinuationIntentMatches(state, intent, parsed)) {
+    return failed("IDEMPOTENCY_CONFLICT", "Codex continuation intent tuple conflicts");
+  }
+  const context = trustedContext(ingress);
+  if (context === null) return failed("INVALID_INPUT", "Trusted Codex continuation ingress is invalid");
+  const runtime = runtimeActorFailure(store, state, context, intent.actorId);
+  if (runtime !== null) return runtime;
+  return processCodexIntent(store, intent.intentId, ingress, backend, hooks, Object.freeze({}), guard);
 }
 
 function completionResult(
@@ -3650,6 +4079,14 @@ export function createInjectedCodexReliableExecutionService(
   return Object.freeze({
     start: (command: CodexExecutionStartCommand) =>
       runCodexOperation(store, command, "execution.start", ingress, backend, hooks),
+    prepareStart: (command: CodexExecutionStartCommand) =>
+      prepareCodexStartOnly(store, command, ingress, backend, hooks),
+    invokePreparedStart: (command: CodexExecutionStartCommand, guard: CodexExecutionActGuard) =>
+      runCodexOperation(store, command, "execution.start", ingress, backend, hooks, Object.freeze({}), guard),
+    prepareContinuation: (command: CodexExecutionContinuationCommand) =>
+      prepareCodexContinuationOnly(store, command, ingress, backend, hooks),
+    invokePreparedContinuation: (command: CodexExecutionContinuationCommand, guard: CodexExecutionActGuard) =>
+      invokePreparedCodexContinuation(store, command, ingress, backend, hooks, guard),
     inspect: (command: CodexExecutionInspectCommand) =>
       runCodexOperation(store, command, "execution.inspect", ingress, backend, hooks),
     requestCancel: (command: CodexExecutionCancelCommand) =>

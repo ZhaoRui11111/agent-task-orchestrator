@@ -14,6 +14,8 @@ test("current Codex evidence passes only as pinned-package preflight evidence", 
     boundaryStatus: "passed",
     evidenceMode: "package_validated",
     packagePreflight: "passed",
+    productComposition: true,
+    administratorPolicyAttestation: "not_run",
     externalE2E: "not_run",
     supportClaim: false,
   });
@@ -21,6 +23,14 @@ test("current Codex evidence passes only as pinned-package preflight evidence", 
 
 test("package-only Codex evidence cannot create a support claim", () => {
   assert.throws(() => validateCodexEvidence({ ...current, supportClaim: true }), /support claim/u);
+  assert.throws(
+    () => validateCodexEvidence({ ...current, administratorPolicyAttestation: "passed" }),
+    /administrator or external support claim/u,
+  );
+  assert.throws(
+    () => validateCodexEvidence({ ...current, productComposition: false }),
+    /product composition evidence is absent/u,
+  );
 });
 
 test("package-validated Codex mode refuses absent official or pinned-package evidence", () => {
@@ -58,7 +68,10 @@ test("synthetic positive shape cannot create E2E or support evidence", () => {
     capabilities: current.capabilities.map((capability) => ({ ...capability, status: "validated" })),
     supportClaim: true,
   };
-  assert.throws(() => validateCodexEvidence(synthetic), /package-only evidence cannot create an external support claim/u);
+  assert.throws(
+    () => validateCodexEvidence(synthetic),
+    /package-only product evidence cannot create an administrator or external support claim/u,
+  );
   assert.throws(
     () =>
       validateCodexEvidence({

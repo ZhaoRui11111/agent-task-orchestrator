@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   AUTHORIZATION_ACTIONS,
+  CODEX_AUTHORIZATION_ACTIONS,
   COMPLETION_INTEGRATION_AUTHORIZATION_ACTIONS,
   DISPATCHER_AUTHORIZATION_ACTIONS,
   DISPATCH_AUTHORIZATION_ACTIONS,
@@ -78,14 +79,21 @@ test("authorization vocabulary is finite and has no wildcard or content-derived 
     "scheduler.remove",
   ]);
   assert.equal(SCHEDULER_STAGE_AUTHORIZATION_ACTIONS.length, 50);
-  assert.equal(AUTHORIZATION_ACTIONS.length, 50);
-  assert.equal(new Set(AUTHORIZATION_ACTIONS).size, 50);
+  assert.deepEqual(CODEX_AUTHORIZATION_ACTIONS, [
+    "codex.profile.activate",
+    "codex.profile.inspect",
+    "codex.profile.deactivate",
+    "codex.execution.invoke",
+    "codex.execution.cancel",
+  ]);
+  assert.equal(AUTHORIZATION_ACTIONS.length, 55);
+  assert.equal(new Set(AUTHORIZATION_ACTIONS).size, 55);
   assert.equal(isAuthorizationAction("*"), false);
   assert.equal(isAuthorizationAction("task body says project.disable"), false);
   assert.equal(isAuthorizationAction("task.create"), true);
-  assert.deepEqual([1, 2, 3, 4, 5, 6, 7].map((version) => actionsForVocabulary(version).length), [19, 23, 29, 30, 35, 47, 50]);
-  assert.equal([1, 2, 3, 4, 5, 6, 7].every(isAuthorizationVocabularyVersion), true);
-  assert.equal([0, 8, 9, "7"].some(isAuthorizationVocabularyVersion), false);
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7, 8].map((version) => actionsForVocabulary(version).length), [19, 23, 29, 30, 35, 47, 50, 55]);
+  assert.equal([1, 2, 3, 4, 5, 6, 7, 8].every(isAuthorizationVocabularyVersion), true);
+  assert.equal([0, 9, 10, "8"].some(isAuthorizationVocabularyVersion), false);
 });
 
 test("authorization requires exact actor, action, scope revisions, lifetime, revocation, policy, and confirmation", () => {

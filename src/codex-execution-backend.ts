@@ -19,6 +19,7 @@ import {
 } from "./execution-port.ts";
 import { readApplicationStateForOwner } from "./persistence/application-repository.ts";
 import { codexTerminalReceiptProjection } from "./persistence/codex-receipt-digest.ts";
+import { codexProductTaskInputReference } from "./persistence/codex-product-digest.ts";
 import type { PersistenceStore } from "./persistence/store.ts";
 import { canonicalJson, sha256 } from "./persistence/values.ts";
 import {
@@ -83,6 +84,15 @@ export interface CodexExecutionBackendIngress {
   now(): string;
   nextId(kind: "backend-execution" | "receipt"): string;
 }
+
+export type CodexDriverPreparationFailureCode =
+  | "credential_unavailable"
+  | "configuration_changed"
+  | "adapter_failure";
+
+export type CodexDriverPreparationResult =
+  | Readonly<{ readonly ok: true; readonly driver: CodexSdkDriver }>
+  | Readonly<{ readonly ok: false; readonly code: CodexDriverPreparationFailureCode }>;
 
 export interface VerifiedCodexWorkspace {
   readonly workingDirectory: string;
@@ -247,13 +257,52 @@ class LocalGitCodexWorkspaceVerifier implements CodexWorkspaceVerifier {
     return receipt.repositoryIdentity;
   }
 
+  #productTaskInputMatches(
+    semantic: Extract<ExecutionSemanticIdentity, { backendKind: "codex-sdk" }>,
+    input: string,
+  ): boolean {
+    if (this.#store === null || !/^codex-task-binding:[0-9A-F]{64}$/u.test(semantic.inputReference)) return false;
+    const state = readApplicationStateForOwner(this.#store);
+    const task = state.domain.tasks.find((candidate) => candidate.id === semantic.taskId);
+    const execution = state.executions.find((candidate) => candidate.executionId === semantic.executionId);
+    const operations = state.codexProductOperations.filter((candidate) =>
+      candidate.taskId === semantic.taskId && candidate.executionId === semantic.executionId &&
+      codexProductTaskInputReference(candidate.operationId, semantic.taskId, semantic.taskRevision) === semantic.inputReference
+    );
+    if (task === undefined || execution === undefined || operations.length !== 1 ||
+      task.revision !== semantic.taskRevision || task.state !== "running" || task.body !== input ||
+      task.body.length === 0 || new TextEncoder().encode(task.body).byteLength > 1_048_576 ||
+      execution.taskId !== task.id || execution.status !== "active" ||
+      execution.revision !== semantic.executionRevision || execution.attemptNumber !== semantic.attemptNumber ||
+      execution.fencingToken !== semantic.fencingToken) return false;
+    const operation = operations[0]!;
+    const intent = state.executionIntents.find((candidate) => candidate.intentId === operation.intentId);
+    return operation.stage === "effect_possible" && operation.lifecycle === "active" &&
+      operation.projectId === semantic.projectId &&
+      operation.expectedProjectResourceRevision === semantic.projectResourceRevision &&
+      operation.expectedProjectConfigRevision === semantic.projectConfigRevision &&
+      operation.workspaceId === semantic.workspaceId && operation.workspaceGeneration === semantic.workspaceGeneration &&
+      operation.workspaceRevision === semantic.workspaceRevision && operation.workspaceHeadObjectId === semantic.workspaceHeadObjectId &&
+      intent !== undefined && intent.state === "executing" && intent.executionId === semantic.executionId &&
+      intent.executionRevision === semantic.executionRevision && intent.attemptNumber === semantic.attemptNumber &&
+      intent.fencingToken === semantic.fencingToken && intent.taskId === semantic.taskId &&
+      intent.taskRevision === semantic.taskRevision && intent.inputReference === semantic.inputReference &&
+      intent.workspaceId === semantic.workspaceId && intent.workspaceGeneration === semantic.workspaceGeneration &&
+      intent.workspaceRevision === semantic.workspaceRevision && intent.workspaceRootKey === semantic.workspaceRootKey &&
+      intent.ownershipBindingSha256 === semantic.ownershipBindingSha256 &&
+      intent.workspaceHeadObjectId === semantic.workspaceHeadObjectId;
+  }
+
   verify(
     semantic: Extract<ExecutionSemanticIdentity, { backendKind: "codex-sdk" }>,
     input: string | null,
   ): VerifiedCodexWorkspace {
     if (input !== null) {
-      const inputReference = `task-sha256:${sha256(input).toLocaleLowerCase("en-US")}`;
-      if (inputReference !== semantic.inputReference) throw new WorkspaceRefusal("task_input_digest_mismatch");
+      const legacyReference = `task-sha256:${sha256(input).toLocaleLowerCase("en-US")}`;
+      const inputMatches = /^task-sha256:[0-9a-f]{64}$/u.test(semantic.inputReference)
+        ? legacyReference === semantic.inputReference
+        : this.#productTaskInputMatches(semantic, input);
+      if (!inputMatches) throw new WorkspaceRefusal("task_input_digest_mismatch");
     }
     const project = this.#configuration.projects.get(semantic.projectId);
     const workspaceRoot = this.#configuration.workspaceRoots.get(semantic.workspaceRootKey);
@@ -402,19 +451,22 @@ class CodexExecutionBackend implements ExecutionBackend {
   readonly adapterId = CODEX_EXECUTION_ADAPTER_ID;
   readonly adapterVersion = CODEX_EXECUTION_ADAPTER_VERSION;
   readonly #journal: CodexTurnJournal;
-  readonly #driver: CodexSdkDriver;
+  readonly #driver: CodexSdkDriver | null;
+  readonly #driverFactory: (() => CodexDriverPreparationResult) | null;
   readonly #workspaceVerifier: CodexWorkspaceVerifier;
   readonly #ingress: CodexExecutionBackendIngress;
   readonly #active = new Map<string, AbortController>();
 
   constructor(
     journal: CodexTurnJournal,
-    driver: CodexSdkDriver,
+    driver: CodexSdkDriver | null,
+    driverFactory: (() => CodexDriverPreparationResult) | null,
     workspaceVerifier: CodexWorkspaceVerifier,
     ingress: CodexExecutionBackendIngress,
   ) {
     this.#journal = journal;
     this.#driver = driver;
+    this.#driverFactory = driverFactory;
     this.#workspaceVerifier = workspaceVerifier;
     this.#ingress = ingress;
   }
@@ -464,7 +516,20 @@ class CodexExecutionBackend implements ExecutionBackend {
         if (prepared.turn.threadId === null) throw new CodexJournalError("INTEGRITY_FAILURE", "Continuation thread is absent");
         this.#journal.markActive(prepared.turn.backendExecutionId, prepared.turn.threadId, this.#now());
       }
-      await this.#driver.run(Object.freeze({
+      const preparedDriver: CodexDriverPreparationResult = this.#driverFactory === null
+        ? this.#driver === null
+          ? Object.freeze({ ok: false as const, code: "adapter_failure" as const })
+          : Object.freeze({ ok: true as const, driver: this.#driver })
+        : this.#driverFactory();
+      if (!preparedDriver.ok) {
+        return preparedDriver.code === "credential_unavailable"
+          ? adapterError(request.correlationId, "unauthorized", "codex_credential_unavailable")
+          : preparedDriver.code === "configuration_changed"
+            ? adapterError(request.correlationId, "conflict", "codex_profile_configuration_changed")
+            : adapterError(request.correlationId, "permanent_external", "codex_driver_construction_failed");
+      }
+      const driver = preparedDriver.driver;
+      await driver.run(Object.freeze({
         operation: request.operation === "start" ? "start" : "resume",
         threadId: request.operation === "start" ? null : prepared.turn.threadId,
         workingDirectory: workspace.workingDirectory,
@@ -680,14 +745,19 @@ export function createCodexExecutionBackend(
   configuration: CodexExecutionBackendConfiguration,
   options: Readonly<{
     driver?: CodexSdkDriver;
+    driverFactory?: () => CodexDriverPreparationResult;
     journal?: CodexTurnJournal;
     workspaceVerifier?: CodexWorkspaceVerifier;
     ingress?: CodexExecutionBackendIngress;
   }> = Object.freeze({}),
 ): ExecutionBackend {
+  if (options.driver !== undefined && options.driverFactory !== undefined) {
+    throw new TypeError("Codex execution backend accepts one driver source");
+  }
   return new CodexExecutionBackend(
     options.journal ?? createCodexTurnJournal(store),
-    options.driver ?? createPinnedCodexSdkDriver(),
+    options.driver ?? (options.driverFactory === undefined ? createPinnedCodexSdkDriver() : null),
+    options.driverFactory ?? null,
     options.workspaceVerifier ?? createCodexWorkspaceVerifier(configuration, store),
     options.ingress ?? defaultIngress(),
   );

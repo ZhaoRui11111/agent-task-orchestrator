@@ -6,19 +6,21 @@ The repository has a governance and architecture-contract baseline, executable
 toolchain and feasibility harness, pure in-memory TypeScript Domain Core,
 filesystem-identity ProjectRegistry, finite local authorization owner, typed
 application services, local SQLite persistence, the complete explicit-Manual
-Phase 2 product through the sole current `ato.api/v1`, and a fresh-only injected
-Phase 3 and scheduler libraries. One immutable schema-version-1 baseline directly owns metadata
+Phase 2 product plus the explicitly authorized Codex subset through the sole
+current `ato.api/v1`, and fresh-only injected Phase 3 and scheduler libraries.
+One immutable schema-version-1 baseline directly owns metadata
 and exact Domain snapshots; ProjectRegistry; local identity;
-vocabulary-version-1-through-7 epochs and grants; application requests,
+vocabulary-version-1-through-8 epochs and grants; application requests,
 authorization decisions, lifecycle handoffs and audit; execution attempts,
-Manual-loop evidence and journal state; package-private Codex turn/operation
-evidence; dispatcher runs and membership;
+Manual-loop evidence and journal state; Codex profile, product-operation,
+effect-authorization, turn, and operation evidence; dispatcher runs and
+membership;
 workspace generations and operation evidence; and Phase 3 policy receipts,
 completion gate evidence/decisions, integration reservations/effects, cleanup
 attestations, and bounded transition events; plus scheduler configurations,
 registrations, operation evidence, delivery observations, and scheduled tuples.
 Lifecycle authorization uses the sole complete non-lifecycle application-state
-projection at digest version 3.
+projection at digest version 4.
 The application service orchestrates business owners in one transaction;
 persistence never selects a Domain command or grants authority. Its physical
 implementation is split into database-free model, input, policy, Domain
@@ -42,12 +44,15 @@ confirmed application decision alone may complete a Task from verified
 `turn_succeeded` evidence. The Manual dispatcher coordinates those
 owners after one explicit trigger: it durably reconciles old work, seals a
 finite candidate set, resolves every member, and publishes a summary only after
-complete readback. A separate package-private injected Codex implementation
-uses the same v2 protocol with an exact owned workspace, verified ephemeral
-Task input, and a durable bounded thread/turn journal. It is absent from the
-package-root facade and every product/application/dispatcher/CLI factory, so it
-is not an operational product route and does not acquire Codex destination,
-credential, or disclosure authority from the global authorization vocabulary.
+complete readback. A separate Codex product application composes the
+package-private SDK implementation through the same v2 protocol with an exact
+owned workspace, verified ephemeral Task input, and a durable bounded
+thread/turn journal. Its package-root factory and four CLI paths expose only
+profile activate/inspect/deactivate and targeted one-member dispatch; existing
+execution inspect/resume/retry/request-cancel discriminate the durable backend.
+The fixed destination and opaque credential reference are configuration, not
+authority: every effect additionally requires the exact active profile, fresh
+v8 grants and confirmation, and an atomic one-consumer Act before disclosure.
 
 The package root also exports pure `ato.project-policy/v1`,
 `ato.completion/v1`, `ato.integration/v1`, and sole current `ato.workspace/v2`
@@ -72,15 +77,18 @@ backend or default product/API/CLI scheduler operation route exists.
 The concrete local adapters are one immutable configured ProjectPolicy, one
 bounded non-shell gate runner with separate retained evidence, one local Git
 fast-forward/local-file-push backend, and the existing Windows linked-worktree
-backend extended with attestation-bound cleanup. They write no SQLite state and
+backend extended with attestation-bound cleanup, plus the package-private Codex
+SDK backend selected only by the Codex product owner. They write no SQLite state and
 are validated only against disposable repositories. The default Manual product
 and CLI construct none of them, expose no Phase 3 command, and still do not
-execute Task content or perform a Project/workspace effect. The repository
+execute Task content or perform a Project/workspace effect. The Codex route is
+the sole exception and is callable only under its explicit profile/effect
+authorization and trusted-host-administrator precondition. The repository
 implements no concrete SchedulerBackend, real scheduled task, or platform
-scheduler effect, MCP component, product-wired Codex or scheduler route, Codex
-credential/destination authority,
-daemon/service, supported platform integration, release, or deployment. No
-real Codex account E2E or platform-support claim exists.
+scheduler effect, MCP component, product-wired scheduler route, daemon/service,
+supported platform integration, release, or deployment. No real Codex account
+E2E, administrator-managed effective-policy attestation, or platform-support
+claim exists.
 
 ## Authority and ownership
 
@@ -137,7 +145,8 @@ The architecture separates:
   cancellation-reason predicate instead of defining a second text invariant.
 - `persistence`: the implemented SQLite runtime-root, connection, single
   current-baseline migration, combined schema-version-1 repository, transaction, lifecycle handoff,
-  execution attempt/sequence, Manual-loop, package-private Codex journal,
+  execution attempt/sequence, Manual-loop, Codex profile/product/effect and
+  package-private backend journal,
   dispatcher and scheduler record storage,
   workspace generation/operation/evidence storage, Phase 3 policy/gate/
   completion/integration/cleanup evidence, backup, restore, read-only doctor,
@@ -145,23 +154,25 @@ The architecture separates:
   manifest, restore intent, and restore receipt each have an independent exact
   current JSON format at schema version 1; those format identities are not the
   database schema. Later records are added only by their implementing phase.
-- `dispatcher`: the implemented explicit-Manual and scheduled-ingress
-  reconcile-first run, ownership/takeover, finite fan-out, and recovery
+- `dispatcher`: the implemented explicit-Manual, targeted one-member Codex,
+  and scheduled-ingress reconcile-first run, ownership/takeover, finite fan-out, and recovery
   coordinator. It calls
   application and reliable owners rather than duplicating their decisions.
 - `ports`: the implemented pure `ato.execution/v2`, `ato.scheduler/v1`,
   `ato.project-policy/v1`, `ato.completion/v1`, `ato.integration/v1`, and sole
   current `ato.workspace/v2` contract kits.
 - `adapters`: the implemented local Manual execution backend/control, the
-  package-private injected Codex SDK backend/driver, configured local
+  product-selected package-private Codex SDK backend/driver, configured local
   ProjectPolicy, bounded local CompletionBackend, local Git
   integration backend, and Windows Git workspace backend. The Phase 3 adapters
   are explicitly injected library surfaces tested only in disposable fixtures;
-  test Fakes are unexported. No concrete scheduler adapter exists; Codex product
-  composition and every other adapter remain planned.
-- `product-runtime`: the implemented typed local Manual facade plus a separate
-  injected Phase 3 facade. The Manual facade validates the closed public CAS
-  tuple and returns only bounded redacted product views. The Phase 3 facade
+  test Fakes are unexported. No concrete scheduler adapter exists.
+- `product-runtime`: the implemented typed local Manual facade, Codex product
+  application, and a separate injected Phase 3 facade. The Manual facade
+  validates the closed public CAS tuple and returns only bounded redacted
+  product views. The Codex owner validates profile/configuration identity,
+  C19 replay identity, targeted ownership, Prepare/Act sequencing, and stored
+  terminal results. The Phase 3 facade
   requires all four trusted adapters/configuration, derives non-public durable
   tuples, and is never constructed by the default CLI runtime.
 - `interfaces`: the implemented sole current `ato.api/v1` product CLI, plus a
@@ -182,8 +193,9 @@ perform only their closed policy, gate, local Git, or owner-attested workspace
 operation, write no SQLite state, and are exercised only with disposable
 repositories. The local-file push path is not a general remote-network route,
 and the cleanup path is not caller-selected or automatic. The default product
-execution runtime remains only the explicit local Manual control/recovery
-surface. The scheduler contract/application and scheduled ingress are
+execution runtime contains the explicit local Manual control/recovery surface
+and the closed Codex profile/targeted-dispatch subset; it has no generic backend
+selector. The scheduler contract/application and scheduled ingress are
 separately injected library components; concrete scheduler/platform effects
 and every other later name remain design direction rather than a current
 runtime component.

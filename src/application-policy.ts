@@ -5,6 +5,7 @@ import {
   DISPATCHER_AUTHORIZATION_ACTIONS,
   MANUAL_AUTHORIZATION_ACTIONS,
   PHASE3_AUTHORIZATION_ACTIONS,
+  SCHEDULER_STAGE_AUTHORIZATION_ACTIONS,
   WORKSPACE_STAGE_AUTHORIZATION_ACTIONS,
   actionsForVocabulary,
   canIssueGrant,
@@ -59,6 +60,7 @@ export const MANUAL_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(MANUAL_A
 export const DISPATCHER_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(DISPATCHER_AUTHORIZATION_ACTIONS));
 export const WORKSPACE_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(WORKSPACE_STAGE_AUTHORIZATION_ACTIONS));
 export const PHASE3_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(PHASE3_AUTHORIZATION_ACTIONS));
+export const SCHEDULER_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(SCHEDULER_STAGE_AUTHORIZATION_ACTIONS));
 export const CURRENT_CAPABILITY_ACTION_SET_SHA256 = sha256(canonicalJson(AUTHORIZATION_ACTIONS));
 
 export interface RenewalAssessment {
@@ -104,8 +106,8 @@ export function assessRenewal(
 
 export interface UpgradeAssessment {
   readonly nextEpochRevision: number;
-  readonly currentVocabularyVersion: 1 | 2 | 3 | 4 | 5 | 6;
-  readonly targetVocabularyVersion: 2 | 3 | 4 | 5 | 6 | 7;
+  readonly currentVocabularyVersion: 1 | 2 | 3 | 4 | 5 | 6 | 7;
+  readonly targetVocabularyVersion: 2 | 3 | 4 | 5 | 6 | 7 | 8;
 }
 
 export function assessCapabilityUpgrade(
@@ -120,7 +122,7 @@ export function assessCapabilityUpgrade(
   }
   const latestEpoch = state.epochs.at(-1);
   const currentVocabulary = latestEpoch?.vocabularyVersion ?? bootstrap.vocabularyVersion;
-  if (currentVocabulary !== 1 && currentVocabulary !== 2 && currentVocabulary !== 3 && currentVocabulary !== 4 && currentVocabulary !== 5 && currentVocabulary !== 6) {
+  if (currentVocabulary !== 1 && currentVocabulary !== 2 && currentVocabulary !== 3 && currentVocabulary !== 4 && currentVocabulary !== 5 && currentVocabulary !== 6 && currentVocabulary !== 7) {
     return "not_eligible";
   }
   const originCreatedAt = latestEpoch?.createdAt ?? bootstrap.createdAt;
@@ -151,7 +153,9 @@ export function assessCapabilityUpgrade(
             ? 5 as const
             : currentVocabulary === 5
               ? 6 as const
-              : 7 as const,
+              : currentVocabulary === 6
+                ? 7 as const
+                : 8 as const,
   });
 }
 
