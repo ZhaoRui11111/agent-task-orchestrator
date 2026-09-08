@@ -87,7 +87,8 @@ export function git(fixture, args, options = {}) {
 
 export function createWorkspaceGitFixture(label = "workspace-git") {
   assert.notEqual(TEST_GIT_EXECUTABLE, "", "Windows Git fixture requires the exact Windows Git executable");
-  const generation = createOwnedGeneration(label);
+  // Preserve room for owned workspace/admin paths in the governed task worktree.
+  const generation = createOwnedGeneration(label.slice(0, 12));
   const projectRoot = path.join(generation, "Project Space café");
   const workspaceRoot = path.join(generation, "Workspace Space café");
   mkdirSync(projectRoot);

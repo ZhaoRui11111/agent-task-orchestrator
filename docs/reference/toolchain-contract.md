@@ -210,8 +210,8 @@ backend imports exactly `node:child_process`, `node:crypto`, `node:fs`, and
 four built-ins. They use no shell, package dependency, or wildcard built-in
 exception. The package-private Codex backend imports exactly `node:crypto`,
 `node:fs`, and `node:path`; profile configuration imports exactly `node:fs` and
-`node:path`, while the product application and product digest import no Node
-built-in. The SDK worker
+`node:path`; the product application imports exactly `node:path`, and the product
+digest imports no Node built-in. The SDK worker
 is the sole production importer of `@openai/codex-sdk`, and the Codex journal
 imports no Node built-in. No other source may mention a Codex/OpenAI boundary
 without entering the exact audited allowlist. The scheduler port imports no
@@ -220,8 +220,9 @@ must not acquire a concrete scheduler adapter, MCP, product-wired scheduler
 operation route, generic credential broker, daemon, general
 remote service effect, or default product/CLI Phase 3 composition as part of
 this boundary. The four
-Phase 3 adapters are explicitly injected library surfaces; their effects are
-limited to trusted configuration and local disposable files/repositories. The
+Phase 3 adapters accept trusted construction; the Codex product owner also
+constructs the shared Windows Git workspace backend from its active profile.
+Their local effect evidence is limited to disposable files/repositories. The
 Fake backends remain test-only and absent from the packed inventory.
 
 ## Validation entry points

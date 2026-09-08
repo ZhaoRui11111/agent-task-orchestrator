@@ -80,9 +80,10 @@ fast-forward/local-file-push backend, and the existing Windows linked-worktree
 backend extended with attestation-bound cleanup, plus the package-private Codex
 SDK backend selected only by the Codex product owner. They write no SQLite state and
 are validated only against disposable repositories. The default Manual product
-and CLI construct none of them, expose no Phase 3 command, and still do not
+routes construct none of them, expose no Phase 3 command, and still do not
 execute Task content or perform a Project/workspace effect. The Codex route is
-the sole exception and is callable only under its explicit profile/effect
+the sole exception: its product owner constructs both the SDK backend and the
+shared Windows Git workspace backend. It is callable only under explicit profile/effect
 authorization and trusted-host-administrator precondition. The repository
 implements no concrete SchedulerBackend, real scheduled task, or platform
 scheduler effect, MCP component, product-wired scheduler route, daemon/service,

@@ -5,6 +5,7 @@ import {
   CODEX_EXECUTION_ADAPTER_VERSION,
   createCodexExecutionBackend,
 } from "../src/codex-execution-backend.ts";
+import { PinnedCodexSdkDriver } from "../src/codex-sdk-worker.ts";
 import { CodexJournalError } from "../src/persistence/codex-backend-repository.ts";
 
 const USAGE = Object.freeze({
@@ -129,10 +130,10 @@ function durableResumeJournal() {
       },
       recordTerminal(backendExecutionId, terminalSignal, code, evidenceReference, observedAt, receiptIdentity) {
         assert.equal(backendExecutionId, state.turn.backendExecutionId);
-        assert.equal(terminalSignal, "turn.completed");
+        assert.ok(terminalSignal === "turn.completed" || terminalSignal === "turn.failed");
         state.turn = Object.freeze({
           ...state.turn,
-          lifecycle: "turn_succeeded",
+          lifecycle: terminalSignal === "turn.completed" ? "turn_succeeded" : "failed",
           terminalSignal,
           code,
           evidenceReference,
@@ -223,4 +224,61 @@ test("Codex backend resumes only the persisted thread and replays durable termin
   assert.equal(replaced.ok, false);
   assert.equal(replaced.error.category, "conflict");
   assert.equal(driverCalls.length, 1);
+});
+
+for (const terminal of ["turn.completed", "turn.failed"]) {
+  test(`Codex backend publishes ${terminal} only after the complete resume stream is accepted`, async () => {
+    const durable = durableResumeJournal();
+    const observed = Promise.withResolvers();
+    const finish = Promise.withResolvers();
+    const driver = new PinnedCodexSdkDriver({
+      startThread() { throw new Error("continuation must not create a thread"); },
+      resumeThread(threadId) {
+        assert.equal(threadId, durable.state.sourceThreadId);
+        return {
+          async runStreamed() {
+            return {
+              events: (async function* () {
+                yield { type: "turn.started" };
+                yield terminal === "turn.completed" ? { type: terminal, usage: USAGE } : { type: terminal };
+                observed.resolve();
+                await finish.promise;
+              })(),
+            };
+          },
+        };
+      },
+    });
+    const backend = backendWithJournal(durable.journal, driver, `withheld-${terminal}`);
+    const pending = backend.resume(resumeRequest());
+    try {
+      await observed.promise;
+      assert.equal(durable.state.turn.lifecycle, "active");
+      assert.equal(durable.state.turn.terminalSignal, null);
+      assert.equal(durable.state.operation, null);
+    } finally {
+      finish.resolve();
+      await pending;
+    }
+    const result = await pending;
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(durable.state.turn.terminalSignal, terminal);
+    assert.equal(durable.state.operation.receiptSha256, result.receipt.integritySha256);
+  });
+}
+
+test("Codex backend refuses duplicate terminal callbacks without publishing the first candidate", async () => {
+  const durable = durableResumeJournal();
+  const backend = backendWithJournal(durable.journal, {
+    async run(_request, observe) {
+      observe({ type: "turn.started" });
+      observe({ type: "turn.completed", usage: USAGE });
+      observe({ type: "turn.completed", usage: USAGE });
+    },
+  }, "duplicate-terminal");
+  const result = await backend.resume(resumeRequest());
+  assert.equal(result.ok, false);
+  assert.equal(result.error.category, "ambiguous_external_state");
+  assert.equal(durable.state.turn.terminalSignal, null);
+  assert.equal(durable.state.operation, null);
 });

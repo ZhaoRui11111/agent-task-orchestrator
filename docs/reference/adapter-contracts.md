@@ -20,9 +20,11 @@ typed injected application owner are implemented, but there is no concrete
 scheduler adapter; its deterministic no-effect Fake is test-only and
 unexported.
 
-The Phase 3 ports and local adapters are direct injected library surfaces. The
-default product runtime and sole current `ato.api/v1` CLI construct none of
-them and add no Phase 3 command. The local Git integration adapter can mutate
+The Phase 3 facade, ProjectPolicy, completion-gate and integration adapters are
+direct injected library surfaces. The default product runtime and sole current
+`ato.api/v1` CLI add no Phase 3 command. The Codex product owner constructs the
+shared Windows Git workspace backend from its active profile. The local Git
+integration adapter can mutate
 only a validated expected-old target ref and an explicitly configured canonical
 local bare destination; the workspace adapter performs cleanup only with the
 exact current application-issued attestation. Disposable exact-host evidence
@@ -163,9 +165,16 @@ semantic variants are:
 - `backendKind=codex-sdk`, `workspaceMode=owned`: the tuple additionally binds
   `ato.workspace/v2`, workspace ID/generation/revision, trusted workspace-root
   key, uppercase ownership-binding SHA-256, and exact lowercase 40-hex current
-  workspace HEAD. Its input reference is exactly
-  `task-sha256:<lowercase-64-hex>`; `start`/`resume` carries the matching
-  nonempty Task body only for the immediate effect call, bounded to 1 MiB.
+  workspace HEAD. Its input reference has exactly two existing forms:
+  `task-sha256:<lowercase-64-hex>` commits to the Task body's SHA-256 for the
+  directly injected package-private route;
+  `codex-task-binding:<uppercase-64-hex>` commits to the canonical array of
+  product operation ID, Task ID and Task revision for product start/continuation.
+  The latter is an identity commitment, not a body digest. Before disclosure the
+  product verifies the current Task and operation/intent/execution/workspace
+  lineage; at the effect boundary the backend revalidates that lineage and exact
+  body equality. `start`/`resume` carries the matching nonempty Task body only for
+  the immediate effect call, bounded to 1 MiB.
 
 Unknown, accessor-backed, cross-variant, wrong-case, omitted, or extra fields
 are rejected before adapter dispatch. Receipts echo the backend kind and exactly
@@ -259,7 +268,8 @@ filesystem, Git, child-process, vendor, scheduler, policy, or CLI code. The
 concrete `windows-git-local` adapter version `1.0.0` lives in its own module and
 depends inward on this port; an unexported disposable Fake remains available to
 tests. The adapter supports the five closed operations including attestation-
-bound cleanup, but is never default-constructed by the product runtime or CLI.
+bound cleanup. The Codex product owner constructs it from the active profile;
+Manual routes and the default product/CLI expose no Phase 3 cleanup operation.
 The concrete adapter and one-host fixtures do not turn the pure port into a
 platform-support claim.
 

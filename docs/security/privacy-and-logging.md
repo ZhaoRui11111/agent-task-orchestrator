@@ -91,8 +91,13 @@ time, and integer retry count. Raw adapter messages, payloads, stacks, SQL, and
 Task/source content are discarded before that projection.
 
 The authorized Codex product path reuses the authoritative Task body only as
-bounded ephemeral effect input after recomputing its exact
-`task-sha256:<lowercase-64-hex>` reference. It does not duplicate those bytes,
+bounded ephemeral effect input after the exact Act authorization and current
+Task/operation lineage verification. Its `codex-task-binding` reference commits
+to operation and Task identity/revision, not Task content; the directly injected
+package-private route uses the content-digest variant defined by the
+[execution port](../reference/adapter-contracts.md#executionbackend-atoexecutionv2).
+The backend verifies the corresponding reference and exact current input before
+SDK access. Neither route duplicates those bytes,
 the working-directory path, repository content, environment, credential value, SDK
 item event, model/tool text, command, output, usage detail, or raw error in an
 intent, journal, receipt, audit row, result, feasibility record, or default
@@ -171,8 +176,9 @@ administrative directory; that manifest contains the immutable ownership-
 binding digest, closed versions and object IDs, and hashes of filesystem
 identities, never a Task body, credential, environment, raw canonical path, or
 command output. The local completion and Git integration adapters likewise
-emit no log or telemetry stream. All Phase 3 adapters are library-injected and
-are not wired to the default product or CLI.
+emit no log or telemetry stream. The Phase 3 facade, ProjectPolicy, completion
+and integration adapters remain library-injected. The Codex product owner also
+constructs the shared Windows Git workspace backend from its active profile.
 
 Task body, Project canonical path, prompts, source/repository content, tool or
 Agent output, free text, raw commands, environment values, credentials, and

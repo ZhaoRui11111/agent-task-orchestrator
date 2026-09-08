@@ -16,7 +16,8 @@ import {
 import { createOwnedGeneration, removeOwnedGeneration } from "../scripts/repo-utils.mjs";
 
 export function createPersistenceFixture(prefix) {
-  const safePrefix = prefix.toLowerCase().replaceAll(/[^a-z0-9-]/gu, "-").slice(0, 40);
+  // Leave room for the governed worktree path within the existing bounded root keys.
+  const safePrefix = prefix.toLowerCase().replaceAll(/[^a-z0-9-]/gu, "-").slice(0, 12);
   const generation = createOwnedGeneration(safePrefix);
   const sourceCheckoutRoot = path.join(generation, "source");
   const projectRoot = path.join(generation, "project");

@@ -11,7 +11,8 @@ current schema-version-1 persistence, a versioned local product CLI, typed
 product facade, reliable Manual execution loop, explicitly authorized Codex
 product composition over a package-private SDK backend, reconcile-first
 dispatcher, a durable workspace foundation
-with a test Fake plus an exported product-unwired Windows Git backend, an
+with a test Fake plus an exported Windows Git backend composed by the Codex
+product owner, an
 injected Phase 3 product-library facade with exact ProjectPolicy, completion,
 integration, and workspace-v2 ports and local adapters, plus the pure
 scheduler-v1 port, injected durable scheduler application, and scheduled-

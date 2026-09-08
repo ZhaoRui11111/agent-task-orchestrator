@@ -53,9 +53,11 @@ authority plus the existing dispatcher to create one canonical run per exact
 `(schedule_id, config_revision, scheduled_for)` tuple. Tests use only an
 unexported no-effect Fake.
 
-These Phase 3 components are library-only and must be explicitly constructed
-with trusted configuration. The default product runtime and CLI construct none
-of them, add no Phase 3 command or public error, and retain the three independent
+The Phase 3 facade, ProjectPolicy, completion-gate and integration components
+are library-only and require explicit trusted construction. The Codex product
+owner also constructs the shared Windows Git workspace backend from its active
+profile. The default product runtime and CLI add no Phase 3 command or public
+error, and retain the three independent
 backup/restore JSON schema-version-1 formats unchanged. Local Git and filesystem
 effects are validated only in disposable repository fixtures; no product
 platform support is claimed. The repository still has no MCP server, concrete

@@ -504,13 +504,16 @@ class CodexExecutionBackend implements ExecutionBackend {
         ? Object.freeze({ ok: true as const, receipt })
         : adapterError(request.correlationId, "integrity_failure", "codex_receipt_replay_mismatch");
     }
-    // Close the prepare-to-effect race: filesystem identity and Task digest are checked again
+    // Close the prepare-to-effect race: filesystem identity and Task input binding are checked again
     // after the durable backend turn exists and immediately before the SDK is invoked.
     this.#workspaceVerifier.verify(codexSemantic(request.semantic), request.input);
     const controller = new AbortController();
     this.#active.set(prepared.turn.backendExecutionId, controller);
-    let terminalReceipt: ExecutionStartReceipt | null = null;
-    let sawTerminal = false;
+    const observed: { terminal: Readonly<{
+      signal: CodexSdkTerminalEvent["type"];
+      code: "codex_turn_completed" | "codex_turn_failed";
+      evidenceReference: string;
+    }> | null } = { terminal: null };
     try {
       if (request.operation === "resume") {
         if (prepared.turn.threadId === null) throw new CodexJournalError("INTEGRITY_FAILURE", "Continuation thread is absent");
@@ -541,31 +544,38 @@ class CodexExecutionBackend implements ExecutionBackend {
           return;
         }
         if (event.type !== "turn.completed" && event.type !== "turn.failed") return;
-        if (sawTerminal) throw new CodexSdkDriverError("terminal_duplicated");
-        sawTerminal = true;
-        const receiptId = this.#nextId("receipt");
-        const evidenceReference = terminalEvidence(event);
-        const code = event.type === "turn.completed" ? "codex_turn_completed" : "codex_turn_failed";
-        const terminal = this.#journal.recordTerminal(
-          prepared.turn.backendExecutionId,
-          event.type,
-          code,
-          evidenceReference,
-          this.#now(),
-          (turn) => {
-            const projection = effectProjection(request, turn, receiptId);
-            const receipt = Object.freeze({ ...projection, integritySha256: integrity(projection) });
-            terminalReceipt = receipt;
-            return Object.freeze({ receiptId, receiptSha256: receipt.integritySha256 });
-          },
-        );
-        if (terminalReceipt === null || terminal.operation.receiptId !== receiptId) {
-          throw new CodexJournalError("INTEGRITY_FAILURE", "Codex terminal receipt was not committed");
-        }
+        if (observed.terminal !== null) throw new CodexSdkDriverError("terminal_duplicated");
+        observed.terminal = Object.freeze({
+          signal: event.type,
+          code: event.type === "turn.completed" ? "codex_turn_completed" : "codex_turn_failed",
+          evidenceReference: terminalEvidence(event),
+        });
       });
-      return terminalReceipt === null
-        ? adapterError(request.correlationId, "ambiguous_external_state", "codex_terminal_unproved")
-        : Object.freeze({ ok: true as const, receipt: terminalReceipt });
+      // A terminal callback is provisional until the driver validates the entire stream.
+      // Publishing earlier lets later rejection be mistaken for durable success on inspect.
+      const terminal = observed.terminal;
+      if (terminal === null) {
+        return adapterError(request.correlationId, "ambiguous_external_state", "codex_terminal_unproved");
+      }
+      const receiptId = this.#nextId("receipt");
+      let terminalReceipt: ExecutionStartReceipt | null = null;
+      const committed = this.#journal.recordTerminal(
+        prepared.turn.backendExecutionId,
+        terminal.signal,
+        terminal.code,
+        terminal.evidenceReference,
+        this.#now(),
+        (turn) => {
+          const projection = effectProjection(request, turn, receiptId);
+          const receipt = Object.freeze({ ...projection, integritySha256: integrity(projection) });
+          terminalReceipt = receipt;
+          return Object.freeze({ receiptId, receiptSha256: receipt.integritySha256 });
+        },
+      );
+      if (terminalReceipt === null || committed.operation.receiptId !== receiptId) {
+        throw new CodexJournalError("INTEGRITY_FAILURE", "Codex terminal receipt was not committed");
+      }
+      return Object.freeze({ ok: true as const, receipt: terminalReceipt });
     } catch (error) {
       if (error instanceof CodexJournalError) return journalError(request.correlationId, error);
       return adapterError(request.correlationId, "ambiguous_external_state", "codex_sdk_state_unproved");

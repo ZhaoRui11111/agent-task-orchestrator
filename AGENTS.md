@@ -74,9 +74,11 @@ durable ambiguity, and applies the final fenced Task completion transition.
 The package exports configured local ProjectPolicy and bounded completion-gate
 adapters, a Windows local Git integration backend for local fast-forward and
 ordinary local-file push, and a Windows Git workspace backend with attestation-
-bound owned cleanup. Their filesystem/Git effects are limited to trusted local
-configuration and disposable fixtures; none writes SQLite or is constructed by
-the default product runtime or CLI.
+bound owned cleanup. They accept trusted local configuration and their
+filesystem/Git validation uses disposable fixtures; none writes SQLite. The Codex product
+owner constructs the Windows Git workspace backend from its active profile;
+the default product runtime and CLI construct no Phase 3 facade, ProjectPolicy,
+completion-gate, or integration backend.
 
 The package also exports the pure exact `ato.scheduler/v1` port and one typed,
 injected scheduler application owner. Register/remove follow the durable

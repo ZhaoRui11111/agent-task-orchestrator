@@ -33,8 +33,9 @@ outside writer transactions. The pure exact `ato.scheduler/v1` and its typed
 application owner additionally implement durable register/remove lifecycle,
 read-only inspect, sanitized delivery, exact scheduled-tuple uniqueness, and
 canonical dispatcher-run attachment against an injected backend. The default
-product runtime and CLI construct none of these injected libraries. There is
-still no concrete SchedulerBackend, platform registration, real scheduled task,
+product runtime and CLI construct no Phase 3 facade or scheduler application;
+the Codex product owner constructs the shared Windows Git workspace backend.
+There is still no concrete SchedulerBackend, platform registration, real scheduled task,
 MCP, product-wired scheduler route, general network integration, release,
 deployment, real Codex account E2E, administrator-managed effective-
 configuration attestation, or platform-support claim.
@@ -127,10 +128,14 @@ authority.
 Current package-private Codex intents bind the same common tuple plus
 `backend_kind=codex-sdk`, `workspace_mode=owned`, the exact current
 `ato.workspace/v2` workspace ID/generation/revision/root key, ownership-binding
-digest and HEAD object, and `task-sha256` input reference. The raw Task body is
-rederived only at the effect boundary, bounded to 1 MiB, compared with that
-reference before intent/effect and again by the backend, and never stored in an
-intent, journal, receipt, audit row, or default result. Start/resume also bind
+digest and HEAD object, and one of the two exact input references defined by the
+[execution port](adapter-contracts.md#executionbackend-atoexecutionv2).
+The product uses the operation/Task identity commitment before disclosure;
+the directly injected route uses a Task content digest. The raw Task body is
+rederived only at the authorized effect boundary, bounded to 1 MiB, checked
+against the corresponding reference and current lineage by the owner and
+backend, and never stored in an intent, journal, receipt, audit row, or default
+result. Start/resume also bind
 the exact SDK backend/product constructor identity, and continuation binds the predecessor
 execution/thread/receipt while requiring a new fenced successor execution.
 
@@ -353,7 +358,7 @@ same-thread continuation. No lease expiry or lost response authorizes replay of
 the predecessor effect.
 
 Before any SDK access, the reliable owner reopens the current Task and exact
-owned ready workspace tuple, verifies the Task body's SHA-256 reference, commits
+owned ready workspace tuple, verifies the corresponding Task input binding, commits
 the core intent, moves it to `executing` with a fresh Act binding, and calls the
 backend outside every SQLite writer transaction. The backend then reopens its
 trusted disjoint Project/workspace roots and requires the configured Project
@@ -363,8 +368,8 @@ generation path, complete ownership manifest, authoritative worktree
 registration, repository identity, no alias/reparse substitution, matching
 ownership receipt, exact detached HEAD, and clean inventory including ignored
 entries. The verifier compares the observed repository identity with the
-current durable ready receipt before and after that check, then recomputes the
-input digest.
+current durable ready receipt before and after that check, then revalidates the
+input binding and, for the product variant, exact current Task body equality.
 It commits `codex_backend_turns` with lifecycle `unknown` before invoking the
 pinned SDK. That ordering makes absence of the exact turn row durable proof that
 the SDK driver was not reached by this operation.
@@ -375,9 +380,16 @@ the SDK's same-thread resume surface only for the exact predecessor thread and a
 new fenced successor execution. Replacing or omitting the thread is a conflict.
 The driver accepts only `thread.started`, `turn.started`, `turn.completed`, and
 `turn.failed`; item content and raw error text never cross into durable state.
-One terminal event atomically advances the turn and appends its immutable
-terminal operation/receipt identity. Duplicate, missing, malformed, or changed
-terminal/thread evidence is not success.
+The backend buffers only the terminal signal, closed code and evidence digest
+while the stream is open. Only after the driver accepts the complete stream
+with exactly one valid terminal does the existing journal transaction advance
+the turn and append its immutable terminal operation/receipt identity.
+Duplicate, missing, malformed or changed terminal/thread evidence, and any
+stream failure before that publication, leave no new terminal operation and
+remain ambiguous through independent inspection and restart. A crash after
+atomic publication retains the existing committed-terminal recovery path.
+This publication rule applies to new turns; it does not rewrite historical
+terminal rows or introduce a schema migration.
 
 One execution attempt may own a Manual turn or a Codex turn, never both. Both
 start paths refuse a turn already owned by either backend family before a new

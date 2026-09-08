@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { createApplicationService, openPersistence } from "../src/index.ts";
 import { createCodexExecutionBackend } from "../src/codex-execution-backend.ts";
+import { PinnedCodexSdkDriver } from "../src/codex-sdk-worker.ts";
 import { createCodexProductApplicationWithDependencies } from "../src/codex-product-application.ts";
 import { inspectCodexProfileConfiguration } from "../src/codex-product-configuration.ts";
 import { createCodexTargetedDispatcherService } from "../src/dispatcher-application.ts";
@@ -486,6 +487,75 @@ test("a crash immediately after T6 reauthorizes one first call when the backend 
     assert.equal(runtime.sdkCalls.length, 1);
   } finally {
     await runtime.store.close();
+    cleanupPersistenceFixture(runtime.fixture);
+  }
+});
+
+test("Codex product cannot promote contradictory SDK terminals to success, including after restart", async () => {
+  let sdkCalls = 0;
+  const runtime = await setup("codex-tail", "turn.completed", {
+    sdkDriver() {
+      return new PinnedCodexSdkDriver({
+        startThread() {
+          sdkCalls += 1;
+          return {
+            async runStreamed() {
+              return {
+                events: (async function* () {
+                  yield { type: "thread.started", thread_id: "codex-product-thread" };
+                  yield { type: "turn.started" };
+                  yield {
+                    type: "turn.completed",
+                    usage: {
+                      input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0,
+                      output_tokens: 1, reasoning_output_tokens: 0,
+                    },
+                  };
+                  yield { type: "turn.failed" };
+                })(),
+              };
+            },
+          };
+        },
+        resumeThread() { throw new Error("first product call must not resume"); },
+      });
+    },
+  });
+  let store = runtime.store;
+  try {
+    const command = Object.freeze({
+      kind: "codex.dispatch-run", projectId: "project",
+      expectedProjectResourceRevision: 1, expectedProjectConfigRevision: 1,
+      profileId: "profile", expectedProfileRevision: 1,
+      taskId: "task", expectedTaskRevision: 2,
+      baseReference: "a".repeat(40), idempotencyKey: "codex-product-terminal-conflict",
+      leaseDurationSeconds: 300,
+    });
+    const first = await runtime.product.dispatchRun(command);
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.equal(first.value.lifecycle, "finalized");
+    assert.equal(first.value.taskState, "waiting");
+    let state = readApplicationStateForOwner(store);
+    assert.equal(state.codexTurns[0].terminalSignal, null);
+    assert.equal(state.codexBackendOperations.length, 0);
+    assert.equal(state.executionTerminalStates.length, 0);
+    assert.equal(state.executionIntents.find((intent) => intent.backendKind === "codex-sdk").lastErrorAmbiguous, true);
+    assert.equal(sdkCalls, 1);
+    assert.equal(runtime.credential.resolveCalls, 1);
+    await store.close();
+
+    store = await openPersistence(runtime.fixture.layout, { applicationVersion: "terminal-integrity-product-restart" });
+    const restarted = createCodexProductApplicationWithDependencies(store, runtime.trusted, runtime.dependencies);
+    const replay = await restarted.dispatchRun(command);
+    assert.deepEqual(replay, { ok: true, value: { ...first.value, replayed: true } });
+    state = readApplicationStateForOwner(store);
+    assert.equal(state.codexTurns[0].terminalSignal, null);
+    assert.equal(state.codexBackendOperations.length, 0);
+    assert.equal(state.executionTerminalStates.length, 0);
+    assert.equal(sdkCalls, 1);
+    assert.equal(runtime.credential.resolveCalls, 1);
+  } finally {
+    await store.close();
     cleanupPersistenceFixture(runtime.fixture);
   }
 });

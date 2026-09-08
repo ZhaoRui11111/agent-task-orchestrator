@@ -11,6 +11,7 @@ import {
   verifyBackupGeneration,
 } from "../src/index.ts";
 import { createCodexExecutionBackend } from "../src/codex-execution-backend.ts";
+import { PinnedCodexSdkDriver } from "../src/codex-sdk-worker.ts";
 import { createInjectedCodexReliableExecutionService } from "../src/execution-loop.ts";
 import { readApplicationStateForOwner } from "../src/persistence/application-repository.ts";
 import { readApplicationState } from "../src/persistence/application-repository-state.ts";
@@ -214,7 +215,7 @@ function startCommand(state, workspace, idempotencyKey = "codex-start") {
   });
 }
 
-function backendFor(runtime, behavior = "success") {
+function backendFor(runtime, behavior = "success", injectedDriver = null) {
   const calls = [];
   let backendSequence = 0;
   let backendMilliseconds = Date.parse("2026-08-30T13:00:00.000Z");
@@ -222,6 +223,7 @@ function backendFor(runtime, behavior = "success") {
   const driver = Object.freeze({
     async run(request, observe) {
       calls.push(Object.freeze({ ...request, signal: "redacted" }));
+      if (injectedDriver !== null) return injectedDriver.run(request, observe);
       if (request.operation === "start") observe(Object.freeze({ type: "thread.started", threadId: "codex-thread-1" }));
       observe(Object.freeze({ type: "turn.started" }));
       if (behavior === "unproved") throw new Error("SENTINEL RAW SDK ERROR MUST NOT PERSIST");
@@ -259,6 +261,81 @@ function backendFor(runtime, behavior = "success") {
     verifierCalls,
     setInspectRefused(value) { inspectRefused = value; },
   };
+}
+
+for (const [index, invalidTail] of [
+  "duplicate-completed", "completed-then-failed", "failed-then-completed",
+  "changed-thread", "late-error-event", "late-stream-throw",
+].entries()) {
+  test(`Codex ${invalidTail} remains ambiguous through SQLite inspection and restart`, async () => {
+    const runtime = await prepareRuntime(`codex-tail-${index}`);
+    let store = runtime.store;
+    try {
+      const completed = Object.freeze({
+        type: "turn.completed",
+        usage: Object.freeze({
+          input_tokens: 1, cached_input_tokens: 0, cache_write_input_tokens: 0,
+          output_tokens: 1, reasoning_output_tokens: 0,
+        }),
+      });
+      const driver = new PinnedCodexSdkDriver({
+        startThread() {
+          return {
+            async runStreamed() {
+              return {
+                events: (async function* () {
+                  yield { type: "thread.started", thread_id: "codex-thread-1" };
+                  yield { type: "turn.started" };
+                  yield invalidTail === "failed-then-completed" ? { type: "turn.failed" } : completed;
+                  if (invalidTail === "late-stream-throw") throw new Error("SENTINEL LATE SDK ERROR");
+                  yield invalidTail === "completed-then-failed" ? { type: "turn.failed" }
+                    : invalidTail === "changed-thread" ? { type: "thread.started", thread_id: "replacement-thread" }
+                      : invalidTail === "late-error-event" ? { type: "error", message: "SENTINEL LATE SDK ERROR" }
+                        : completed;
+                })(),
+              };
+            },
+          };
+        },
+        resumeThread() { throw new Error("first call must not resume"); },
+      });
+      const fake = backendFor(runtime, "success", driver);
+      const service = createInjectedCodexReliableExecutionService(store, runtime.trusted, fake.backend);
+      const command = startCommand(readApplicationStateForOwner(store), runtime.workspaceContext, invalidTail);
+      const first = await service.start(command);
+      assert.equal(first.ok, true, JSON.stringify(first));
+      assert.equal(first.value.lifecycle, "ambiguous");
+      assert.equal(first.value.taskState, "waiting");
+      assert.equal(fake.calls.length, 1);
+      const beforeRestart = readApplicationStateForOwner(store);
+      assert.equal(beforeRestart.codexTurns.length, 1);
+      assert.equal(beforeRestart.codexTurns[0].lifecycle, "unknown");
+      assert.equal(beforeRestart.codexTurns[0].terminalSignal, null);
+      assert.equal(beforeRestart.codexBackendOperations.length, 0);
+      assert.equal(beforeRestart.executionTerminalStates.length, 0);
+      assert.equal(JSON.stringify(beforeRestart).includes("SENTINEL LATE SDK ERROR"), false);
+      await store.close();
+
+      store = await openPersistence(runtime.fixture.layout, { applicationVersion: "terminal-integrity-restart" });
+      const restartedBackend = backendFor({ ...runtime, store }, "success", {
+        async run() { throw new Error("ambiguous effect must not be replayed"); },
+      });
+      const restarted = createInjectedCodexReliableExecutionService(store, runtime.trusted, restartedBackend.backend);
+      const replay = await restarted.start(command);
+      assert.equal(replay.ok, true, JSON.stringify(replay));
+      assert.equal(replay.value.replayed, true);
+      assert.equal(replay.value.lifecycle, "ambiguous");
+      assert.equal(replay.value.taskState, "waiting");
+      assert.equal(restartedBackend.calls.length, 0);
+      const afterRestart = readApplicationStateForOwner(store);
+      assert.equal(afterRestart.codexTurns[0].terminalSignal, null);
+      assert.equal(afterRestart.codexBackendOperations.length, 0);
+      assert.equal(afterRestart.executionTerminalStates.length, 0);
+    } finally {
+      await store.close();
+      cleanupPersistenceFixture(runtime.fixture);
+    }
+  });
 }
 
 test("injected Codex start persists terminal evidence, replays without SDK access, and never completes the Task", async () => {

@@ -215,7 +215,9 @@ are immutable.
 `execution_operation_intents` discriminates `manual-local`/`none` from
 `codex-sdk`/`owned`. Codex intents bind the exact current workspace contract,
 ID, generation, revision, trusted root key, ownership digest, HEAD object, and
-`task-sha256` input reference. They do not store Task input bytes or a raw
+one of the exact input-reference variants owned by the
+[execution port](adapter-contracts.md#executionbackend-atoexecutionv2).
+They do not store Task input bytes or a raw
 working-directory path. `codex_backend_turns` stores one immutable semantic
 turn owner per execution with nullable SDK thread identity, exact predecessor
 thread/execution lineage, lifecycle `unknown|active|turn_succeeded|failed`,
@@ -421,8 +423,9 @@ the receipt digest and bounded redacted facts survive.
 Fresh baseline creation inserts no workspace generation, decision, intent,
 observation, receipt, finalization, or event. These rows can be selected only
 by the typed workspace application owner against an injected backend. The
-package now contains both the test Fake and an exported product-unwired Windows
-Git backend, but neither is a persistence writer: the schema stores only its
+package contains both the test Fake and an exported Windows Git backend,
+constructed by the Codex product owner or explicitly injected by a library
+caller. Neither backend is a persistence writer: the schema stores only its
 closed digest/receipt projection, never a raw physical manifest, canonical path,
 or Git payload.
 
